@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, ChevronRight, Egg, Wheat } from 'lucide-react';
-import { useApp, useCurrentUser } from '@/store/app';
+import { useCompanyData, useCurrentUser } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, StatusBadge, EmptyState, IconTile } from '@/components/ui/Card';
 import { Button, SearchField, SegmentedTabs } from '@/components/ui/Form';
@@ -10,10 +10,9 @@ import { cumulativeMortality, liveBirdsOn } from '@/lib/calc';
 
 function BatchRow({ batchId }: { batchId: string }) {
   const nav = useNavigate();
-  const batches = useApp(s => s.batches);
-  const farms = useApp(s => s.farms);
-  const mortality = useApp(s => s.mortality);
-  const batch = batches.find(b => b.id === batchId)!;
+  const { batches, farms, mortality } = useCompanyData();
+  const batch = batches.find(b => b.id === batchId);
+  if (!batch) return null;
   const farm = farms.find(f => f.id === batch.farmId);
   const live = liveBirdsOn(batch, todayISO(), mortality);
   const cum = cumulativeMortality(batch.id, mortality);
@@ -57,8 +56,7 @@ function BatchRow({ batchId }: { batchId: string }) {
 export function BatchListScreen() {
   const nav = useNavigate();
   const [params] = useSearchParams();
-  const batches = useApp(s => s.batches);
-  const assignments = useApp(s => s.assignments);
+  const { batches, assignments } = useCompanyData();
   const user = useCurrentUser();
   const [filter, setFilter] = useState<'all' | 'live' | 'closed' | 'assigned'>(
     (params.get('filter') as 'assigned') ?? 'all');
@@ -66,14 +64,14 @@ export function BatchListScreen() {
 
   const list = useMemo(() => {
     let l = batches;
-    if (filter === 'live') l = l.filter(b => b.status === 'LIVE');
+    if (filter === 'live') l = l.filter(b => b.status === 'ACTIVE');
     if (filter === 'closed') l = l.filter(b => b.status === 'CLOSED');
     if (filter === 'assigned' && user) {
       const ids = assignments.filter(a => a.userId === user.id).map(a => a.batchId);
       l = l.filter(b => ids.includes(b.id));
     }
     if (q.trim()) l = l.filter(b => b.code.toLowerCase().includes(q.toLowerCase()) || b.breed.toLowerCase().includes(q.toLowerCase()));
-    return l.sort((a, b) => (a.status === 'LIVE' ? -1 : 1) - (b.status === 'LIVE' ? -1 : 1));
+    return l.sort((a, b) => (a.status === 'ACTIVE' ? -1 : 1) - (b.status === 'ACTIVE' ? -1 : 1));
   }, [batches, filter, q, assignments, user]);
 
   return (

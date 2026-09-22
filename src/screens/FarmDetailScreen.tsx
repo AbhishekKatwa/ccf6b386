@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { MapPin, Plus, ChevronRight, Building2, Phone } from 'lucide-react';
-import { useApp } from '@/store/app';
+import { useApp, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, StatusBadge, EmptyState, IconTile, GroupList, ListRow, StatStrip, StatCell, Stat } from '@/components/ui/Card';
 import { Button, Field } from '@/components/ui/Form';
@@ -11,9 +11,7 @@ import { fmtIN } from '@/lib/format';
 export function FarmDetailScreen() {
   const { farmId } = useParams();
   const nav = useNavigate();
-  const farms = useApp(s => s.farms);
-  const sheds = useApp(s => s.sheds);
-  const batches = useApp(s => s.batches);
+  const { farms, sheds, batches } = useCompanyData();
   const addShed = useApp(s => s.addShed);
   const pushToast = useApp(s => s.pushToast);
 
@@ -54,7 +52,7 @@ export function FarmDetailScreen() {
           <StatStrip className="border-t border-line-2">
             <StatCell><Stat label="Sheds" value={fmtIN(farmSheds.length)} tone="brand" size="md" /></StatCell>
             <StatCell><Stat label="Capacity" value={fmtIN(farmSheds.reduce((s, x) => s + x.capacity, 0))} tone="neutral" size="md" /></StatCell>
-            <StatCell><Stat label="Live batches" value={fmtIN(batches.filter(b => b.farmId === farm.id && b.status === 'LIVE').length)} tone="accent" size="md" /></StatCell>
+            <StatCell><Stat label="Live batches" value={fmtIN(batches.filter(b => b.farmId === farm.id && b.status === 'ACTIVE').length)} tone="accent" size="md" /></StatCell>
           </StatStrip>
         </Card>
 
@@ -66,7 +64,7 @@ export function FarmDetailScreen() {
           ) : (
             <GroupList>
               {farmSheds.map(sh => {
-                const live = batches.find(b => b.shedId === sh.id && b.status === 'LIVE');
+                const live = batches.find(b => b.shedId === sh.id && b.status === 'ACTIVE');
                 return (
                   <ListRow
                     key={sh.id}

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Download, Egg, Scale, Wallet, TrendingUp, Truck, Skull, Calendar, Check, Lock } from 'lucide-react';
-import { useApp, useCan } from '@/store/app';
+import { FileText, Download, Egg, Wallet, Truck, Skull, Calendar, Check, Lock } from 'lucide-react';
+import { useApp, useCan, useCompanyData } from '@/store/app';
 import { Page, ScreenTitle } from '@/components/ui/Header';
 import { Card, EmptyState, GroupList, ListRow, IconTile, type Tone } from '@/components/ui/Card';
 import { SelectField, Field } from '@/components/ui/Form';
@@ -16,29 +16,28 @@ const BROILER: ReportDef[] = [
   { id: 'br_daily', name: 'Batch Daily Report', desc: 'Day-wise summary of all activities', icon: Calendar, kind: 'BROILER' },
   { id: 'br_mort', name: 'Mortality & Sale Report', desc: 'Track deaths and sales per batch', icon: Skull, kind: 'BROILER' },
   { id: 'br_feed', name: 'Feed Usage Report', desc: 'Batch-wise feed consumption', icon: FileText, kind: 'BROILER' },
-  { id: 'br_weight', name: 'Weight, FCR & Production Cost', desc: 'Performance metrics per batch', icon: Scale, kind: 'BROILER' },
   { id: 'br_finance', name: 'Batch Finance Report', desc: 'Income, expenses, balance', icon: Wallet, kind: 'BROILER', financeOnly: true },
-  { id: 'br_growth', name: 'Growth Chart Report', desc: 'Visual weight gain over time', icon: TrendingUp, kind: 'BROILER' },
   { id: 'br_sale', name: 'Batch Sale Report', desc: 'Complete sale transaction log', icon: Truck, kind: 'BROILER' },
 ];
 
 const LAYER: ReportDef[] = [
-  { id: 'ly_batch', name: 'Layer Batch Report', desc: 'Full production & sale summary', icon: Egg, kind: 'LAYER' },
-  { id: 'ly_egg', name: 'Egg Production Report', desc: 'Day-wise egg collection data', icon: Egg, kind: 'LAYER' },
-  { id: 'ly_sale', name: 'Egg Sales Report', desc: 'Trader-wise egg sales', icon: Truck, kind: 'LAYER' },
-  { id: 'ly_feed', name: 'Feed Consumption Report', desc: 'Layer feed usage & FCR', icon: FileText, kind: 'LAYER' },
+  { id: 'ly_batch', name: 'Layer Batch Report', desc: 'Egg collection, stock and sale summary', icon: Egg, kind: 'LAYER' },
+  { id: 'ly_egg', name: 'Egg Collection Report', desc: 'Day-wise trays collected', icon: Egg, kind: 'LAYER' },
+  { id: 'ly_sale', name: 'Egg Sales Report', desc: 'Trader-wise tray sales', icon: Truck, kind: 'LAYER' },
+  { id: 'ly_feed', name: 'Feed Consumption Report', desc: 'Layer feed used per shed', icon: FileText, kind: 'LAYER' },
   { id: 'ly_mort', name: 'Mortality Report', desc: 'Layer mortality trend', icon: Skull, kind: 'LAYER' },
   { id: 'ly_finance', name: 'Finance Report', desc: 'Layer batch P&L', icon: Wallet, kind: 'LAYER', financeOnly: true },
 ];
 
 export function ReportsScreen() {
   const nav = useNavigate();
-  const batches = useApp(s => s.batches);
+  const { companyId, companies, batches } = useCompanyData();
+  const company = companies.find(c => c.id === companyId);
   const pushToast = useApp(s => s.pushToast);
   const canExport = useCan('exportReports');
   const canFinance = useCan('viewFinance');
 
-  const [batchId, setBatchId] = useState(batches.find(b => b.status === 'LIVE')?.id ?? batches[0]?.id ?? '');
+  const [batchId, setBatchId] = useState(batches.find(b => b.status === 'ACTIVE')?.id ?? batches[0]?.id ?? '');
   const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 29); return d.toISOString().slice(0, 10); });
   const [to, setTo] = useState(todayISO());
   const [downloading, setDownloading] = useState<string | null>(null);
@@ -98,7 +97,7 @@ export function ReportsScreen() {
               <FileText size={22} />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-display font-bold text-lg">Amrut Reports</p>
+              <p className="font-display font-bold text-lg">{company?.name ?? 'Poultry'} Reports</p>
               <p className="text-white/60 text-xs mt-0.5">{BROILER.length + LAYER.length} report types · PDF format</p>
             </div>
           </div>

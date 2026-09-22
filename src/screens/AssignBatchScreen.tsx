@@ -1,34 +1,41 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import clsx from 'clsx';
-import { Search, CheckCircle2, Phone, Check } from 'lucide-react';
-import { useApp, useCan } from '@/store/app';
+import { CheckCircle2, Check, ChevronRight, UserPlus } from 'lucide-react';
+import { useApp, useCan, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
-import { Card, Avatar, Row, EmptyState } from '@/components/ui/Card';
-import { Button, Field, SelectField, TextArea, Toggle } from '@/components/ui/Form';
-import { ROLE_LABELS, type Role } from '@/types';
-
-const ROLES: Role[] = ['OWNER', 'FARMER', 'FARM_MANAGER', 'FARM_SUPERVISOR', 'FARM_EMPLOYEE', 'COMPANY_MANAGER', 'COMPANY_SUPERVISOR', 'FINANCER', 'OTHER'];
+import { Card, Avatar, Row, EmptyState, GroupList, ListRow, Badge } from '@/components/ui/Card';
+import { Button, Field, SearchField, TextArea, Toggle } from '@/components/ui/Form';
+import { ROLE_LABELS, type User } from '@/types';
 
 export function AssignBatchScreen() {
   const { batchId } = useParams();
   const nav = useNavigate();
-  const users = useApp(s => s.users);
-  const batches = useApp(s => s.batches);
+  const data = useCompanyData();
+  const { batches, users, assignments } = data;
   const assignUser = useApp(s => s.assignUser);
   const pushToast = useApp(s => s.pushToast);
   const canManage = useCan('manageUsers');
 
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [mobile, setMobile] = useState('');
-  const [found, setFound] = useState<typeof users[0] | null>(null);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  const [step, setStep] = useState<1 | 2>(1);
+  const [q, setQ] = useState('');
+  const [found, setFound] = useState<User | null>(null);
   const [perms, setPerms] = useState({ create: true, update: false, delete: false });
-  const [role, setRole] = useState<Role>('FARM_EMPLOYEE');
   const [comments, setComments] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const batch = batches.find(b => b.id === batchId);
+  const assignedIds = useMemo(
+    () => new Set(assignments.filter(a => a.batchId === batchId).map(a => a.userId)),
+    [assignments, batchId],
+  );
+
+  const candidates = useMemo(() => {
+    const list = users.filter(u => u.active && u.role !== 'MASTER_ADMIN' && !assignedIds.has(u.id));
+    if (!q.trim()) return list;
+    const s = q.toLowerCase();
+    return list.filter(u => u.name.toLowerCase().includes(s) || u.mobile.includes(s));
+  }, [users, assignedIds, q]);
 
   if (!canManage) {
     return (
@@ -37,43 +44,36 @@ export function AssignBatchScreen() {
         <div className="px-4 sm:px-0 mt-4">
           <Card className="bg-danger-soft border-danger/20">
             <p className="font-display text-[15px] font-semibold text-danger">Permission denied</p>
-            <p className="text-[13px] text-danger/80 mt-1">Only the OWNER and Company Manager can grant batch access.</p>
+            <p className="text-[13px] text-danger/80 mt-1">Only the OWNER can grant batch access.</p>
           </Card>
         </div>
       </Page>
     );
   }
 
-  function search() {
-    setSearchError(null);
-    const m = mobile.replace(/\D/g, '');
-    if (m.length !== 10) { setSearchError('Enter a valid 10-digit mobile number'); setFound(null); return; }
-    const u = users.find(x => x.mobile === m);
-    if (!u) { setSearchError(`No user found for ${m}`); setFound(null); return; }
-    setFound(u);
+  if (!batch) {
+    return <Page withNav><Header title="Assign batch" /><div className="px-4 sm:px-0 mt-4"><EmptyState title="Batch not found" /></div></Page>;
   }
 
   function submit() {
-    if (!batch || !found) return;
+    if (!found) return;
     setSubmitting(true);
     setTimeout(() => {
-      const r = assignUser({ batchId: batch.id, mobile, role, perms, comments: comments.trim() || undefined });
+      const r = assignUser({ batchId: batch!.id, userId: found.id, role: found.role, perms, comments: comments.trim() || undefined });
       setSubmitting(false);
       if (!r.ok) { pushToast('error', r.error ?? 'Failed'); return; }
       pushToast('success', `Access granted to ${found.name}`);
-      nav(`/batches/${batch.id}/users`, { replace: true });
+      nav(`/batches/${batch!.id}/users`, { replace: true });
     }, 400);
   }
 
-  const steps = ['Find user', 'Permissions', 'Confirm'];
-
   return (
     <Page withNav>
-      <Header title="Assign batch" subtitle={batch?.code} />
+      <Header title="Assign batch" subtitle={batch.code} />
 
       {/* stepper */}
       <div className="flex items-center px-4 sm:px-0 mt-4 mb-5">
-        {steps.map((s, i) => {
+        {['Select user', 'Confirm access'].map((s, i) => {
           const done = step > i + 1, active = step === i + 1;
           return (
             <div key={s} className="flex items-center flex-1 last:flex-none">
@@ -86,7 +86,7 @@ export function AssignBatchScreen() {
                 </div>
                 <p className={clsx('font-mono text-[9px] font-semibold uppercase tracking-wide', active ? 'text-brand' : 'text-muted-2')}>{s}</p>
               </div>
-              {i < 2 && <div className={clsx('flex-1 h-0.5 mb-5 mx-2 rounded-full transition-colors', done ? 'bg-success' : 'bg-line')} />}
+              {i === 0 && <div className={clsx('flex-1 h-0.5 mb-5 mx-2 rounded-full transition-colors', done ? 'bg-success' : 'bg-line')} />}
             </div>
           );
         })}
@@ -95,56 +95,53 @@ export function AssignBatchScreen() {
       <div className="px-4 sm:px-0 space-y-4">
         {step === 1 && (
           <>
-            <Card>
-              <Field
-                label="Mobile number"
-                type="tel" inputMode="numeric" maxLength={10}
-                value={mobile}
-                onChange={e => { setMobile(e.target.value.replace(/\D/g, '')); setFound(null); setSearchError(null); }}
-                prefix={<Phone size={14} />}
-                placeholder="10-digit number"
-                className="font-mono"
-                error={searchError ?? undefined}
-              />
-              <Button block className="mt-3" onClick={search} icon={<Search size={15} />}>Search user</Button>
-            </Card>
+            <SearchField placeholder="Search by name or mobile" value={q} onChange={setQ} />
 
-            {found && (
-              <Card className="bg-success-soft border-success/25">
-                <div className="flex items-center gap-3">
-                  <Avatar name={found.name} initials={found.initials} size={44} tone="success" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-display text-[15px] font-semibold text-ink truncate">{found.name}</p>
-                    <p className="font-mono text-[12px] text-success tnum mt-0.5">{found.mobile}</p>
-                    <p className="font-mono text-[10px] text-muted mt-0.5 uppercase tracking-wide">{ROLE_LABELS[found.role]}</p>
-                  </div>
-                  <CheckCircle2 size={20} className="text-success shrink-0" />
-                </div>
-              </Card>
+            {candidates.length === 0 ? (
+              <EmptyState icon={<UserPlus size={22} />} title="No users available"
+                description={q ? 'Try a different search.' : 'Every active company user is already assigned to this batch. Create users first.'} />
+            ) : (
+              <GroupList>
+                {candidates.map(u => (
+                  <ListRow key={u.id} onClick={() => { setFound(u); setStep(2); }}
+                    leading={<Avatar name={u.name} size={38} tone="brand" />}
+                    title={u.name}
+                    subtitle={<span className="font-mono">+91 {u.mobile}</span>}
+                    trailing={
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Badge tone="neutral">{ROLE_LABELS[u.role]}</Badge>
+                        <ChevronRight size={16} className="text-muted-2" />
+                      </div>
+                    } />
+                ))}
+              </GroupList>
             )}
-
-            {found
-              ? <Button block size="lg" onClick={() => setStep(2)}>Continue</Button>
-              : !searchError && <EmptyState icon={<Search size={22} />} title="Find a user" description="Search by the 10-digit mobile number registered with Amrut Poultry." />}
           </>
         )}
 
         {step === 2 && found && (
           <>
             <Card>
-              <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-1">Permissions</p>
+              <div className="flex items-center gap-3 mb-3">
+                <Avatar name={found.name} size={44} tone="success" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-display text-[15px] font-semibold text-ink truncate">{found.name}</p>
+                  <p className="font-mono text-[12px] text-muted tnum mt-0.5">+91 {found.mobile}</p>
+                  <p className="font-mono text-[10px] text-muted mt-0.5 uppercase tracking-wide">{ROLE_LABELS[found.role]}</p>
+                </div>
+              </div>
+              <Row label="Batch" value={batch.code} mono={false} />
+            </Card>
+
+            <Card>
+              <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-1">Extra permissions for this batch</p>
               <div className="space-y-0.5">
                 <Toggle checked={perms.create} onChange={v => setPerms(p => ({ ...p, create: v }))} label="Create" description="Add new records (eggs, feed, mortality)" />
                 <Toggle checked={perms.update} onChange={v => setPerms(p => ({ ...p, update: v }))} label="Update" description="Edit existing entries" />
                 <Toggle checked={perms.delete} onChange={v => setPerms(p => ({ ...p, delete: v }))} label="Delete" description="Remove records (dangerous)" />
               </div>
-            </Card>
-
-            <Card>
-              <SelectField label="User role" value={role} onChange={e => setRole(e.target.value as Role)}
-                options={ROLES.map(r => ({ value: r, label: ROLE_LABELS[r] }))} />
               <p className="text-[12px] text-muted mt-2 leading-relaxed">
-                Role sets default permissions. Financial visibility stays restricted for operational roles (Farm Manager, Supervisor, Employee) unless explicitly granted.
+                These are additions on top of the role defaults for {ROLE_LABELS[found.role]}. Financial visibility stays restricted for operational roles.
               </p>
             </Card>
 
@@ -154,29 +151,7 @@ export function AssignBatchScreen() {
 
             <div className="flex gap-3">
               <Button variant="outline" onClick={() => setStep(1)}>Back</Button>
-              <Button block className="flex-1" onClick={() => {
-                if (!perms.create && !perms.update && !perms.delete) { pushToast('error', 'Select at least one permission'); return; }
-                setStep(3);
-              }}>Review</Button>
-            </div>
-          </>
-        )}
-
-        {step === 3 && found && (
-          <>
-            <Card>
-              <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-1">Review access grant</p>
-              <Row label="Batch" value={batch?.code ?? '—'} mono={false} />
-              <Row label="User" value={found.name} mono={false} />
-              <Row label="Mobile" value={`+91 ${found.mobile}`} />
-              <Row label="Role" value={ROLE_LABELS[role]} mono={false} />
-              <Row label="Permissions" value={[perms.create && 'Create', perms.update && 'Update', perms.delete && 'Delete'].filter(Boolean).join(', ') || 'None'} mono={false} />
-              {comments && <div className="bg-sunk rounded-[12px] p-3 mt-3"><p className="text-[12px] text-muted leading-relaxed">Notes: {comments}</p></div>}
-            </Card>
-
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
-              <Button variant="success" block className="flex-1" loading={submitting} onClick={submit} icon={<CheckCircle2 size={16} />}>
+              <Button block className="flex-1" loading={submitting} onClick={submit} icon={<CheckCircle2 size={16} />}>
                 Grant access
               </Button>
             </div>

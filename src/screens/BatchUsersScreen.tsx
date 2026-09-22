@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Plus, Trash2, ShieldCheck, Eye } from 'lucide-react';
-import { useApp, useCan } from '@/store/app';
+import { useApp, useCan, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, PermissionChip, EmptyState, Avatar, Badge } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Form';
@@ -11,9 +11,7 @@ import { ROLE_LABELS } from '@/types';
 export function BatchUsersScreen() {
   const { batchId } = useParams();
   const nav = useNavigate();
-  const batches = useApp(s => s.batches);
-  const assignments = useApp(s => s.assignments);
-  const users = useApp(s => s.users);
+  const { batches, assignments, users } = useCompanyData();
   const revoke = useApp(s => s.revokeAssignment);
   const pushToast = useApp(s => s.pushToast);
   const canManage = useCan('manageUsers');

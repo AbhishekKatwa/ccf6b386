@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ClipboardList, Plus, CheckCircle2, Clock, XCircle, AlertCircle, Trash2 } from 'lucide-react';
-import { useApp, useCan } from '@/store/app';
+import { useApp, useCan, useCompanyData } from '@/store/app';
 import { Page, ScreenTitle } from '@/components/ui/Header';
 import { Card, EmptyState, StatStrip, StatCell, Stat, StatusBadge, Badge, type Tone } from '@/components/ui/Card';
 import { Button, Field, SelectField, TextArea, SegmentedTabs } from '@/components/ui/Form';
@@ -15,16 +15,12 @@ const priorityTone: Record<TaskPriority, Tone> = {
 };
 
 export function TasksScreen() {
-  const tasks = useApp(s => s.tasks);
-  const users = useApp(s => s.users);
-  const batches = useApp(s => s.batches);
-  const farms = useApp(s => s.farms);
-  const sheds = useApp(s => s.sheds);
+  const { tasks, users, batches, farms, sheds } = useCompanyData();
   const addTask = useApp(s => s.addTask);
   const updateTask = useApp(s => s.updateTask);
   const deleteTask = useApp(s => s.deleteTask);
   const pushToast = useApp(s => s.pushToast);
-  const canCreate = useCan('create');
+  const canCreate = useCan('createDailyOps');
   const canDelete = useCan('delete');
 
   const [filter, setFilter] = useState<'today' | 'pending' | 'all' | 'completed'>('today');
@@ -170,7 +166,7 @@ export function TasksScreen() {
               options={[{ value: '', label: '— None —' }, ...sheds.filter(s => s.farmId === form.farmId).map(s => ({ value: s.id, label: s.name }))]} />
           )}
           <SelectField label="Batch" value={form.batchId} onChange={e => setForm(f => ({ ...f, batchId: e.target.value }))}
-            options={[{ value: '', label: '— None —' }, ...batches.filter(b => b.status === 'LIVE').map(b => ({ value: b.id, label: b.code }))]} />
+            options={[{ value: '', label: '— None —' }, ...batches.filter(b => b.status === 'ACTIVE').map(b => ({ value: b.id, label: b.code }))]} />
           <SelectField label="Priority" value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value as TaskPriority }))}
             options={PRIORITIES.map(p => ({ value: p, label: p }))} />
           <TextArea label="Remarks" rows={2} value={form.remarks} onChange={e => setForm(f => ({ ...f, remarks: e.target.value }))} />

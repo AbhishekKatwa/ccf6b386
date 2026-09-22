@@ -1,19 +1,23 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Egg, Skull, Wheat, AlertTriangle, ClipboardList, Handshake, ChevronRight,
-  Activity, Layers, Lock, PlusCircle, CheckCircle2, Trash2, Pencil,
+  Activity, Layers, Lock, PlusCircle, CheckCircle2, Trash2, Pencil, Package,
+  TriangleAlert, Flame, Sun, Moon,
 } from 'lucide-react';
-import { useApp, useCurrentUser, useCan } from '@/store/app';
+import { useApp, useCurrentUser, useCan, useCompanyData } from '@/store/app';
 import { SyncPill } from '@/components/layout/AppShell';
 import { fmtIN, fmtMoney, fmtPct, greeting, todayISO, fmtDateShort, fmtDateTime } from '@/lib/format';
-import { liveBirdsOn, cumulativeMortality, eggSummary, productionPct } from '@/lib/calc';
+import { liveBirdsOn, cumulativeMortality, eggSummary } from '@/lib/calc';
 import { Page } from '@/components/ui/Header';
 import { Card, SectionTitle, GroupList, ListRow, StatusBadge, EmptyState, AllClear, Avatar, IconTile, Badge } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Form';
+import { Button, Field } from '@/components/ui/Form';
+import { Dialog as Modal } from '@/components/ui/Dialog';
 import { AreaTrend, CHART } from '@/components/ui/Charts';
-import { ROLE_LABELS } from '@/types';
-import type { ReactNode } from 'react';
+import { ROLE_LABELS, EGGS_PER_TRAY } from '@/types';
+import type { Batch } from '@/types';
+import { LaborHomeScreen } from '@/screens/LaborScreen';
 
 type Attention = {
   id: string; icon: ReactNode; tone: 'danger' | 'warn' | 'accent' | 'brand';
@@ -25,45 +29,45 @@ const ENTITY: Record<string, string> = {
   Mortality: 'mortality', Feed: 'feed', EggCollection: 'egg collection', EggSale: 'egg sale',
   Finance: 'transaction', Task: 'task', Batch: 'batch', DayLock: 'a day', Session: 'session',
   Assignment: 'access', Trader: 'trader', Farm: 'farm', FeedStock: 'feed stock', TraderTxn: 'trader txn',
+  SaleLog: 'sale log', Disposal: 'disposal', FeedConsumption: 'feed',
 };
 
 export function HomeScreen() {
+  const user = useCurrentUser();
+  if (user?.role === 'FARM_LABOR') return <LaborHomeScreen />;
+  return <ManagerHome />;
+}
+
+/* ================================ manager / owner / supervisor home ================================ */
+
+function ManagerHome() {
   const nav = useNavigate();
   const user = useCurrentUser();
-  const batches = useApp(s => s.batches);
-  const assignments = useApp(s => s.assignments);
-  const tasks = useApp(s => s.tasks);
-  const mortality = useApp(s => s.mortality);
-  const feed = useApp(s => s.feed);
-  const eggs = useApp(s => s.eggs);
-  const traders = useApp(s => s.traders);
-  const audit = useApp(s => s.audit);
-  const users = useApp(s => s.users);
+  const data = useCompanyData();
+  const { batches, mortality, feed, eggs, traders, tasks, users, assignments, audit } = data;
   const canViewFinance = useCan('viewFinance');
 
   const today = todayISO();
 
   const myLive = useMemo(() => {
-    const mine = user?.role === 'OWNER'
+    // Owner sees the whole company; Master Admin sees it too once they enter a company context.
+    const mine = user?.role === 'OWNER' || user?.role === 'MASTER_ADMIN'
       ? batches.map(b => b.id)
       : assignments.filter(a => a.userId === user?.id).map(a => a.batchId);
-    return batches.filter(b => b.status === 'LIVE' && mine.includes(b.id));
+    return batches.filter(b => b.status === 'ACTIVE' && mine.includes(b.id));
   }, [batches, assignments, user]);
 
   const hasLayers = myLive.some(b => b.birdType === 'LAYER');
 
   const totals = useMemo(() => {
-    let live = 0, layerLive = 0, eggsGood = 0, eggsTotal = 0, mortToday = 0;
+    let live = 0, eggsGood = 0, eggsTotal = 0, mortToday = 0;
     for (const b of myLive) {
-      const l = liveBirdsOn(b, today, mortality);
-      live += l;
-      if (b.birdType === 'LAYER') layerLive += l;
-      const e = eggSummary(b.id, eggs, today);
-      eggsGood += e.good; eggsTotal += e.total;
+      live += liveBirdsOn(b, today, mortality);
+      const e = eggSummary(b.shedId, eggs, today);
+      eggsGood += e.byGrade.GOOD; eggsTotal += e.total;
       mortToday += mortality.filter(m => m.batchId === b.id && m.date === today).reduce((s, m) => s + m.count, 0);
     }
-    const prod = productionPct(eggsGood, layerLive);
-    return { live, layerLive, eggsGood, eggsTotal, mortToday, prod };
+    return { live, eggsGood, eggsTotal, mortToday };
   }, [myLive, mortality, eggs, today]);
 
   const week = useMemo(() => {
@@ -74,7 +78,7 @@ export function HomeScreen() {
       labels.push(fmtDateShort(date));
       let e = 0, m = 0;
       for (const b of myLive) {
-        e += eggs.filter(x => x.batchId === b.id && x.date === date).reduce((s, x) => s + x.good, 0);
+        e += eggs.filter(x => x.shedId === b.shedId && x.date === date).reduce((s, x) => s + x.goodTrays, 0);
         m += mortality.filter(x => x.batchId === b.id && x.date === date).reduce((s, x) => s + x.count, 0);
       }
       eggSeries.push(e); mortSeries.push(m);
@@ -89,7 +93,7 @@ export function HomeScreen() {
     for (const b of myLive) {
       const loggedMort = mortality.some(m => m.batchId === b.id && m.date === today);
       const loggedFeed = feed.some(f => f.batchId === b.id && f.date === today);
-      const loggedEgg = b.birdType !== 'LAYER' || eggs.some(e => e.batchId === b.id && e.date === today);
+      const loggedEgg = b.birdType !== 'LAYER' || eggs.some(e => e.shedId === b.shedId && e.date === today);
       if (!loggedMort || !loggedFeed || !loggedEgg) {
         const missing = [!loggedMort && 'mortality', !loggedFeed && 'feed', !loggedEgg && 'eggs'].filter(Boolean).join(', ');
         items.push({
@@ -129,10 +133,10 @@ export function HomeScreen() {
     return items;
   }, [myLive, mortality, feed, eggs, today, pendingTasks.length, canViewFinance, traders]);
 
-  const recent = audit.slice(0, 7);
+  const recent = useMemo(() => audit.slice(0, 7), [audit]);
   const firstName = user?.name.split(' ')[0] ?? 'there';
   const trendData = hasLayers ? week.eggSeries : week.mortSeries;
-  const trendLabel = hasLayers ? 'Eggs collected (good)' : 'Mortality';
+  const trendLabel = hasLayers ? 'Good trays collected' : 'Mortality';
 
   const toneMap: Record<Attention['tone'], string> = {
     danger: 'bg-danger-soft text-danger', warn: 'bg-warn-soft text-warn',
@@ -165,7 +169,7 @@ export function HomeScreen() {
           <EmptyState
             icon={<Layers size={22} />}
             title="No live batches"
-            description="Once a batch goes live it will appear here with production, feed and mortality at a glance."
+            description="Once a batch goes live it will appear here with eggs, feed and mortality at a glance."
             action={<Button onClick={() => nav('/batches')} icon={<ChevronRight size={15} />}>View batches</Button>}
           />
         </div>
@@ -185,11 +189,8 @@ export function HomeScreen() {
                   <span className="text-white/70 text-[13px] mb-1.5">birds</span>
                 </div>
                 <div className="grid grid-flow-col auto-cols-fr divide-x divide-white/15 mt-5 -mx-1">
-                  {hasLayers && (
-                    <HeroStat label="Eggs today" value={fmtIN(totals.eggsTotal)} />
-                  )}
+                  {hasLayers && <HeroStat label="Eggs today" value={`${fmtIN(totals.eggsTotal)} tr`} />}
                   <HeroStat label="Mortality today" value={fmtIN(totals.mortToday)} />
-                  {hasLayers && <HeroStat label="Production" value={fmtPct(totals.prod, 1)} />}
                   <HeroStat label="Batches" value={fmtIN(myLive.length)} />
                 </div>
               </div>
@@ -246,7 +247,7 @@ export function HomeScreen() {
                 <GroupList>
                   {myLive.slice(0, 4).map(b => {
                     const live = liveBirdsOn(b, today, mortality);
-                    const e = eggSummary(b.id, eggs, today);
+                    const e = eggSummary(b.shedId, eggs, today);
                     const cum = cumulativeMortality(b.id, mortality, today);
                     const mortPct = b.initialBirds > 0 ? (cum / b.initialBirds) * 100 : 0;
                     return (
@@ -255,7 +256,7 @@ export function HomeScreen() {
                         onClick={() => nav(`/batches/${b.id}`)}
                         leading={<IconTile tone={b.birdType === 'LAYER' ? 'accent' : 'brand'} size={38}>{b.birdType === 'LAYER' ? <Egg size={17} /> : <Wheat size={17} />}</IconTile>}
                         title={<span className="flex items-center gap-2">{b.code} <StatusBadge status={b.status} /></span>}
-                        subtitle={`${fmtIN(live)} live · ${fmtIN(mortPct === 0 ? 0 : Number(mortPct.toFixed(2)))}% mort${b.birdType === 'LAYER' ? ` · ${fmtIN(e.total)} eggs today` : ''}`}
+                        subtitle={`${fmtIN(live)} live · ${fmtIN(mortPct === 0 ? 0 : Number(mortPct.toFixed(2)))}% mort${b.birdType === 'LAYER' ? ` · ${fmtIN(e.total)} trays today` : ''}`}
                         trailing={<ChevronRight size={17} className="text-muted-2 shrink-0" />}
                       />
                     );

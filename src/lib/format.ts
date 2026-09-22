@@ -77,6 +77,26 @@ export function greeting(d = new Date()): string {
   return 'Good Night';
 }
 
+/** 'HH:mm' → '7:15 AM'. Labor reads clocks, not 24-hour strings. */
+export function fmtClock(hhmm: string): string {
+  const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(hhmm);
+  if (!m) return '—';
+  const h = Number(m[1]);
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${m[2]} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
+/** Local 'HH:mm' of a full ISO timestamp. */
+export function timeOf(iso: string): string {
+  const d = safeDate(iso);
+  return d ? format(d, 'HH:mm') : '';
+}
+
+/** Current local time as 'HH:mm', for prefilling a feed round. */
+export function nowHHMM(d = new Date()): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).slice(0, 2);
   return parts.map(p => p[0]?.toUpperCase() ?? '').join('') || '?';

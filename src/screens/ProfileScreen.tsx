@@ -4,7 +4,7 @@ import {
   User, CreditCard, Gem, Globe, Lock, Bell, Share2, Star,
   FileText, LogOut, Wifi, WifiOff, RefreshCw, Check,
 } from 'lucide-react';
-import { useApp, useCurrentUser } from '@/store/app';
+import { useApp, useCurrentUser, useCompanyData } from '@/store/app';
 import { Page, ScreenTitle } from '@/components/ui/Header';
 import { Card, Row, GroupList, ListRow, IconTile, Avatar, Badge } from '@/components/ui/Card';
 import { Button, Field } from '@/components/ui/Form';
@@ -22,9 +22,7 @@ export function ProfileScreen() {
   const syncPending = useApp(s => s.syncPending);
   const resetDemo = useApp(s => s.resetDemo);
   const pushToast = useApp(s => s.pushToast);
-  const farms = useApp(s => s.farms);
-  const batches = useApp(s => s.batches);
-  const mortality = useApp(s => s.mortality);
+  const { companyId, companies, farms, batches, mortality } = useCompanyData();
 
   const [confirmOut, setConfirmOut] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
@@ -34,7 +32,7 @@ export function ProfileScreen() {
 
   if (!user) return null;
 
-  const totalBirds = batches.filter(b => b.status === 'LIVE').reduce((s, b) => s + b.initialBirds, 0);
+  const totalBirds = batches.filter(b => b.status === 'ACTIVE').reduce((s, b) => s + b.initialBirds, 0);
   const pendingSync = mortality.filter(m => !m.synced).length;
 
   const groups: Group[] = [
@@ -136,7 +134,7 @@ export function ProfileScreen() {
         ))}
 
         <p className="text-center text-faint text-xs mt-6 font-mono">
-          AMRUT POULTRY MANAGEMENT · v2.0 · Build 2026.09
+          {(companies.find(c => c.id === companyId)?.name ?? 'Poultry Management').toUpperCase()} · v2.0 · Build 2026.09
         </p>
       </div>
 

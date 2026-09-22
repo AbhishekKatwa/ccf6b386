@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Wallet, Plus, TrendingUp, TrendingDown, ShieldAlert } from 'lucide-react';
-import { useApp, useCan } from '@/store/app';
+import { useApp, useCan, useCompanyData } from '@/store/app';
 import { Header, Page, ScreenTitle } from '@/components/ui/Header';
 import { Card, EmptyState, StatStrip, StatCell, Stat, IconTile, GroupList, ListRow, Badge } from '@/components/ui/Card';
 import { Button, Field, SelectField, TextArea, SegmentedTabs } from '@/components/ui/Form';
@@ -14,8 +14,7 @@ const CATEGORIES = ['Egg Sale', 'Bird Sale', 'Manure Sale', 'Feed Purchase', 'Ch
 const isInflow = (k: TxnKind) => k === 'INCOME' || k === 'SALE' || k === 'PAYMENT_IN';
 
 export function FinanceScreen() {
-  const finance = useApp(s => s.finance);
-  const batches = useApp(s => s.batches);
+  const { finance, batches } = useCompanyData();
   const addFinance = useApp(s => s.addFinance);
   const pushToast = useApp(s => s.pushToast);
   const canView = useCan('viewFinance');

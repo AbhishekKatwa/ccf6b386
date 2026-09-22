@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { Warehouse, ChevronRight, MapPin } from 'lucide-react';
-import { useApp } from '@/store/app';
+import { useCompanyData } from '@/store/app';
 import { ScreenTitle, Page } from '@/components/ui/Header';
 import { Card, EmptyState, GroupList, ListRow, IconTile, StatStrip, StatCell, Stat } from '@/components/ui/Card';
 import { fmtIN, todayISO } from '@/lib/format';
@@ -8,13 +8,10 @@ import { liveBirdsOn } from '@/lib/calc';
 
 export function FarmsScreen() {
   const nav = useNavigate();
-  const farms = useApp(s => s.farms);
-  const sheds = useApp(s => s.sheds);
-  const batches = useApp(s => s.batches);
-  const mortality = useApp(s => s.mortality);
+  const { farms, sheds, batches, mortality } = useCompanyData();
 
   const today = todayISO();
-  const liveBatches = batches.filter(b => b.status === 'LIVE');
+  const liveBatches = batches.filter(b => b.status === 'ACTIVE');
   const liveBirds = liveBatches.reduce((s, b) => s + liveBirdsOn(b, today, mortality), 0);
   const capacity = sheds.reduce((s, x) => s + x.capacity, 0);
 
@@ -38,7 +35,7 @@ export function FarmsScreen() {
           <GroupList>
             {farms.map(f => {
               const fSheds = sheds.filter(s => s.farmId === f.id);
-              const fLive = batches.filter(b => b.farmId === f.id && b.status === 'LIVE');
+              const fLive = batches.filter(b => b.farmId === f.id && b.status === 'ACTIVE');
               return (
                 <ListRow
                   key={f.id}

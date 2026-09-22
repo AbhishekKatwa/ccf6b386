@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Handshake, Plus, Phone, ChevronRight } from 'lucide-react';
-import { useApp, useCan } from '@/store/app';
+import { useApp, useCan, useCompanyData } from '@/store/app';
 import { ScreenTitle, Page } from '@/components/ui/Header';
 import { Card, EmptyState, GroupList, Avatar, Badge, StatStrip, StatCell, Stat } from '@/components/ui/Card';
 import { Button, Field, SearchField } from '@/components/ui/Form';
@@ -10,14 +10,14 @@ import { fmtIN, fmtMoney } from '@/lib/format';
 
 export function TradersScreen() {
   const nav = useNavigate();
-  const traders = useApp(s => s.traders);
+  const traders = useCompanyData().traders;
   const addTrader = useApp(s => s.addTrader);
   const pushToast = useApp(s => s.pushToast);
-  const canCreate = useCan('create');
+  const canManage = useCan('manageTraders');
   const canFinance = useCan('viewFinance');
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: '', mobile: '', gstin: '', address: '' });
+  const [form, setForm] = useState({ name: '', mobile: '', gstin: '', address: '', openingBalance: '' });
 
   const filtered = useMemo(() => {
     if (!q.trim()) return traders;
@@ -32,16 +32,18 @@ export function TradersScreen() {
     const m = form.mobile.replace(/\D/g, '');
     if (!form.name.trim()) return pushToast('error', 'Name required');
     if (m.length !== 10) return pushToast('error', 'Valid 10-digit mobile required');
-    addTrader({ name: form.name.trim(), mobile: m, gstin: form.gstin || undefined, address: form.address || undefined, outstandingAmount: 0, active: true });
+    const opening = parseFloat(form.openingBalance) || 0;
+    const t = addTrader({ name: form.name.trim(), mobile: m, gstin: form.gstin || undefined, address: form.address || undefined, openingBalance: opening, outstandingAmount: opening, active: true });
+    if (!t) return pushToast('error', 'Only Owner / Financial Supervisor can add traders');
     pushToast('success', 'Trader added');
     setOpen(false);
-    setForm({ name: '', mobile: '', gstin: '', address: '' });
+    setForm({ name: '', mobile: '', gstin: '', address: '', openingBalance: '' });
   }
 
   return (
     <Page withNav>
       <ScreenTitle eyebrow="Commerce" title="Traders" subtitle={`${traders.length} in network`}
-        action={canCreate ? <Button size="sm" icon={<Plus size={14} />} onClick={() => setOpen(true)}>Add</Button> : undefined} />
+        action={canManage ? <Button size="sm" icon={<Plus size={14} />} onClick={() => setOpen(true)}>Add</Button> : undefined} />
 
       <div className="px-4 sm:px-0 space-y-4">
         <Card padded={false} className="overflow-hidden">
@@ -57,7 +59,7 @@ export function TradersScreen() {
         {filtered.length === 0 ? (
           <EmptyState icon={<Handshake size={22} />} title="No traders found"
             description={q ? 'Try a different search.' : 'Add your first trader to start tracking sales and outstanding.'}
-            action={canCreate ? <Button onClick={() => setOpen(true)} icon={<Plus size={14} />}>Add trader</Button> : undefined} />
+            action={canManage ? <Button onClick={() => setOpen(true)} icon={<Plus size={14} />}>Add trader</Button> : undefined} />
         ) : (
           <GroupList>
             {filtered.map(t => (
@@ -82,6 +84,7 @@ export function TradersScreen() {
           <Field label="Mobile number" type="tel" inputMode="numeric" maxLength={10} value={form.mobile} onChange={e => setForm(f => ({ ...f, mobile: e.target.value.replace(/\D/g, '') }))} prefix="+91" placeholder="10-digit" className="font-mono" />
           <Field label="GSTIN (optional)" value={form.gstin} onChange={e => setForm(f => ({ ...f, gstin: e.target.value }))} placeholder="27AABCR1234F1Z5" className="font-mono" />
           <Field label="Address (optional)" value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} placeholder="City, State" />
+          <Field label="Opening balance (₹, optional)" type="number" inputMode="decimal" value={form.openingBalance} onChange={e => setForm(f => ({ ...f, openingBalance: e.target.value }))} placeholder="e.g. 5000" className="font-mono" hint="Amount already owed by the trader" />
         </div>
       </Dialog>
     </Page>

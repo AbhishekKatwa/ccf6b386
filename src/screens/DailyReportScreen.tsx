@@ -1,34 +1,31 @@
 import { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { FileText, Printer } from 'lucide-react';
-import { useApp, useCan } from '@/store/app';
+import { useApp, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, EmptyState } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Form';
-import { fmtIN, fmtPct, fmtDate, fmtMoney, todayISO } from '@/lib/format';
+import { fmtIN, fmtDate, todayISO } from '@/lib/format';
 import { batchAgeDays, cumulativeMortality, liveBirdsOn } from '@/lib/calc';
+import { EGG_GRADES, EGG_GRADE_LABELS, EGGS_PER_TRAY, EMPTY_GRADE_COUNTS, type EggGradeCounts } from '@/types';
 
 export function DailyReportScreen() {
   const { batchId } = useParams();
-  const batches = useApp(s => s.batches);
-  const mortality = useApp(s => s.mortality);
-  const feed = useApp(s => s.feed);
-  const eggs = useApp(s => s.eggs);
-  const weights = useApp(s => s.weights);
-  const farms = useApp(s => s.farms);
-  const sheds = useApp(s => s.sheds);
+  const data = useCompanyData();
+  const { batches, mortality, feed, eggs, farms, sheds, companies } = data;
   const pushToast = useApp(s => s.pushToast);
-  const canFinance = useCan('viewFinance');
   const batch = batches.find(b => b.id === batchId);
+  const company = companies.find(c => c.id === data.companyId);
 
   const rows = useMemo(() => {
     if (!batch) return [];
     const out: Array<{
       date: string; day: number; live: number; mort: number; mortPct: number;
-      cumMort: number; cumMortPct: number; feedBags: number; cumBags: number;
-      feedPerBirdG: number; weightG: number; fcr: number; eggs: number; prodPct: number;
+      cumMort: number; cumMortPct: number;
+      feedKg: number; cumFeedKg: number; feedPerBirdG: number;
+      trays: number; eggs: number; byGrade: EggGradeCounts;
     }> = [];
-    let cumBags = 0;
+    let cumFeedKg = 0;
     for (let i = 29; i >= 0; i--) {
       const d = new Date(); d.setDate(d.getDate() - i);
       const date = d.toISOString().slice(0, 10);
@@ -36,33 +33,33 @@ export function DailyReportScreen() {
       const live = liveBirdsOn(batch, date, mortality);
       const mort = mortality.filter(x => x.batchId === batch.id && x.date === date).reduce((s, x) => s + x.count, 0);
       const cumMort = cumulativeMortality(batch.id, mortality, date);
-      const bags = feed.filter(x => x.batchId === batch.id && x.date === date).reduce((s, x) => s + x.bags, 0);
-      cumBags += bags;
-      const feedKg = bags * 50;
+      const feedT = feed.filter(x => x.batchId === batch.id && x.date === date).reduce((s, x) => s + x.tonnes, 0);
+      const feedKg = Math.round(feedT * 1000);
+      cumFeedKg += feedKg;
       const feedPerBirdG = live > 0 ? Math.round((feedKg * 1000) / live) : 0;
-      const w = weights.filter(x => x.batchId === batch.id && x.date <= date).sort((a, b) => a.date.localeCompare(b.date)).pop();
-      const weightG = w ? Math.round(w.avgWeightKg * 1000) : 0;
-      const cumFeedKg = feed.filter(x => x.batchId === batch.id && x.date <= date).reduce((s, x) => s + x.bags * x.bagWeightKg, 0);
-      const cumBirdWeight = live * (w?.avgWeightKg ?? 0);
-      const fcr = cumBirdWeight > 0 ? cumFeedKg / cumBirdWeight : 0;
-      const eggEntries = eggs.filter(x => x.batchId === batch.id && x.date === date);
-      const eggTotal = eggEntries.reduce((s, x) => s + x.good + x.damaged + x.cracked, 0);
-      const prodPct = live > 0 ? (eggTotal / live) * 100 : 0;
+      const eggEntries = eggs.filter(x => x.shedId === batch.shedId && x.date === date);
+      const byGrade: EggGradeCounts = { ...EMPTY_GRADE_COUNTS };
+      for (const x of eggEntries) {
+        byGrade.GOOD += x.goodTrays; byGrade.BROKEN += x.brokenTrays;
+        byGrade.DOUBLE += x.doubleTrays; byGrade.SMALL += x.smallTrays;
+      }
+      const trays = byGrade.GOOD + byGrade.BROKEN + byGrade.DOUBLE + byGrade.SMALL;
       out.push({
         date, day, live, mort,
         mortPct: batch.initialBirds > 0 ? (mort / batch.initialBirds) * 100 : 0,
         cumMort,
         cumMortPct: batch.initialBirds > 0 ? (cumMort / batch.initialBirds) * 100 : 0,
-        feedBags: bags, cumBags, feedPerBirdG, weightG, fcr,
-        eggs: eggTotal, prodPct,
+        feedKg, cumFeedKg, feedPerBirdG,
+        trays, eggs: trays * EGGS_PER_TRAY, byGrade,
       });
     }
     return out;
-  }, [batch, mortality, feed, eggs, weights]);
+  }, [batch, mortality, feed, eggs]);
 
   if (!batch) return <Page><Header title="Daily report" /><div className="px-4 sm:px-0"><EmptyState title="Batch not found" /></div></Page>;
   const farm = farms.find(f => f.id === batch.farmId);
   const shed = sheds.find(s => s.id === batch.shedId);
+  const isLayer = batch.birdType === 'LAYER';
 
   function print() {
     pushToast('info', 'Opening print dialog…');
@@ -77,17 +74,17 @@ export function DailyReportScreen() {
       <div className="px-4 sm:px-0 mt-3">
         <Card padded={false} className="overflow-hidden">
           <div className="px-4 py-3.5 bg-brand text-white">
-            <p className="font-display font-semibold text-[15px] tracking-tight">Amrut Poultry Management</p>
+            <p className="font-display font-semibold text-[15px] tracking-tight">{company?.name ?? 'Poultry Management'}</p>
             <p className="font-mono text-[10px] text-white/60 mt-1 tnum">
               {farm?.name} · {shed?.name} · Batch {batch.code} · Generated {fmtDate(todayISO())}
             </p>
           </div>
 
           <div className="overflow-x-auto no-scrollbar">
-            <table className="w-full text-[9px] font-mono tnum" style={{ minWidth: 720 }}>
+            <table className="w-full text-[9px] font-mono tnum" style={{ minWidth: 760 }}>
               <thead>
                 <tr className="bg-brand-2 text-white">
-                  {['Day', 'Date', 'Live', 'Mort', 'Mort%', 'C.Mor', 'C.Mor%', 'Bags', 'CumBags', 'F/B(g)', 'Wt(g)', 'FCR', batch.birdType === 'LAYER' ? 'Eggs' : '—', batch.birdType === 'LAYER' ? 'Prod%' : '—'].map(h => (
+                  {['Day', 'Date', 'Live', 'Mort', 'Mort%', 'C.Mor', 'C.Mor%', 'Feed kg', 'C.Feed t', 'g/bird', ...(isLayer ? [...EGG_GRADES.map(g => EGG_GRADE_LABELS[g]), 'Trays', 'Eggs'] : [])].map(h => (
                     <th key={h} className="px-1.5 py-1.5 text-left font-semibold whitespace-nowrap uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -102,13 +99,12 @@ export function DailyReportScreen() {
                     <td className="px-1.5 py-1">{r.mortPct.toFixed(3)}</td>
                     <td className="px-1.5 py-1">{fmtIN(r.cumMort)}</td>
                     <td className="px-1.5 py-1">{r.cumMortPct.toFixed(2)}</td>
-                    <td className="px-1.5 py-1">{r.feedBags}</td>
-                    <td className="px-1.5 py-1">{fmtIN(r.cumBags)}</td>
+                    <td className="px-1.5 py-1">{fmtIN(r.feedKg)}</td>
+                    <td className="px-1.5 py-1">{(r.cumFeedKg / 1000).toFixed(2)}</td>
                     <td className="px-1.5 py-1">{r.feedPerBirdG}</td>
-                    <td className="px-1.5 py-1">{r.weightG || '—'}</td>
-                    <td className="px-1.5 py-1">{r.fcr ? r.fcr.toFixed(2) : '—'}</td>
-                    <td className="px-1.5 py-1">{batch.birdType === 'LAYER' ? fmtIN(r.eggs) : '—'}</td>
-                    <td className="px-1.5 py-1">{batch.birdType === 'LAYER' ? r.prodPct.toFixed(2) : '—'}</td>
+                    {isLayer && EGG_GRADES.map(g => <td key={g} className="px-1.5 py-1">{r.byGrade[g]}</td>)}
+                    {isLayer && <td className="px-1.5 py-1">{fmtIN(r.trays)}</td>}
+                    {isLayer && <td className="px-1.5 py-1">{fmtIN(r.eggs)}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -123,15 +119,14 @@ export function DailyReportScreen() {
           </div>
         </Card>
 
-        {canFinance && (
-          <Card className="mt-3">
-            <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-2">Production cost estimate</p>
-            <p className="text-[13px] text-muted leading-relaxed">
-              Total feed consumed: <strong className="text-ink font-mono tnum">{fmtIN(rows.reduce((s, r) => s + r.feedBags, 0))} bags</strong> ·
-              approx cost: <strong className="text-ink font-mono tnum">{fmtMoney(rows.reduce((s, r) => s + r.feedBags, 0) * 50 * 25)}</strong>
-            </p>
-          </Card>
-        )}
+        <Card className="mt-3">
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-2">30-day totals</p>
+          <p className="text-[13px] text-muted leading-relaxed">
+            Feed consumed: <strong className="text-ink font-mono tnum">{fmtIN((rows[rows.length - 1]?.cumFeedKg ?? 0) / 1000, 2)} t</strong> ·
+            Mortality: <strong className="text-ink font-mono tnum">{fmtIN(rows[rows.length - 1]?.cumMort ?? 0)} birds</strong>
+            {isLayer && <> · Eggs collected: <strong className="text-ink font-mono tnum">{fmtIN(rows.reduce((s, r) => s + r.eggs, 0))}</strong></>}
+          </p>
+        </Card>
       </div>
     </Page>
   );
