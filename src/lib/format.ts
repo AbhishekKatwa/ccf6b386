@@ -1,0 +1,87 @@
+import { format, parseISO, differenceInDays, isValid } from 'date-fns';
+
+export function fmtIN(n: number, decimals = 0): string {
+  if (!isFinite(n)) return '0';
+  const neg = n < 0;
+  const abs = Math.abs(n);
+  const s = abs.toLocaleString('en-IN', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+  return neg ? `-${s}` : s;
+}
+
+export function fmtMoney(n: number, decimals = 0): string {
+  return `₹${fmtIN(n, decimals)}`;
+}
+
+export function fmtPct(n: number, decimals = 2): string {
+  if (!isFinite(n)) return '0%';
+  return `${n.toFixed(decimals)}%`;
+}
+
+export function fmtKg(n: number, decimals = 0): string {
+  return `${fmtIN(n, decimals)} kg`;
+}
+
+export function fmtDate(iso: string): string {
+  const d = safeDate(iso);
+  return d ? format(d, 'dd-MMM-yyyy') : '—';
+}
+
+export function fmtDateShort(iso: string): string {
+  const d = safeDate(iso);
+  return d ? format(d, 'dd-MMM') : '—';
+}
+
+export function fmtDateTime(iso: string): string {
+  const d = safeDate(iso);
+  return d ? format(d, 'dd-MMM-yyyy HH:mm') : '—';
+}
+
+export function safeDate(iso: string): Date | null {
+  if (!iso) return null;
+  try {
+    const d = iso.length === 10 ? parseISO(iso + 'T00:00:00') : parseISO(iso);
+    return isValid(d) ? d : null;
+  } catch { return null; }
+}
+
+export function todayISO(): string {
+  return format(new Date(), 'yyyy-MM-dd');
+}
+
+export function nowISO(): string {
+  return new Date().toISOString();
+}
+
+export function daysBetween(fromISO: string, toISO: string): number {
+  const a = safeDate(fromISO); const b = safeDate(toISO);
+  if (!a || !b) return 0;
+  return differenceInDays(b, a);
+}
+
+export function ageLabel(placementISO: string, asOfISO = todayISO()) {
+  const days = Math.max(0, daysBetween(placementISO, asOfISO));
+  const w = Math.floor(days / 7);
+  const d = days % 7;
+  return { days, weeks: w, dayOfWeek: d, label: `W${w} D${d}`, dayLabel: `Day ${days}` };
+}
+
+export function greeting(d = new Date()): string {
+  const h = d.getHours();
+  if (h < 5) return 'Good Night';
+  if (h < 12) return 'Good Morning';
+  if (h < 17) return 'Good Afternoon';
+  if (h < 21) return 'Good Evening';
+  return 'Good Night';
+}
+
+export function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).slice(0, 2);
+  return parts.map(p => p[0]?.toUpperCase() ?? '').join('') || '?';
+}
+
+export function uid(prefix = 'id'): string {
+  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}

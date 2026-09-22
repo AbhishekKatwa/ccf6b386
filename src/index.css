@@ -1,0 +1,150 @@
+@import 'tailwindcss';
+
+/* ------------------------------------------------------------------ *
+ *  AMRUT POULTRY — design system (2026)
+ *  Warm "field & ledger" language: bone canvas, pine brand, yolk accent,
+ *  editorial Fraunces display + Inter UI + JetBrains Mono data.
+ * ------------------------------------------------------------------ */
+@theme {
+  --font-display: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* surfaces */
+  --color-canvas: #f2f0ea;
+  --color-surface: #f2f0ea;      /* page canvas (legacy alias) */
+  --color-card: #fffdf9;         /* raised surface (legacy alias) */
+  --color-raised: #fffdf9;
+  --color-sunk: #eceade;
+
+  /* ink */
+  --color-ink: #191c19;
+  --color-ink-2: #40453f;
+  --color-muted: #6d7268;
+  --color-muted-2: #979b90;      /* legacy faint */
+  --color-faint: #979b90;
+
+  /* lines */
+  --color-line: #e2ded1;
+  --color-line-2: #edeae0;       /* legacy hairline-soft */
+  --color-border: #e2ded1;       /* legacy alias */
+  --color-border-soft: #edeae0;  /* legacy alias */
+
+  /* brand — deep pine */
+  --color-brand: #17493b;
+  --color-brand-2: #0f3a2e;
+  --color-brand-soft: #e2ede7;
+  --color-brand-ink: #0c2f26;
+  --color-navy: #17493b;         /* legacy alias */
+  --color-navy-700: #0f3a2e;     /* legacy alias */
+  --color-navy-light: #e2ede7;   /* legacy alias */
+  --color-navy-soft: #9db8ac;    /* legacy alias */
+
+  /* accent — yolk */
+  --color-accent: #d9820b;
+  --color-accent-2: #b96e06;
+  --color-accent-soft: #fbeed2;
+  --color-accent-ink: #8a5205;
+  --color-amber: #d9820b;        /* legacy alias */
+  --color-amber-dark: #8a5205;   /* legacy alias */
+  --color-amber-light: #fbeed2;  /* legacy alias */
+
+  /* semantic */
+  --color-success: #177245;
+  --color-success-soft: #dcefe2;
+  --color-success-light: #dcefe2; /* legacy alias */
+  --color-warn: #b45309;
+  --color-warn-soft: #fbead2;
+  --color-danger: #b3261e;
+  --color-danger-soft: #f8e3e0;
+  --color-danger-light: #f8e3e0;  /* legacy alias */
+  --color-info: #1d4ed8;
+  --color-info-soft: #e3e9fb;
+
+  /* elevation */
+  --shadow-float: 0 10px 34px -12px rgb(25 28 25 / 0.22), 0 2px 8px -2px rgb(25 28 25 / 0.08);
+  --shadow-card: 0 1px 2px rgb(25 28 25 / 0.04), 0 1px 1px rgb(25 28 25 / 0.02);
+  --shadow-pop: 0 18px 50px -18px rgb(25 28 25 / 0.3);
+
+  /* radii */
+  --radius-card: 18px;
+  --radius-ctl: 12px;
+}
+
+html, body, #root { height: 100%; }
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior-y: none;
+  font-feature-settings: 'cv02', 'cv03', 'cv04';
+}
+button { -webkit-tap-highlight-color: transparent; }
+input, textarea, select { font-family: inherit; }
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; }
+::selection { background: var(--color-accent-soft); color: var(--color-accent-ink); }
+
+::-webkit-scrollbar { width: 0; height: 0; display: none; }
+* { -ms-overflow-style: none; scrollbar-width: none; }
+
+.font-display { font-family: var(--font-display); }
+.font-mono { font-family: var(--font-mono); }
+.tnum { font-variant-numeric: tabular-nums; }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* hairline divider used between stacked rows */
+.hairline > * + * { border-top: 1px solid var(--color-line-2); }
+
+/* press feedback */
+.press { transition: transform .12s ease, opacity .12s ease; }
+.press:active { transform: scale(.97); }
+
+/* focus ring */
+.ring-focus:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+
+/* ---------------- motion ---------------- */
+@keyframes ap-fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.ap-fade-in { animation: ap-fade-in .22s cubic-bezier(.2,.7,.3,1) both; }
+
+@keyframes ap-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.ap-rise { animation: ap-rise .3s cubic-bezier(.2,.7,.3,1) both; }
+
+@keyframes ap-toast-in { from { opacity: 0; transform: translateY(-10px) scale(.97); } to { opacity: 1; transform: none; } }
+.ap-toast-in { animation: ap-toast-in .22s cubic-bezier(.2,.7,.3,1) both; }
+
+@keyframes ap-sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+.ap-sheet-up { animation: ap-sheet-up .3s cubic-bezier(.22,.9,.28,1) both; }
+
+@keyframes ap-fade { from { opacity: 0; } to { opacity: 1; } }
+.ap-fade { animation: ap-fade .18s ease-out both; }
+
+@keyframes ap-pulse-soft { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+.ap-pulse { animation: ap-pulse-soft 1.6s ease-in-out infinite; }
+
+@keyframes ap-shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+.ap-shimmer {
+  background: linear-gradient(90deg, var(--color-line-2) 25%, #f7f5ee 50%, var(--color-line-2) 75%);
+  background-size: 200% 100%;
+  animation: ap-shimmer 1.4s linear infinite;
+}
+
+@keyframes ap-draw { from { stroke-dashoffset: var(--dash, 300); } to { stroke-dashoffset: 0; } }
+.ap-draw { stroke-dasharray: var(--dash, 300); animation: ap-draw .9s cubic-bezier(.4,0,.2,1) both; }
+
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.safe-top { padding-top: env(safe-area-inset-top, 0px); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
