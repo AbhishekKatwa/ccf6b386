@@ -96,6 +96,12 @@ export const COMMERCE_ROLES: Role[] = ['OWNER', 'FINANCIAL_SUPERVISOR', 'MASTER_
 export const REPORT_ROLES: Role[] = ['OWNER', 'FINANCIAL_SUPERVISOR', 'MASTER_ADMIN'];
 /** The batch workspace; farm labor stays on their own simple screens (§5). */
 export const OPS_ROLES: Role[] = ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'MASTER_ADMIN'];
+/**
+ * Who lays out a company's farms and sheds. A Farm Manager is shown only the sheds an
+ * assignment gives them, so a shed they created would never appear for them; the Master
+ * Admin is included because a brand-new company has no Owner to sign in as yet.
+ */
+export const STRUCTURE_ROLES: Role[] = ['OWNER', 'FARM_SUPERVISOR', 'MASTER_ADMIN'];
 /** Every role except farm labor may read formulas; only manageFormulas may edit. */
 export const FORMULA_VIEW_ROLES: Role[] = ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'MASTER_ADMIN'];
 /**
