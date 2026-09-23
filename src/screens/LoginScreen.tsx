@@ -111,6 +111,7 @@ export function LoginScreen() {
             <div className="bg-card border border-line rounded-[20px] shadow-card p-4 space-y-3">
               <Field
                 label="Mobile number" type="tel" inputMode="numeric" maxLength={10}
+                autoComplete="tel"
                 value={mobile}
                 onChange={(e) => { setMobile(e.target.value.replace(/\D/g, '')); setSentOtp(null); }}
                 prefix="+91" placeholder="10-digit number" className="font-mono"
@@ -118,7 +119,7 @@ export function LoginScreen() {
 
               {mode === 'password' ? (
                 <Field
-                  label="Password" type="password" value={password}
+                  label="Password" type="password" value={password} autoComplete="current-password"
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••" error={error ?? undefined}
                 />
@@ -128,6 +129,7 @@ export function LoginScreen() {
                     <div className="flex-1">
                       <Field
                         label="One-time code" type="text" inputMode="numeric" maxLength={6}
+                        autoComplete="one-time-code"
                         value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
                         placeholder="6-digit OTP" className="font-mono" error={error ?? undefined}
                       />

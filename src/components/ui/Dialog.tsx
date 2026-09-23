@@ -20,7 +20,7 @@ export function Dialog({ open, onClose, title, subtitle, children, footer }: {
     <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-ink/45 backdrop-blur-[2px] ap-fade" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-[440px] bg-card rounded-t-[22px] sm:rounded-[20px] shadow-pop overflow-hidden ap-sheet-up sm:ap-rise"
+        className="w-full sm:max-w-[440px] bg-card rounded-t-[24px] sm:rounded-[22px] shadow-pop overflow-hidden ap-sheet-up sm:ap-rise"
         role="dialog" aria-modal="true" aria-label={title}
       >
         <div className="flex justify-center pt-2.5 sm:hidden"><span className="w-9 h-1 rounded-full bg-line" /></div>

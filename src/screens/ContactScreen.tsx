@@ -3,7 +3,7 @@ import { Phone, Mail, MapPin, MessageCircle, HelpCircle, ChevronDown } from 'luc
 import { Header, Page } from '@/components/ui/Header';
 import { Card, GroupList, ListRow, IconTile } from '@/components/ui/Card';
 import { Button, Field, TextArea } from '@/components/ui/Form';
-import { useApp } from '@/store/app';
+import { useApp, useCurrentUser } from '@/store/app';
 
 const FAQS = [
   { q: 'How is production percentage calculated?', a: 'Production % = (Total eggs collected ÷ Live birds) × 100. Live birds = Initial birds − cumulative mortality up to that date.' },
@@ -16,20 +16,23 @@ const FAQS = [
 
 const CONTACTS = [
   { icon: Phone, label: 'Support helpline', value: '+91 90355 26551', href: 'tel:+919035526551' },
-  { icon: Mail, label: 'Email', value: 'support@amrutpoultry.in', href: 'mailto:support@amrutpoultry.in' },
-  { icon: MapPin, label: 'Head office', value: 'Nashik, Maharashtra, India' },
+  { icon: Mail, label: 'Email', value: 'amrutpoultryfarms@gmail.com', href: 'mailto:amrutpoultryfarms@gmail.com' },
+  { icon: MapPin, label: 'Head office', value: 'Guledagudd, Karnataka, India' },
   { icon: MessageCircle, label: 'WhatsApp', value: '+91 90355 26551', href: 'https://wa.me/919035526551' },
 ];
 
 export function ContactScreen() {
   const pushToast = useApp(s => s.pushToast);
+  const sendSupportMessage = useApp(s => s.sendSupportMessage);
+  const user = useCurrentUser();
   const [openFaq, setOpenFaq] = useState<number | null>(0);
-  const [form, setForm] = useState({ name: '', mobile: '', subject: '', message: '' });
+  const [form, setForm] = useState({ name: user?.name ?? '', mobile: user ? `+91 ${user.mobile}` : '', subject: '', message: '' });
 
   function submit() {
-    if (!form.name.trim() || !form.message.trim()) return pushToast('error', 'Name and message required');
+    const r = sendSupportMessage(form);
+    if (!r.ok) return pushToast('error', r.error ?? 'Message could not be saved');
     pushToast('success', 'Message sent — our team will respond within 24h');
-    setForm({ name: '', mobile: '', subject: '', message: '' });
+    setForm(f => ({ ...f, subject: '', message: '' }));
   }
 
   return (

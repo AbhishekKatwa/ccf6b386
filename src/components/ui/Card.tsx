@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import clsx from 'clsx';
-import { TrendingDown, TrendingUp, Minus, CheckCircle2 } from 'lucide-react';
+import { TrendingDown, TrendingUp, Minus, CheckCircle2, Inbox } from 'lucide-react';
 
 /* ---------------- surfaces ---------------- */
 
@@ -97,17 +97,37 @@ export function Stat({ label, value, sub, tone = 'neutral', size = 'md' }: {
   );
 }
 
-/** Horizontal band of open stats separated by hairlines. */
+/** Band of open stats: stacked with hairlines on mobile, one horizontal row from `sm` up. */
 export function StatStrip({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={clsx('grid auto-cols-fr grid-flow-col divide-x divide-line-2 overflow-x-auto no-scrollbar', className)}>
+    <div className={clsx('grid grid-cols-1 divide-y divide-line-2 sm:grid-flow-col sm:auto-cols-fr sm:divide-x sm:divide-y-0', className)}>
       {children}
     </div>
   );
 }
 
 export function StatCell({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={clsx('px-4 py-3 first:pl-0 last:pr-0 min-w-[96px]', className)}>{children}</div>;
+  return <div className={clsx('px-4 py-3 min-w-0 sm:first:pl-0 sm:last:pr-0 sm:min-w-[96px]', className)}>{children}</div>;
+}
+
+/** Compact metric tile for the responsive KPI grids at the top of a command screen. */
+export function KpiCard({ label, value, unit, foot, footTone = 'muted', valueTone }: {
+  label: string; value: string; unit?: string; foot?: ReactNode; footTone?: 'muted' | 'success' | 'danger' | 'warn';
+  /** A figure that is itself the alarm (a loss, a negative stock) says so in its own colour. */
+  valueTone?: 'ink' | 'success' | 'danger' | 'warn';
+}) {
+  const footToneClass = { muted: 'text-muted', success: 'text-success', danger: 'text-danger', warn: 'text-warn' }[footTone];
+  const valueToneClass = { ink: 'text-ink', success: 'text-success', danger: 'text-danger', warn: 'text-warn' }[valueTone ?? 'ink'];
+  return (
+    <div className="rounded-card border border-line bg-card shadow-card px-4 py-3.5 min-w-0">
+      <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-muted truncate">{label}</p>
+      <p className="mt-1.5 flex items-baseline gap-1 min-w-0">
+        <span className={clsx('font-display text-[21px] leading-7 font-semibold tnum tracking-tight truncate', valueToneClass)}>{value}</span>
+        {unit && <span className="text-[11px] text-muted shrink-0">{unit}</span>}
+      </p>
+      <p className={`mt-1 font-mono text-[10px] tnum truncate ${footToneClass}`}>{foot ?? '—'}</p>
+    </div>
+  );
 }
 
 /** Directional change indicator. */
@@ -205,16 +225,26 @@ export function GroupList({ children, className }: { children: ReactNode; classN
   );
 }
 
-export function ListRow({ leading, title, subtitle, trailing, onClick, className }: {
-  leading?: ReactNode; title: ReactNode; subtitle?: ReactNode; trailing?: ReactNode; onClick?: () => void; className?: string;
+export function ListRow({ leading, title, subtitle, chips, trailing, onClick, className }: {
+  leading?: ReactNode; title: ReactNode; subtitle?: ReactNode; chips?: ReactNode; trailing?: ReactNode; onClick?: () => void; className?: string;
 }) {
-  const Tag = onClick ? 'button' : 'div';
+  // A row may carry its own buttons in `trailing`, so a clickable row is a div
+  // with button semantics rather than a <button> nesting invalid controls.
+  const activate = onClick ? {
+    role: 'button' as const,
+    tabIndex: 0,
+    onClick,
+    onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); }
+    },
+  } : {};
   return (
-    <Tag
-      onClick={onClick}
+    <div
+      {...activate}
       className={clsx(
         'flex w-full items-center gap-3 px-4 py-3 text-left',
-        onClick && 'press hover:bg-sunk/60 cursor-pointer',
+        onClick && 'group press ring-focus hover:bg-sunk/60 focus-visible:bg-sunk/60 cursor-pointer',
         className,
       )}
     >
@@ -222,9 +252,10 @@ export function ListRow({ leading, title, subtitle, trailing, onClick, className
       <div className="flex-1 min-w-0">
         <div className="text-[14px] font-semibold text-ink truncate">{title}</div>
         {subtitle && <div className="text-[12px] text-muted truncate mt-0.5 tnum">{subtitle}</div>}
+        {chips && <div className="mt-1.5 flex flex-wrap items-center gap-1">{chips}</div>}
       </div>
       {trailing}
-    </Tag>
+    </div>
   );
 }
 
@@ -236,7 +267,7 @@ export function EmptyState({ icon, title, description, action }: {
   return (
     <div className="rounded-[18px] border border-dashed border-line bg-card/60 px-6 py-10 flex flex-col items-center text-center gap-2 ap-fade-in">
       <div className="w-12 h-12 rounded-full bg-sunk flex items-center justify-center text-muted mb-1">
-        {icon ?? '📭'}
+        {icon ?? <Inbox size={19} strokeWidth={1.75} />}
       </div>
       <p className="font-display text-[17px] font-semibold text-ink">{title}</p>
       {description && <p className="text-[13px] text-muted max-w-[300px] leading-relaxed">{description}</p>}

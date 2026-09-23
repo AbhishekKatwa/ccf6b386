@@ -7,6 +7,7 @@ import { Badge, EmptyState, GroupList, IconTile, ListRow } from '@/components/ui
 import { Button } from '@/components/ui/Form';
 import { currentFormula, formulaCostPerTonne, formulaTotalKg } from '@/lib/calc';
 import { canViewFormulas } from '@/lib/permissions';
+import { useGodownPrices } from '@/hooks/useGodownPrices';
 import { fmtIN, fmtMoney } from '@/lib/format';
 
 /** Shed → the formula version currently in force. Editing is scoped per shed in the store. */
@@ -16,6 +17,7 @@ export function FeedFormulaScreen() {
   const user = useCurrentUser();
   const canManage = useCan('manageFormulas');
   const canFinance = useCan('viewFinance');
+  const { priceOf } = useGodownPrices();
 
   const perShed = useMemo(() => sheds.map(s => {
     const active = currentFormula(s.id, feedFormulas);
@@ -42,9 +44,9 @@ export function FeedFormulaScreen() {
 
   return (
     <Page withNav>
-      <Header title="Feed Formulas" subtitle="Per shed · KG per 1 tonne of mix"
+      <Header title="Feed Formulas" subtitle="Per shed · the mix, in KG per ingredient"
         action={canManage && sheds.length > 0
-          ? <Button size="sm" variant="accent" icon={<Plus size={14} />} onClick={() => nav(newUrl)}>New</Button>
+          ? <Button size="sm" icon={<Plus size={14} />} onClick={() => nav(newUrl)}>New</Button>
           : undefined} />
 
       <div className="px-4 sm:px-0 mt-3 space-y-4 pb-6">
@@ -74,7 +76,7 @@ export function FeedFormulaScreen() {
                         className="w-8 h-8 rounded-[10px] bg-sunk text-muted flex items-center justify-center press hover:text-brand"><History size={14} /></button>
                     )}
                     <div className="text-right">
-                      <p className="font-display text-[15px] font-semibold text-ink tnum">{canFinance ? fmtMoney(formulaCostPerTonne(active)) : '₹••••'}</p>
+                      <p className="font-display text-[15px] font-semibold text-ink tnum">{canFinance ? fmtMoney(formulaCostPerTonne(active, priceOf)) : '₹••••'}</p>
                       <p className="font-mono text-[9px] uppercase tracking-wider text-faint mt-0.5">/tonne{versions > 1 ? ` · V${versions}` : ''}</p>
                     </div>
                     <ChevronRight size={15} className="text-muted-2" />

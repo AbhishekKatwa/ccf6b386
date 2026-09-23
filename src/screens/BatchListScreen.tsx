@@ -59,7 +59,7 @@ export function BatchListScreen() {
   const { batches, assignments } = useCompanyData();
   const user = useCurrentUser();
   const [filter, setFilter] = useState<'all' | 'live' | 'closed' | 'assigned'>(
-    (params.get('filter') as 'assigned') ?? 'all');
+    (params.get('filter') as 'all' | 'live' | 'closed' | 'assigned' | null) ?? 'live');
   const [q, setQ] = useState('');
 
   const list = useMemo(() => {

@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import {
-  Egg, Skull, Package, Flame, Wheat, Clock, Check, ChevronRight, Minus, Plus,
+  Egg, Skull, Package, Wheat, Clock, Check, ChevronRight, Minus, Plus, Syringe,
   LogOut, ClipboardList, History, Sun, Sunset, Moon, Lock, AlertTriangle, Layers,
 } from 'lucide-react';
 import { useApp, useCompanyData, useCurrentUser } from '@/store/app';
@@ -13,6 +13,9 @@ import { Button, Field, TextArea } from '@/components/ui/Form';
 import { ConfirmDialog, Dialog } from '@/components/ui/Dialog';
 import { fmtClock, fmtDate, fmtIN, greeting, timeOf, todayISO } from '@/lib/format';
 import { eggStockByGrade, gradeTotal } from '@/lib/calc';
+import { vaccinationDayLabel } from '@/lib/vaccination';
+import { useVaccinationSchedule } from '@/hooks/useVaccinations';
+import { VaccinationCompleteSheet } from '@/components/vaccination/VaccinationSheets';
 import {
   EGG_GRADES, EMPTY_GRADE_COUNTS, FEED_ROUNDS, FEED_ROUND_LABELS,
   type EggGrade, type EggGradeCounts, type FeedRound,
@@ -75,9 +78,8 @@ function useLaborDay() {
       trays: gradeTotal(byGrade),
       given: logs.reduce((s, l) => s + l.trays, 0),
       mort: data.mortality.filter(m => m.batchId === batch.id && m.date === today).reduce((s, m) => s + m.count, 0),
-      disposed: data.disposals.filter(d => d.batchId === batch.id && d.date === today).reduce((s, d) => s + d.count, 0),
       rounds: data.feedRounds.filter(r => r.shedId === batch.shedId && r.date === today),
-      stock: eggStockByGrade(batch.shedId, data.eggs, data.saleLogs, today),
+      stock: eggStockByGrade(batch.shedId, data.eggs, data.saleEntries, today),
     };
   }, [batch, data, today]);
 
@@ -288,7 +290,7 @@ function SaleSheet({ onClose, day }: { onClose: () => void; day: LaborDay }) {
 
   return (
     <Dialog open onClose={onClose} title="Eggs given out"
-      subtitle={`${day.shed?.name ?? 'Shed'} · a sale log the accounts team accepts later`}
+      subtitle={`${day.shed?.name ?? 'Shed'} · a dispatch log the accounts team settles later`}
       footer={<SheetFooter onCancel={onClose} onSave={save} />}>
       <div className="space-y-3">
         <WorkerField value={name} onChange={setName} names={day.staffNames} />
@@ -318,54 +320,6 @@ function SaleSheet({ onClose, day }: { onClose: () => void; day: LaborDay }) {
           hint={`${fmtIN(day.todays?.stock[grade].balance ?? 0)} ${GRADE_WORD[grade].toLowerCase()} trays in stock`} />
         <TextArea label="Remarks" rows={2} value={remarks} onChange={e => setRemarks(e.target.value)}
           placeholder="e.g. taken by Rajesh Traders" />
-      </div>
-    </Dialog>
-  );
-}
-
-const DISPOSAL_METHODS = ['Compost', 'Burial', 'Incinerator'];
-
-function DisposalSheet({ onClose, day }: { onClose: () => void; day: LaborDay }) {
-  const addDisposal = useApp(s => s.addDisposal);
-  const pushToast = useApp(s => s.pushToast);
-  const [count, setCount] = useState('');
-  const [method, setMethod] = useState(DISPOSAL_METHODS[0]);
-  const [name, setName] = useState(day.user?.name ?? '');
-
-  function save() {
-    if (!day.batch) return;
-    const n = Number(count) || 0;
-    if (n <= 0) return pushToast('error', 'Enter how many birds were disposed');
-    if (!name.trim()) return pushToast('error', 'Enter who disposed the birds');
-    const r = addDisposal({
-      batchId: day.batch.id, shedId: day.batch.shedId, date: day.today, count: n,
-      method, workerName: name.trim(),
-    });
-    if (!r.ok) return pushToast('error', r.error ?? 'Could not save');
-    pushToast('success', `${n} disposed by ${method.toLowerCase()}`);
-    onClose();
-  }
-
-  return (
-    <Dialog open onClose={onClose} title="Dispose dead birds"
-      subtitle={`${day.shed?.name ?? 'Shed'} · ${fmtIN(day.todays?.disposed ?? 0)} disposed today`}
-      footer={<SheetFooter onCancel={onClose} onSave={save} />}>
-      <div className="space-y-3">
-        <WorkerField value={name} onChange={setName} names={day.staffNames} />
-        <CountInput label="Birds disposed" icon={<Flame size={18} />} unit="birds" tone="neutral"
-          value={count} onChange={setCount} hint={`Mortality today: ${fmtIN(day.todays?.mort ?? 0)}`} />
-        <div>
-          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted mb-2">Method</p>
-          <div className="flex flex-wrap gap-2">
-            {DISPOSAL_METHODS.map(m => (
-              <button key={m} type="button" onClick={() => setMethod(m)}
-                className={clsx('px-4 h-12 rounded-full border text-[15px] font-semibold press',
-                  method === m ? 'border-brand bg-brand text-white' : 'border-line bg-card text-ink')}>
-                {m}
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
     </Dialog>
   );
@@ -462,7 +416,7 @@ function FeedSheet({ onClose, day }: { onClose: () => void; day: LaborDay }) {
 
 /* ============================= today (labor home) ============================= */
 
-type SheetKind = 'eggs' | 'mortality' | 'sale' | 'disposal' | 'feed';
+type SheetKind = 'eggs' | 'mortality' | 'sale' | 'feed';
 
 export function LaborHomeScreen() {
   const nav = useNavigate();
@@ -472,9 +426,13 @@ export function LaborHomeScreen() {
   const pushToast = useApp(s => s.pushToast);
   const [sheet, setSheet] = useState<SheetKind | null>(null);
   const [confirmOut, setConfirmOut] = useState(false);
+  const vac = useVaccinationSchedule(day.batch?.id);
+  const [doseId, setDoseId] = useState<string | null>(null);
 
   const s = day.todays;
   const user = day.user;
+  const doses = vac.positions.filter(p => p.attention);
+  const dose = doses.find(p => p.item.id === doseId) ?? null;
   const myTasks = day.batch && user
     ? day.data.tasks.filter(t => t.date === day.today && t.assignedUserId === user.id)
     : [];
@@ -500,7 +458,6 @@ export function LaborHomeScreen() {
     { key: 'eggs', label: 'Today’s eggs', icon: <Egg size={26} />, value: fmtIN(s?.trays ?? 0), unit: 'trays collected', tone: 'bg-accent-soft text-accent-ink' },
     { key: 'mortality', label: 'Mortality', icon: <Skull size={26} />, value: fmtIN(s?.mort ?? 0), unit: 'birds', tone: 'bg-danger-soft text-danger' },
     { key: 'sale', label: 'Eggs given out', icon: <Package size={26} />, value: fmtIN(s?.given ?? 0), unit: 'trays', tone: 'bg-brand-soft text-brand' },
-    { key: 'disposal', label: 'Dead birds disposed', icon: <Flame size={26} />, value: fmtIN(s?.disposed ?? 0), unit: 'birds', tone: 'bg-sunk text-ink' },
   ];
 
   return (
@@ -584,6 +541,30 @@ export function LaborHomeScreen() {
         </Card>
       </section>
 
+      {/* §13: labor sees only the doses in front of them, and one button on each. */}
+      {doses.length > 0 && (
+        <section className="px-4 sm:px-0 mt-5">
+          <SectionTitle>Vaccination to give</SectionTitle>
+          <div className="space-y-2.5">
+            {doses.map(p => (
+              <Card key={p.item.id} className="flex items-center gap-3">
+                <IconTile tone={p.state === 'OVERDUE' ? 'danger' : 'brand'} size={38}><Syringe size={18} /></IconTile>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[14px] font-semibold text-ink truncate">{p.item.vaccineName}</p>
+                  <p className="text-[12px] text-muted mt-0.5 truncate tnum">
+                    {fmtDate(p.item.scheduledDate)} · {vaccinationDayLabel(p)}
+                    {p.item.route ? ` · ${p.item.route}` : ''}
+                  </p>
+                </div>
+                {vac.canComplete(p)
+                  ? <Button size="sm" onClick={() => setDoseId(p.item.id)}>Mark done</Button>
+                  : <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted shrink-0">Ask supervisor</span>}
+              </Card>
+            ))}
+          </div>
+        </section>
+      )}
+
       {myTasks.length > 0 && (
         <section className="px-4 sm:px-0 mt-5">
           <SectionTitle right={
@@ -620,8 +601,8 @@ export function LaborHomeScreen() {
       {sheet === 'eggs' && <EggSheet onClose={() => setSheet(null)} day={day} />}
       {sheet === 'mortality' && <MortalitySheet onClose={() => setSheet(null)} day={day} />}
       {sheet === 'sale' && <SaleSheet onClose={() => setSheet(null)} day={day} />}
-      {sheet === 'disposal' && <DisposalSheet onClose={() => setSheet(null)} day={day} />}
       {sheet === 'feed' && <FeedSheet onClose={() => setSheet(null)} day={day} />}
+      {dose && <VaccinationCompleteSheet p={dose} onClose={() => setDoseId(null)} />}
 
       <SignOut open={confirmOut} onClose={() => setConfirmOut(false)} onConfirm={signOut} />
     </Page>
@@ -673,12 +654,6 @@ export function LaborLogScreen() {
         detail: m.remarks ?? 'Mortality recorded', by: m.workerName,
       });
     }
-    for (const d of day.data.disposals.filter(x => x.batchId === batch.id && x.date === day.today)) {
-      out.push({
-        id: d.id, at: d.createdAt, icon: <Flame size={17} />, tone: 'bg-sunk text-ink',
-        title: `${fmtIN(d.count)} disposed`, detail: d.method ?? 'Disposal', by: d.workerName,
-      });
-    }
     for (const r of s.rounds) {
       out.push({
         id: r.id, at: r.createdAt,
@@ -687,6 +662,14 @@ export function LaborLogScreen() {
         title: `Feed ${FEED_ROUND_LABELS[r.round].toLowerCase()} · ${r.status === 'GIVEN' ? fmtClock(r.at) : 'skipped'}`,
         detail: r.status === 'GIVEN' ? 'Given to the birds at this time' : (r.remarks ?? 'Round missed'),
         by: r.workerName,
+      });
+    }
+    for (const v of day.data.vaccinations.filter(x => x.batchId === batch.id && x.status === 'COMPLETED' && x.completedDate === day.today)) {
+      out.push({
+        id: v.id, at: v.completedAt ?? v.updatedAt, icon: <Syringe size={17} />, tone: 'bg-brand-soft text-brand',
+        title: `${v.vaccineName} given`,
+        detail: v.scheduledDate === day.today ? 'Vaccination given as scheduled' : `Vaccination · scheduled ${fmtDate(v.scheduledDate)}`,
+        by: day.data.users.find(u => u.id === v.completedBy)?.name ?? v.completedBy,
       });
     }
     for (const t of day.data.tasks.filter(x => x.date === day.today && x.assignedUserId === day.user?.id && x.status === 'COMPLETED')) {

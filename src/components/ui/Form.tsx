@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAt
 import clsx from 'clsx';
 import { ChevronDown, Minus, Plus, Search, X } from 'lucide-react';
 
-type BtnVariant = 'primary' | 'amber' | 'accent' | 'ghost' | 'outline' | 'danger' | 'success';
+type BtnVariant = 'primary' | 'ghost' | 'outline' | 'danger' | 'success';
 type BtnSize = 'sm' | 'md' | 'lg';
 
 interface BtnProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -11,18 +11,16 @@ interface BtnProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 export function Button({ variant = 'primary', size = 'md', block, icon, loading, children, className, disabled, ...rest }: BtnProps) {
   const variants: Record<BtnVariant, string> = {
-    primary: 'bg-brand text-white hover:bg-brand-2 shadow-card',
-    accent: 'bg-accent text-white hover:bg-accent-2 shadow-card',
-    amber: 'bg-accent text-white hover:bg-accent-2 shadow-card',
-    success: 'bg-success text-white hover:brightness-95 shadow-card',
-    danger: 'bg-danger text-white hover:brightness-95 shadow-card',
-    ghost: 'bg-transparent text-brand hover:bg-brand-soft',
-    outline: 'bg-card border border-line text-ink hover:border-brand hover:text-brand',
+    primary: 'bg-brand text-white hover:bg-brand-2 active:bg-brand-ink shadow-card hover:shadow-float',
+    success: 'bg-success text-white hover:brightness-110 active:brightness-95 shadow-card',
+    danger: 'bg-danger text-white hover:brightness-110 active:brightness-95 shadow-card',
+    ghost: 'bg-transparent text-brand hover:bg-brand-soft active:bg-brand-ink/[.07]',
+    outline: 'bg-card border border-line text-ink-2 hover:border-brand/50 hover:text-brand hover:bg-brand-soft/40 active:bg-brand-soft',
   };
   const sizes: Record<BtnSize, string> = {
-    sm: 'px-3 py-1.5 text-[12px] rounded-[10px] gap-1.5',
-    md: 'px-4 py-2.5 text-[13px] rounded-[12px] gap-2',
-    lg: 'px-5 py-3.5 text-[15px] rounded-[14px] gap-2',
+    sm: 'px-3 py-1.5 text-[12px] rounded-[9px] gap-1.5',
+    md: 'px-4 py-2.5 text-[13px] rounded-[11px] gap-2',
+    lg: 'px-5 py-3.5 text-[15px] rounded-[12px] gap-2',
   };
   return (
     <button
@@ -30,7 +28,7 @@ export function Button({ variant = 'primary', size = 'md', block, icon, loading,
       disabled={disabled || loading}
       className={clsx(
         'inline-flex items-center justify-center font-semibold transition-all press ring-focus',
-        'disabled:opacity-45 disabled:cursor-not-allowed disabled:active:transform-none',
+        'disabled:opacity-45 disabled:cursor-not-allowed disabled:active:transform-none disabled:shadow-none',
         variants[variant], sizes[size], block && 'w-full', className,
       )}
     >
@@ -84,8 +82,8 @@ export function Field({ label, hint, error, prefix, suffix, className, ...rest }
     <label className="block">
       <Label>{label}</Label>
       <div className={clsx(
-        'flex items-center gap-2 bg-card border rounded-[12px] px-3 transition-colors',
-        error ? 'border-danger' : 'border-line focus-within:border-brand',
+        'flex items-center gap-2 bg-card border rounded-[11px] px-3 transition-all',
+        error ? 'border-danger focus-within:shadow-[0_0_0_3px_rgb(179_38_30/0.10)]' : 'border-line focus-within:border-brand focus-within:shadow-[0_0_0_3px_rgb(22_74_53/0.10)]',
       )}>
         {prefix && <span className="text-muted text-[13px] shrink-0">{prefix}</span>}
         <input
@@ -100,9 +98,9 @@ export function Field({ label, hint, error, prefix, suffix, className, ...rest }
 }
 
 interface SelectFieldProps extends SelectHTMLAttributes<HTMLSelectElement> {
-  label?: string; error?: string; options: { value: string; label: string }[];
+  label?: string; error?: string; hint?: string; options: { value: string; label: string }[];
 }
-export function SelectField({ label, error, options, className, ...rest }: SelectFieldProps) {
+export function SelectField({ label, error, hint, options, className, ...rest }: SelectFieldProps) {
   return (
     <label className="block">
       <Label>{label}</Label>
@@ -110,8 +108,8 @@ export function SelectField({ label, error, options, className, ...rest }: Selec
         <select
           {...rest}
           className={clsx(
-            'w-full appearance-none bg-card border rounded-[12px] pl-3 pr-9 py-2.5 text-[14px] text-ink outline-none transition-colors',
-            error ? 'border-danger' : 'border-line focus:border-brand',
+            'w-full appearance-none bg-card border rounded-[11px] pl-3 pr-9 py-2.5 text-[14px] text-ink outline-none transition-all',
+            error ? 'border-danger focus:shadow-[0_0_0_3px_rgb(179_38_30/0.10)]' : 'border-line focus:border-brand focus:shadow-[0_0_0_3px_rgb(22_74_53/0.10)]',
             className,
           )}
         >
@@ -119,7 +117,7 @@ export function SelectField({ label, error, options, className, ...rest }: Selec
         </select>
         <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
       </div>
-      <Help error={error} />
+      <Help error={error} hint={hint} />
     </label>
   );
 }
@@ -131,7 +129,7 @@ export function TextArea({ label, className, ...rest }: TextAreaProps) {
       <Label>{label}</Label>
       <textarea
         {...rest}
-        className={clsx('w-full bg-card border border-line rounded-[12px] px-3 py-2.5 text-[14px] text-ink outline-none focus:border-brand resize-none transition-colors', className)}
+        className={clsx('w-full bg-card border border-line rounded-[11px] px-3 py-2.5 text-[14px] text-ink outline-none focus:border-brand focus:shadow-[0_0_0_3px_rgb(22_74_53/0.10)] resize-none transition-all', className)}
       />
     </label>
   );
@@ -147,7 +145,7 @@ export function SearchField({ value, onChange, placeholder = 'Search', className
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full bg-sunk border border-transparent rounded-full pl-9 pr-9 py-2.5 text-[14px] text-ink outline-none focus:border-brand focus:bg-card transition-colors placeholder:text-muted-2"
+        className="w-full bg-sunk border border-transparent rounded-full pl-9 pr-9 py-2.5 text-[14px] text-ink outline-none focus:border-brand focus:bg-card focus:shadow-[0_0_0_3px_rgb(22_74_53/0.08)] transition-all placeholder:text-muted-2"
       />
       {value && (
         <button type="button" onClick={() => onChange('')} aria-label="Clear" className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink">
@@ -168,7 +166,7 @@ export function Toggle({ checked, onChange, label, description }: {
         {description && <p className="text-[12px] text-muted mt-0.5">{description}</p>}
       </div>
       <span
-        className={clsx('relative w-11 h-6 rounded-full transition-colors flex-shrink-0', checked ? 'bg-brand' : 'bg-line')}
+        className={clsx('relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ring-focus', checked ? 'bg-brand' : 'bg-line')}
         role="switch" aria-checked={checked} aria-label={label}
       >
         <span className={clsx('absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all', checked ? 'left-[22px]' : 'left-0.5')} />
@@ -189,7 +187,7 @@ export function SegmentedTabs<T extends string>({ value, onChange, options, scro
           className={clsx(
             'py-2 px-3.5 rounded-full text-[13px] font-semibold transition-all whitespace-nowrap flex items-center justify-center gap-1.5 press',
             scroll ? 'flex-none' : 'flex-1',
-            value === o.value ? 'bg-card text-ink shadow-card' : 'text-muted hover:text-ink',
+            value === o.value ? 'bg-card text-brand shadow-card ring-1 ring-inset ring-brand/15' : 'text-muted hover:text-ink',
           )}
         >
           {o.icon}{o.label}

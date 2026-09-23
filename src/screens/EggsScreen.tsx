@@ -10,6 +10,7 @@ import { DayLockPanel } from '@/components/ui/DayLockPanel';
 import { BatchClosedNotice } from '@/components/ui/BatchClosedNotice';
 import { BarsMini, CHART } from '@/components/ui/Charts';
 import { fmtIN, fmtDate, todayISO } from '@/lib/format';
+import { latestFirst } from '@/lib/order';
 import { useBatchMetrics } from '@/hooks/useBatchMetrics';
 import { eggStockByGrade, eggStockTrays } from '@/lib/calc';
 import { EGGS_PER_TRAY, EGG_GRADES, EGG_GRADE_LABELS, type EggCollection, type EggGrade } from '@/types';
@@ -30,12 +31,13 @@ export function EggsScreen() {
   const { batchId } = useParams();
   const nav = useNavigate();
   const data = useCompanyData();
-  const { batches, eggs, saleLogs, dayLocks } = data;
+  const { batches, eggs, saleEntries, dayLocks } = data;
   const addEggCollection = useApp(s => s.addEggCollection);
   const updateEggCollection = useApp(s => s.updateEggCollection);
   const pushToast = useApp(s => s.pushToast);
   const canCreate = useCan('createDailyOps');
   const canUpdate = useCan('update');
+  const canReport = useCan('exportReports');
   const m = useBatchMetrics(batchId);
   const batch = batches.find(b => b.id === batchId);
 
@@ -44,7 +46,7 @@ export function EggsScreen() {
   const [editing, setEditing] = useState<EggCollection | null>(null);
   const [form, setForm] = useState<GradeForm>(emptyForm());
 
-  const batchEggs = useMemo(() => eggs.filter(e => e.batchId === batchId).sort((a, b) => b.date.localeCompare(a.date)), [eggs, batchId]);
+  const batchEggs = useMemo(() => latestFirst(eggs.filter(e => e.batchId === batchId)), [eggs, batchId]);
 
   if (!batch || !m) return <Page><Header title="Eggs" /><div className="px-4 sm:px-0"><EmptyState title="Batch not found" /></div></Page>;
   if (batch.birdType !== 'LAYER') {
@@ -52,8 +54,8 @@ export function EggsScreen() {
   }
 
   const q = m.todaysEggs;
-  const stock = eggStockTrays(batch.shedId, eggs, saleLogs);
-  const stockByGrade = eggStockByGrade(batch.shedId, eggs, saleLogs);
+  const stock = eggStockTrays(batch.shedId, eggs, saleEntries);
+  const stockByGrade = eggStockByGrade(batch.shedId, eggs, saleEntries);
   const traysOf = (e: EggCollection) => e.goodTrays + e.brokenTrays + e.doubleTrays + e.smallTrays;
   const isLocked = (d: string) => dayLocks.some(l => l.shedId === batch.shedId && l.date === d);
 
@@ -104,7 +106,7 @@ export function EggsScreen() {
   return (
     <Page withNav>
       <Header title="Eggs" subtitle={`${batch.code} · ${m.age.label} · ${m.age.dayLabel}`}
-        action={<Button size="sm" variant="outline" icon={<FileText size={14} />} onClick={() => nav(`/batches/${batch.id}/daily-report`)}>Report</Button>} />
+        action={canReport && <Button size="sm" variant="outline" icon={<FileText size={14} />} onClick={() => nav(`/batches/${batch.id}/daily-report`)}>Report</Button>} />
 
       <div className="px-4 sm:px-0 mt-3 space-y-4">
         <SegmentedTabs value={tab} onChange={setTab} options={[
@@ -144,7 +146,7 @@ export function EggsScreen() {
             {batch.status !== 'ACTIVE' && <BatchClosedNotice code={batch.code} />}
 
             {canCreate && batch.status === 'ACTIVE' && (
-              <Button block size="lg" variant="accent" icon={<Plus size={16} />} onClick={() => { setForm(emptyForm()); setOpenAdd(true); }}>Add egg collection</Button>
+              <Button block size="lg" icon={<Plus size={16} />} onClick={() => { setForm(emptyForm()); setOpenAdd(true); }}>Add egg collection</Button>
             )}
 
             {batch.status === 'ACTIVE' && <DayLockPanel batchId={batch.id} shedId={batch.shedId} />}
@@ -192,7 +194,7 @@ export function EggsScreen() {
             <Card padded={false} className="overflow-hidden">
               <StatStrip>
                 <StatCell><Stat label="Collected" value={fmtIN(stock.collected)} sub="trays" tone="brand" size="md" /></StatCell>
-                <StatCell><Stat label="Dispatched" value={fmtIN(stock.dispatched)} sub="via sale logs" tone="neutral" size="md" /></StatCell>
+                <StatCell><Stat label="Sold" value={fmtIN(stock.dispatched)} sub="via sale entries" tone="neutral" size="md" /></StatCell>
                 <StatCell><Stat label="In stock" value={fmtIN(stock.balance)} sub="trays" tone="accent" size="md" /></StatCell>
               </StatStrip>
             </Card>
@@ -209,11 +211,11 @@ export function EggsScreen() {
 
             <div className="rounded-[22px] bg-brand-soft p-4">
               <p className="text-sm text-brand-ink leading-relaxed">
-                <strong>Stock is derived, never edited.</strong> Each grade keeps its own pool: collection adds trays, a sale log of that grade deducts them immediately. Acknowledging a log or converting it into a trader sale never deducts again.
+                <strong>Stock is derived, never edited.</strong> Each grade keeps its own pool: collection adds trays, and a <strong>sale entry</strong> deducts them from the shed it took them from. A dispatch log only records what a van carried away &mdash; it never reduces stock, and confirming one changes no quantity either.
               </p>
             </div>
 
-            <Button block variant="outline" icon={<FileText size={15} />} onClick={() => nav('/sales')}>Open sale logs</Button>
+            <Button block variant="outline" icon={<FileText size={15} />} onClick={() => nav('/sales?tab=entries')}>Open sale entries</Button>
           </>
         )}
 

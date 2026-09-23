@@ -18,7 +18,7 @@ export function ToastHost() {
         >
           <span className={clsx(
             'w-7 h-7 rounded-full flex items-center justify-center shrink-0',
-            t.kind === 'success' ? 'bg-success/25 text-[#7ee2a8]' : t.kind === 'error' ? 'bg-danger/30 text-[#ffb4ad]' : 'bg-white/15 text-white',
+            t.kind === 'success' ? 'bg-success/30 text-[#9ed3b2]' : t.kind === 'error' ? 'bg-danger/30 text-[#f0b9b4]' : 'bg-white/15 text-white',
           )}>
             {t.kind === 'success' ? <CheckCircle2 size={15} /> : t.kind === 'error' ? <AlertCircle size={15} /> : <Info size={15} />}
           </span>

@@ -8,9 +8,11 @@ import { NO_PERMISSIONS } from '@/types';
 export const DEFAULT_ROLE_PERMISSIONS: Record<Role, PermissionSet> = {
   // Global platform administration. Manages companies + users; cannot touch a
   // company's farm data without explicitly entering that company context.
+  // Once inside, every panel is visible and readable — money included.
   MASTER_ADMIN: {
     ...NO_PERMISSIONS,
     manageCompanies: true, manageUsers: true,
+    viewFinance: true, viewRates: true,
   },
 
   // Full access to their own company.
@@ -20,38 +22,49 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, PermissionSet> = {
     lockDay: true, unlockDay: true,
     manageUsers: true, manageCompanies: false,
     manageTraders: true, manageFormulas: true, acknowledgeSales: true,
+    createSaleEntries: true,
     closeBatch: true, exportReports: true,
+    manageVaccination: true, completeVaccination: true,
   },
 
-  // Operational supervisor: daily ops, feed, mortality, tasks, egg stock + sale logs.
+  // Operational supervisor: daily ops, feed, mortality, tasks, egg stock + shed dispatch logs.
+  // Reports belong to the Owner and Finance, not to operations.
   FARM_SUPERVISOR: {
     create: true, createDailyOps: true, update: true, delete: false,
     viewFinance: false, viewRates: false,
     lockDay: true, unlockDay: false,
     manageUsers: false, manageCompanies: false,
     manageTraders: false, manageFormulas: true, acknowledgeSales: false,
-    closeBatch: false, exportReports: true,
+    createSaleEntries: false,
+    closeBatch: false, exportReports: false,
+    completeVaccination: true, manageVaccination: false,
   },
 
-  // Financial + sales: traders, balances, acknowledge/collate sale logs, final sales.
-  // Formulas are read-only unless a shed assignment explicitly grants it.
+  // Financial + sales: traders, balances, and the final sale entry that actually
+  // moves stock and books the money. Formulas are read-only unless a shed
+  // assignment explicitly grants it.
   FINANCIAL_SUPERVISOR: {
     create: false, createDailyOps: false, update: true, delete: false,
     viewFinance: true, viewRates: true,
     lockDay: false, unlockDay: false,
     manageUsers: false, manageCompanies: false,
     manageTraders: true, manageFormulas: false, acknowledgeSales: true,
+    createSaleEntries: true,
     closeBatch: false, exportReports: true,
+    // Vaccination is farm work, not money work: no access unless a batch grants it (§13).
+    manageVaccination: false, completeVaccination: false,
   },
 
-  // Operational only. Creates SHED SALE LOGS and nothing else (§5).
+  // Operational only. Creates SHED DISPATCH LOGS and nothing else (§5).
   FARM_MANAGER: {
     create: true, createDailyOps: false, update: false, delete: false,
     viewFinance: false, viewRates: false,
     lockDay: false, unlockDay: false,
     manageUsers: false, manageCompanies: false,
     manageTraders: false, manageFormulas: false, acknowledgeSales: false,
+    createSaleEntries: false,
     closeBatch: false, exportReports: false,
+    completeVaccination: true, manageVaccination: false,
   },
 
   // Extremely simple operator: today's entries + assigned tasks only.
@@ -61,13 +74,41 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, PermissionSet> = {
     lockDay: false, unlockDay: false,
     manageUsers: false, manageCompanies: false,
     manageTraders: false, manageFormulas: false, acknowledgeSales: false,
+    createSaleEntries: false,
     closeBatch: false, exportReports: false,
+    completeVaccination: true, manageVaccination: false,
   },
 };
 
 export function roleCan(role: Role, key: PermissionKey): boolean {
   return DEFAULT_ROLE_PERMISSIONS[role]?.[key] ?? false;
 }
+
+/* ============================= module role gates =============================
+ * Shared by the router guards and the screens that list modules, so a module is
+ * never offered where the user cannot open it (§14). */
+
+/** Godown feed inventory in KG. */
+export const GODOWN_ROLES: Role[] = ['OWNER', 'FARM_SUPERVISOR', 'MASTER_ADMIN'];
+/** Traders, balances and final sales. */
+export const COMMERCE_ROLES: Role[] = ['OWNER', 'FINANCIAL_SUPERVISOR', 'MASTER_ADMIN'];
+/** Printable reports, including a batch's daily report. */
+export const REPORT_ROLES: Role[] = ['OWNER', 'FINANCIAL_SUPERVISOR', 'MASTER_ADMIN'];
+/** The batch workspace; farm labor stays on their own simple screens (§5). */
+export const OPS_ROLES: Role[] = ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'MASTER_ADMIN'];
+/** Every role except farm labor may read formulas; only manageFormulas may edit. */
+export const FORMULA_VIEW_ROLES: Role[] = ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'MASTER_ADMIN'];
+/**
+ * Who may open the vaccination module. It is flock work, so money roles stay out
+ * unless a batch assignment grants it, and the Master Admin keeps to company administration.
+ */
+export const VACCINATION_ROLES: Role[] = ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER', 'FARM_LABOR'];
+/**
+ * Who may open the medicine & vaccine store. It is the inventory behind the same flock
+ * work, so the operational roles plus the platform admin read it; money roles settle its
+ * payables through Finance rather than browsing the shelf.
+ */
+export const MEDICINE_ROLES: Role[] = ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER', 'FARM_LABOR', 'MASTER_ADMIN'];
 
 /** Formula modules are operational data: farm labor never sees them (§5). */
 export function canViewFormulas(role: Role | undefined): boolean {

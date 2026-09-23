@@ -2,11 +2,13 @@ import { useId, useState } from 'react';
 import clsx from 'clsx';
 
 export const CHART = {
-  brand: '#17493b',
-  accent: '#d9820b',
-  success: '#177245',
+  brand: '#164a35',
+  accent: '#c9972e',
+  success: '#1b5e3b',
   danger: '#b3261e',
-  muted: '#979b90',
+  muted: '#98a19b',
+  /** Supporting series sit between brand green and neutral so series never collide. */
+  teal: '#47726b',
 };
 
 function scale(data: number[], h: number, pad = 4) {
@@ -56,7 +58,7 @@ export function LineChart({ data, labels, color = CHART.brand, height = 64, show
           </>
         )}
         <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx={(data.length - 1) * step} cy={ys[ys.length - 1]} r="3" fill={color} stroke="#fffdf9" strokeWidth="1.5" />
+        <circle cx={(data.length - 1) * step} cy={ys[ys.length - 1]} r="3" fill={color} stroke="var(--color-card)" strokeWidth="1.5" />
       </svg>
       {labels && (
         <div className="flex justify-between mt-1.5">
@@ -110,10 +112,10 @@ export function AreaTrend({ data, labels, color = CHART.brand, height = 120, for
         {idx !== null && (
           <>
             <line x1={active * step} y1="0" x2={active * step} y2={h} stroke={color} strokeOpacity="0.3" strokeWidth="1" strokeDasharray="3 3" />
-            <circle cx={active * step} cy={ys[active]} r="4" fill={color} stroke="#fffdf9" strokeWidth="2" />
+            <circle cx={active * step} cy={ys[active]} r="4" fill={color} stroke="var(--color-card)" strokeWidth="2" />
           </>
         )}
-        <circle cx={(data.length - 1) * step} cy={ys[data.length - 1]} r="3" fill={color} stroke="#fffdf9" strokeWidth="1.5" />
+        <circle cx={(data.length - 1) * step} cy={ys[data.length - 1]} r="3" fill={color} stroke="var(--color-card)" strokeWidth="1.5" />
       </svg>
       {labels && (
         <div className="flex justify-between mt-1.5">
@@ -182,7 +184,7 @@ export function DonutStat({ value, max, label, color = CHART.brand }: { value: n
   return (
     <div className="flex items-center gap-3">
       <svg width="72" height="72" viewBox="0 0 72 72">
-        <circle cx="36" cy="36" r={r} fill="none" stroke="#edeae0" strokeWidth="7" />
+        <circle cx="36" cy="36" r={r} fill="none" stroke="var(--color-line-2)" strokeWidth="7" />
         <circle cx="36" cy="36" r={r} fill="none" stroke={color} strokeWidth="7"
           strokeDasharray={c} strokeDashoffset={c * (1 - pct)} strokeLinecap="round"
           transform="rotate(-90 36 36)" />
@@ -211,7 +213,7 @@ export function HeatStrip({ data, labels, color = CHART.brand, goodWhenLow = fal
           return (
             <div key={i} title={`${labels?.[i] ?? i}: ${v}`}
               className="flex-1 h-7 rounded-[4px] transition-transform hover:scale-y-110"
-              style={{ background: v === 0 ? '#edeae0' : color, opacity: v === 0 ? 1 : 0.25 + t * 0.75 }} />
+              style={{ background: v === 0 ? 'var(--color-line-2)' : color, opacity: v === 0 ? 1 : 0.25 + t * 0.75 }} />
           );
         })}
       </div>

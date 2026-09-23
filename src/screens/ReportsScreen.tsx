@@ -1,138 +1,145 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Download, Egg, Wallet, Truck, Skull, Calendar, Check, Lock } from 'lucide-react';
-import { useApp, useCan, useCompanyData } from '@/store/app';
+import { CalendarRange, ChevronRight, FileText, Lock } from 'lucide-react';
+import { useCan, useCompanyData } from '@/store/app';
 import { Page, ScreenTitle } from '@/components/ui/Header';
-import { Card, EmptyState, GroupList, ListRow, IconTile, type Tone } from '@/components/ui/Card';
-import { SelectField, Field } from '@/components/ui/Form';
-import { fmtDate, todayISO } from '@/lib/format';
+import { Badge, Card, EmptyState, IconTile } from '@/components/ui/Card';
+import { ChipGroup, Field, SearchField } from '@/components/ui/Form';
+import { todayISO } from '@/lib/format';
+import {
+  DATE_PRESETS, REPORT_SECTIONS, reportHref, reportRange, rangeLabel, visibleReports,
+  type DatePreset, type ReportDef, type ReportParams,
+} from '@/lib/reports';
 
-type ReportDef = {
-  id: string; name: string; desc: string; icon: typeof FileText;
-  kind: 'BROILER' | 'LAYER' | 'BOTH'; financeOnly?: boolean;
-};
-
-const BROILER: ReportDef[] = [
-  { id: 'br_daily', name: 'Batch Daily Report', desc: 'Day-wise summary of all activities', icon: Calendar, kind: 'BROILER' },
-  { id: 'br_mort', name: 'Mortality & Sale Report', desc: 'Track deaths and sales per batch', icon: Skull, kind: 'BROILER' },
-  { id: 'br_feed', name: 'Feed Usage Report', desc: 'Batch-wise feed consumption', icon: FileText, kind: 'BROILER' },
-  { id: 'br_finance', name: 'Batch Finance Report', desc: 'Income, expenses, balance', icon: Wallet, kind: 'BROILER', financeOnly: true },
-  { id: 'br_sale', name: 'Batch Sale Report', desc: 'Complete sale transaction log', icon: Truck, kind: 'BROILER' },
-];
-
-const LAYER: ReportDef[] = [
-  { id: 'ly_batch', name: 'Layer Batch Report', desc: 'Egg collection, stock and sale summary', icon: Egg, kind: 'LAYER' },
-  { id: 'ly_egg', name: 'Egg Collection Report', desc: 'Day-wise trays collected', icon: Egg, kind: 'LAYER' },
-  { id: 'ly_sale', name: 'Egg Sales Report', desc: 'Trader-wise tray sales', icon: Truck, kind: 'LAYER' },
-  { id: 'ly_feed', name: 'Feed Consumption Report', desc: 'Layer feed used per shed', icon: FileText, kind: 'LAYER' },
-  { id: 'ly_mort', name: 'Mortality Report', desc: 'Layer mortality trend', icon: Skull, kind: 'LAYER' },
-  { id: 'ly_finance', name: 'Finance Report', desc: 'Layer batch P&L', icon: Wallet, kind: 'LAYER', financeOnly: true },
-];
-
+/**
+ * The reporting centre: one window, then every statement the farm can produce over the
+ * records it already keeps. A card opens a real view over real rows — nothing here
+ * generates a file, and a statement the role cannot read is not offered at all.
+ */
 export function ReportsScreen() {
   const nav = useNavigate();
-  const { companyId, companies, batches } = useCompanyData();
-  const company = companies.find(c => c.id === companyId);
-  const pushToast = useApp(s => s.pushToast);
-  const canExport = useCan('exportReports');
+  const data = useCompanyData();
   const canFinance = useCan('viewFinance');
+  const canExport = useCan('exportReports');
 
-  const [batchId, setBatchId] = useState(batches.find(b => b.status === 'ACTIVE')?.id ?? batches[0]?.id ?? '');
-  const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 29); return d.toISOString().slice(0, 10); });
-  const [to, setTo] = useState(todayISO());
-  const [downloading, setDownloading] = useState<string | null>(null);
+  const today = todayISO();
+  const [preset, setPreset] = useState<DatePreset>('30D');
+  const [from, setFrom] = useState(() => reportRange({ preset: '30D', from: '', to: today }, today).from);
+  const [to, setTo] = useState(today);
+  const [q, setQ] = useState('');
 
-  const batch = batches.find(b => b.id === batchId);
+  const params: ReportParams = { preset, from, to };
+  const range = useMemo(() => reportRange(params, today), [preset, from, to, today]);
 
-  function download(r: ReportDef) {
-    if (!canExport) { pushToast('error', 'You do not have export permission'); return; }
-    if (r.financeOnly && !canFinance) { pushToast('error', 'Finance reports are restricted for your role'); return; }
-    if (!batch) { pushToast('error', 'Select a batch first'); return; }
-    setDownloading(r.id);
-    setTimeout(() => {
-      setDownloading(null);
-      if (r.id === 'br_daily' || r.id === 'ly_batch') {
-        nav(`/batches/${batch.id}/daily-report`);
-      } else {
-        pushToast('success', `${r.name} generated · ${fmtDate(from)} → ${fmtDate(to)}`);
-      }
-    }, 900);
-  }
-
-  function Section({ title, tone, items }: { title: string; tone: Tone; items: ReportDef[] }) {
-    const visible = items.filter(r => !r.financeOnly || canFinance);
-    if (visible.length === 0) return null;
-    return (
-      <div>
-        <p className="font-display font-bold text-ink text-sm uppercase tracking-wider mb-2 px-1">{title}</p>
-        <GroupList>
-          {visible.map(r => {
-            const Icon = r.icon;
-            const busy = downloading === r.id;
-            return (
-              <ListRow key={r.id} onClick={() => download(r)}
-                leading={<IconTile tone={tone}><Icon size={17} /></IconTile>}
-                title={r.name}
-                subtitle={r.desc}
-                trailing={
-                  <span className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${busy ? 'bg-success-soft text-success' : 'bg-sunk text-muted'}`}>
-                    {busy ? <Check size={16} strokeWidth={2.5} /> : <Download size={16} />}
-                  </span>
-                } />
-            );
-          })}
-        </GroupList>
-      </div>
-    );
-  }
+  const needle = q.trim().toLowerCase();
+  const list = visibleReports(canFinance)
+    .filter(r => !needle || `${r.title} ${r.desc}`.toLowerCase().includes(needle));
 
   return (
     <Page withNav>
-      <ScreenTitle eyebrow="Insights" title="Reports" subtitle="Broiler & layer exports" />
+      <ScreenTitle
+        eyebrow="Records"
+        title="Reports"
+        subtitle={<>{data.companies.find(c => c.id === data.companyId)?.name ?? 'This farm'} · read-only statements over the records already booked</>}
+      />
 
-      <div className="px-4 sm:px-0 mt-3 space-y-4">
-        <div className="rounded-[22px] bg-brand text-white p-5 shadow-card">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center flex-shrink-0">
-              <FileText size={22} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-display font-bold text-lg">{company?.name ?? 'Poultry'} Reports</p>
-              <p className="text-white/60 text-xs mt-0.5">{BROILER.length + LAYER.length} report types · PDF format</p>
-            </div>
-          </div>
-        </div>
-
+      <div className="px-4 sm:px-0 mt-1 space-y-5">
         <Card>
-          <p className="font-display font-bold text-ink text-sm mb-3">Report parameters</p>
-          <div className="space-y-3">
-            <SelectField label="Batch" value={batchId} onChange={e => setBatchId(e.target.value)}
-              options={batches.map(b => ({ value: b.id, label: `${b.code} · ${b.birdType}` }))} />
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="From" type="date" value={from} onChange={e => setFrom(e.target.value)} />
-              <Field label="To" type="date" value={to} onChange={e => setTo(e.target.value)} />
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+            <p className="inline-flex items-center gap-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+              <CalendarRange size={14} className="text-brand -mt-[1px]" /> Report period
+            </p>
+            <p className="font-mono text-[11px] text-ink-2 tnum">{rangeLabel(range)}</p>
+          </div>
+          <ChipGroup className="mt-3" value={preset} onChange={setPreset} options={DATE_PRESETS} />
+          {preset === 'CUSTOM' && (
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <Field label="From" type="date" value={from} max={to} onChange={e => setFrom(e.target.value)} />
+              <Field label="To" type="date" value={to} max={today} onChange={e => setTo(e.target.value)} />
             </div>
+          )}
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <p className="text-[11.5px] text-muted leading-relaxed max-w-[520px]">
+              Every report opens on this window. A buyer statement and the batch register are lifetime
+              by nature, so a card marked <strong className="text-ink-2">Lifetime</strong> is not clipped
+              by it. Shed, batch, buyer and ingredient filters sit inside the reports that can act on them.
+            </p>
+            <SearchField className="sm:w-[220px] shrink-0" value={q} onChange={setQ} placeholder="Search reports" />
           </div>
         </Card>
 
-        {!batch ? (
-          <EmptyState title="Select a batch" description="Choose a batch to generate reports." />
-        ) : (
-          <>
-            <Section title="Broiler reports" tone="brand" items={BROILER} />
-            <Section title="Layer reports" tone="accent" items={LAYER} />
-          </>
-        )}
+        {list.length === 0 ? (
+          <EmptyState
+            icon={<FileText size={19} strokeWidth={1.75} />}
+            title="No report matches that"
+            description="Clear the search to see every statement this role can open."
+          />
+        ) : REPORT_SECTIONS.map(section => {
+          const items = list.filter(r => r.section === section.id);
+          if (!items.length) return null;
+          return (
+            <section key={section.id}>
+              <div className="flex items-baseline justify-between gap-3 px-0.5 mt-1">
+                <h2 className="font-display text-[16px] font-semibold text-ink leading-tight">{section.label}</h2>
+                <p className="font-mono text-[10px] text-muted tnum shrink-0">
+                  {items.length} {items.length === 1 ? 'report' : 'reports'}
+                </p>
+              </div>
+              <p className="text-[12px] text-muted px-0.5 mt-0.5 mb-3 leading-snug">{section.blurb}</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {items.map(def => (
+                  <ReportCard key={def.id} def={def} onOpen={() => nav(reportHref(def, params))} />
+                ))}
+              </div>
+            </section>
+          );
+        })}
 
         {!canExport && (
-          <div className="flex items-start gap-3 rounded-2xl bg-accent-soft px-4 py-3">
-            <Lock size={16} className="text-accent-ink flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-accent-ink leading-relaxed">
-              <strong>Note:</strong> Your role does not include report export permission. Contact the farm OWNER to enable.
+          <div className="flex items-start gap-3 rounded-[14px] bg-accent-soft px-4 py-3">
+            <Lock size={15} className="text-accent-ink shrink-0 mt-[2px]" />
+            <p className="text-[12px] text-accent-ink leading-relaxed">
+              <strong>Export is off for your role.</strong> Every statement below can still be read on
+              screen; downloading one needs the report export permission.
             </p>
           </div>
         )}
       </div>
     </Page>
+  );
+}
+
+const WORD = { shed: 'Shed', batch: 'Batch', trader: 'Buyer', ingredient: 'Ingredient' } as const;
+const NEEDS = { shed: 'a shed', batch: 'a batch', trader: 'a buyer', ingredient: 'an ingredient' } as const;
+
+/** One report, the question it answers, and the scope it understands. */
+function ReportCard({ def, onOpen }: { def: ReportDef; onOpen: () => void }) {
+  const Icon = def.icon;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group text-left bg-card border border-line rounded-[16px] shadow-card p-3.5 press hover:border-brand/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/25 transition-colors min-w-0"
+    >
+      <div className="flex items-start gap-3">
+        <IconTile tone={def.section === 'financial' || def.section === 'control' ? 'brand' : 'accent'} size={34}>
+          <Icon size={17} />
+        </IconTile>
+        <div className="flex-1 min-w-0">
+          <p className="font-display text-[14.5px] font-semibold text-ink leading-snug">{def.title}</p>
+          <p className="text-[12px] text-muted mt-0.5 leading-relaxed">{def.desc}</p>
+        </div>
+        <ChevronRight size={15} className="text-faint shrink-0 mt-1 transition-colors group-hover:text-brand" />
+      </div>
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5 min-h-[20px]">
+        {def.allTime && <Badge tone="neutral">Lifetime</Badge>}
+        {def.needs?.map(n => <Badge key={n} tone="warn">Needs {NEEDS[n]}</Badge>)}
+        {def.href
+          ? <span className="font-mono text-[9.5px] uppercase tracking-[0.1em] text-muted-2">Opens the sheet the batch already has</span>
+          : def.params.length > 0
+            ? def.params.map(p => <span key={p} className="font-mono text-[9.5px] uppercase tracking-[0.1em] text-muted-2">{WORD[p]}</span>)
+            : <span className="font-mono text-[9.5px] uppercase tracking-[0.1em] text-muted-2">Whole farm in the period</span>}
+      </div>
+    </button>
   );
 }

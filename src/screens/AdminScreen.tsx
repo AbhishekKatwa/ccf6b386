@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, Plus, Users, Power, LogIn, Check } from 'lucide-react';
+import { Building2, Plus, Users, Power, LogIn, Check, MessageCircle, Inbox, ShieldCheck } from 'lucide-react';
 import clsx from 'clsx';
 import { Page, ScreenTitle } from '@/components/ui/Header';
 import { Button, Field, SelectField, SegmentedTabs } from '@/components/ui/Form';
@@ -8,9 +8,10 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Badge, EmptyState } from '@/components/ui/Card';
 import { useApp } from '@/store/app';
 import { COMPANY_ASSIGNABLE_ROLES, ROLE_LABELS, type Role } from '@/types';
+import { fmtDateTime } from '@/lib/format';
 import { DEMO_PASSWORD } from '@/data/seed';
 
-type Tab = 'companies' | 'users';
+type Tab = 'companies' | 'users' | 'support';
 
 export function AdminScreen() {
   const nav = useNavigate();
@@ -23,6 +24,8 @@ export function AdminScreen() {
   const updateUserCompanies = useApp(s => s.updateUserCompanies);
   const selectCompany = useApp(s => s.selectCompany);
   const pushToast = useApp(s => s.pushToast);
+  const supportMessages = useApp(s => s.supportMessages);
+  const markSupportHandled = useApp(s => s.markSupportHandled);
 
   const [tab, setTab] = useState<Tab>('companies');
   const [companyDialog, setCompanyDialog] = useState(false);
@@ -68,6 +71,7 @@ export function AdminScreen() {
           options={[
             { value: 'companies', label: `Companies (${companies.length})`, icon: <Building2 size={14} /> },
             { value: 'users', label: `Users (${users.length})`, icon: <Users size={14} /> },
+            { value: 'support', label: `Support (${supportMessages.filter(m => !m.handledAt).length})`, icon: <Inbox size={14} /> },
           ]}
         />
 
@@ -127,6 +131,53 @@ export function AdminScreen() {
                 </Button>
               </div>
             ))}
+          </div>
+        )}
+        {tab === 'support' && (
+          <div className="space-y-2.5">
+            {supportMessages.length === 0 && (
+              <EmptyState icon={<MessageCircle size={22} />} title="No support messages"
+                description="Anything sent from Contact & help by any user, in any company, lands here." />
+            )}
+            {[...supportMessages].sort((a, b) => (a.handledAt ? 1 : 0) - (b.handledAt ? 1 : 0) || b.at.localeCompare(a.at)).map(m => {
+              const company = companies.find(c => c.id === m.companyId);
+              return (
+                <div key={m.id} className={clsx('bg-card border rounded-[16px] p-4 shadow-card', m.handledAt ? 'border-line-2' : 'border-line')}>
+                  <div className="flex items-start gap-3">
+                    <span className={clsx('w-10 h-10 rounded-[12px] flex items-center justify-center shrink-0',
+                      m.handledAt ? 'bg-sunk text-muted' : 'bg-brand-soft text-brand-ink')}>
+                      {m.handledAt ? <ShieldCheck size={18} /> : <MessageCircle size={18} />}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-[15px] font-semibold text-ink truncate">{m.name}</p>
+                        {m.role && <Badge tone="neutral">{ROLE_LABELS[m.role]}</Badge>}
+                        {m.handledAt && <Badge tone="success">Handled</Badge>}
+                      </div>
+                      <p className="font-mono text-[11px] text-muted mt-0.5 tnum truncate">
+                        {fmtDateTime(m.at)}{m.mobile ? ` · ${m.mobile}` : ''}{company ? ` · ${company.name}` : ' · no company'}
+                      </p>
+                      {m.subject && <p className="text-[13px] font-semibold text-ink-2 mt-1.5">{m.subject}</p>}
+                      <p className="text-[13px] text-muted mt-1 leading-relaxed whitespace-pre-wrap break-words">{m.message}</p>
+                      {m.handledAt && (
+                        <p className="font-mono text-[10px] text-muted-2 mt-2">
+                          Handled {fmtDateTime(m.handledAt)}{m.handledBy ? ` by ${m.handledBy}` : ''}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {!m.handledAt && (
+                    <div className="flex gap-2 mt-3">
+                      <Button size="sm" variant="outline" icon={<Check size={14} />}
+                        onClick={() => { const r = markSupportHandled(m.id); pushToast(r.ok ? 'success' : 'error', r.ok ? 'Marked handled' : r.error ?? 'Failed'); }}>
+                        Mark handled
+                      </Button>
+                      {m.mobile && <Button size="sm" variant="ghost" icon={<MessageCircle size={14} />} onClick={() => { window.location.href = `sms:${m.mobile}`; }}>Reply</Button>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

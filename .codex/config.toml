@@ -1,0 +1,9 @@
+[workspace]
+# Ignore credit-heavy or irrelevant file paths
+exclude_paths = [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/venv/**",
+    "**/.git/**"
+]

@@ -3,49 +3,57 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import {
   LayoutDashboard, ClipboardList, Warehouse, Layers, Wheat, FlaskConical, Handshake,
-  Wallet, BarChart3, User, Phone, Menu, Plus, Egg, Skull, Lock, Building2,
-  Wifi, WifiOff, RefreshCw, Feather, Receipt, ChevronDown, Check, History, LogOut,
+  Wallet, BarChart3, User, Phone, Menu, Building2,
+  Wifi, WifiOff, RefreshCw, Feather, Receipt, ChevronDown, Check, History, LogOut, BellRing,
+  CalendarRange, Pill,
 } from 'lucide-react';
-import { useApp, useCurrentUser, useCan, useCompanyData } from '@/store/app';
+import { useApp, useCurrentUser } from '@/store/app';
 import { Avatar } from '@/components/ui/Card';
 import { ActionSheet, ConfirmDialog } from '@/components/ui/Dialog';
+import { FORMULA_VIEW_ROLES, MEDICINE_ROLES } from '@/lib/permissions';
 import { ROLE_LABELS, type Role } from '@/types';
 
 interface NavItem { to: string; label: string; icon: ReactNode; end?: boolean; roles?: Role[] }
 interface NavGroup { title: string; items: NavItem[]; roles?: Role[] }
+interface MoreAction { icon: ReactNode; label: string; hint?: string; onClick: () => void; roles?: Role[] }
 
-/** Nav is role-gated so users never see modules they cannot access (§14). */
+/** Nav is role-gated so users never see modules they cannot access (§14).
+ *  MASTER_ADMIN sees every panel: platform duties require reading any company. */
+const M: Role = 'MASTER_ADMIN';
 const GROUPS: NavGroup[] = [
   {
     title: 'Overview',
     items: [
-      { to: '/', label: 'Today', icon: <LayoutDashboard size={17} />, end: true },
-      { to: '/tasks', label: 'Tasks', icon: <ClipboardList size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_LABOR'] },
+      { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={17} />, end: true },
+      //{ to: '/alerts', label: 'Alerts', icon: <BellRing size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', M] },
+      //{ to: '/tasks', label: 'Tasks', icon: <ClipboardList size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_LABOR', M] },
       { to: '/log', label: "Today's log", icon: <History size={17} />, roles: ['FARM_LABOR'] },
     ],
   },
   {
-    title: 'Operations',
-    roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER'],
+    title: 'Farm',
+    roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', M],
     items: [
       { to: '/farms', label: 'Sheds', icon: <Warehouse size={17} /> },
-      { to: '/batches', label: 'Batches', icon: <Layers size={17} /> },
-      { to: '/feed', label: 'Godown', icon: <Wheat size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR'] },
-      { to: '/feed/formulas', label: 'Formulas', icon: <FlaskConical size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER'] },
+      //{ to: '/batches', label: 'Batches', icon: <Layers size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER', M] },
+      //{ to: '/feed/formulas', label: 'Feed', icon: <FlaskConical size={17} />, roles: FORMULA_VIEW_ROLES },
+      { to: '/feed', label: 'Godown', end: true, icon: <Wheat size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR', M] },
+      { to: '/medicines', label: 'Medicines & Vaccines', icon: <Pill size={17} />, roles: MEDICINE_ROLES },
     ],
   },
   {
     title: 'Commerce',
-    roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR'],
+    roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR', M],
     items: [
-      { to: '/sales', label: 'Sale logs', icon: <Receipt size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR'] },
-      { to: '/traders', label: 'Traders', icon: <Handshake size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR'] },
-      { to: '/finance', label: 'Finance', icon: <Wallet size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR'] },
+      { to: '/sales', label: 'Sales', end: true, icon: <Receipt size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR', M] },
+      { to: '/sales/planner', label: 'Egg Sale Planner', icon: <CalendarRange size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR', M] },
+      { to: '/traders', label: 'Traders', icon: <Handshake size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', M] },
+      { to: '/finance', label: 'Finance', icon: <Wallet size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', M] },
     ],
   },
   {
     title: 'Insights',
-    roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_SUPERVISOR'],
+    roles: ['OWNER', 'FINANCIAL_SUPERVISOR', M],
     items: [
       { to: '/reports', label: 'Reports', icon: <BarChart3 size={17} /> },
     ],
@@ -86,17 +94,17 @@ function mobileTabs(role: Role): NavItem[] {
   }
   if (role === 'MASTER_ADMIN') {
     return [
+      { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} />, end: true },
       { to: '/admin', label: 'Companies', icon: <Building2 size={20} /> },
       { to: '/profile', label: 'Profile', icon: <User size={20} /> },
     ];
   }
+  /** Four thumb-reach destinations; everything else lives in the More sheet. */
   const base: NavItem[] = [
-    { to: '/', label: 'Today', icon: <LayoutDashboard size={20} />, end: true },
+    { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} />, end: true },
     { to: '/farms', label: 'Sheds', icon: <Warehouse size={20} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER'] },
-    { to: '/sales', label: 'Sales', icon: <Receipt size={20} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR'] },
-    { to: '/traders', label: 'Trade', icon: <Handshake size={20} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR'] },
-    { to: '/finance', label: 'Money', icon: <Wallet size={20} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR'] },
-    { to: '/tasks', label: 'Tasks', icon: <ClipboardList size={20} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER'] },
+    //{ to: '/batches', label: 'Batches', icon: <Layers size={20} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER'] },
+    { to: '/sales', label: 'Sales', end: true, icon: <Receipt size={20} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR'] },
   ];
   return base.filter(t => allowed(t, role)).slice(0, 4);
 }
@@ -109,8 +117,10 @@ export function SyncPill({ compact = false }: { compact?: boolean }) {
   const feed = useApp(s => s.feed);
   const eggs = useApp(s => s.eggs);
   const saleLogs = useApp(s => s.saleLogs);
+  const saleEntries = useApp(s => s.saleEntries);
   const feedRounds = useApp(s => s.feedRounds);
-  const pending = [...mortality, ...feed, ...eggs, ...saleLogs, ...feedRounds].filter(x => !x.synced).length;
+  const vaccinations = useApp(s => s.vaccinations);
+  const pending = [...mortality, ...feed, ...eggs, ...saleLogs, ...saleEntries, ...feedRounds, ...vaccinations].filter(x => !x.synced).length;
 
   if (!online) {
     return (
@@ -193,7 +203,7 @@ function BrandMark() {
   );
 }
 
-function Sidebar({ onQuickAdd }: { onQuickAdd: () => void }) {
+function Sidebar() {
   const user = useCurrentUser();
   const signOut = useApp(s => s.signOut);
   const groups = user ? visibleGroups(user.role) : [];
@@ -211,7 +221,7 @@ function Sidebar({ onQuickAdd }: { onQuickAdd: () => void }) {
                   key={it.to} to={it.to} end={it.end}
                   className={({ isActive }) => clsx(
                     'flex items-center gap-3 px-3 py-2 rounded-[10px] text-[13px] font-medium transition-colors',
-                    isActive ? 'bg-brand-soft text-brand-ink font-semibold' : 'text-ink-2 hover:bg-sunk',
+                    isActive ? 'bg-brand-soft text-brand-ink font-semibold ring-1 ring-brand/10' : 'text-ink-2 hover:bg-sunk',
                   )}
                 >
                   <span className="shrink-0">{it.icon}</span>{it.label}
@@ -221,16 +231,6 @@ function Sidebar({ onQuickAdd }: { onQuickAdd: () => void }) {
           </div>
         ))}
       </nav>
-      {user && user.role !== 'FARM_LABOR' && (
-        <div className="px-3 pb-3">
-          <button
-            onClick={onQuickAdd}
-            className="w-full inline-flex items-center justify-center gap-2 bg-brand text-white rounded-[12px] px-3 py-2.5 text-[13px] font-semibold press hover:bg-brand-2 shadow-card"
-          >
-            <Plus size={15} /> Quick add
-          </button>
-        </div>
-      )}
       {user && (
         <div className="px-4 py-4 border-t border-line-2">
           <div className="flex items-center gap-3">
@@ -253,7 +253,7 @@ function BottomNav({ onMore, onSignOut }: { onMore: () => void; onSignOut: () =>
   const user = useCurrentUser();
   const tabs = user ? mobileTabs(user.role) : [];
   const isLabor = user?.role === 'FARM_LABOR';
-  const showMore = user ? !isLabor && user.role !== 'MASTER_ADMIN' : false;
+  const showMore = user ? !isLabor : false;
   const cols = tabs.length + (showMore || isLabor ? 1 : 0);
   return (
     <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 safe-bottom">
@@ -302,69 +302,36 @@ function BottomNav({ onMore, onSignOut }: { onMore: () => void; onSignOut: () =>
   );
 }
 
-function useQuickActions() {
-  const nav = useNavigate();
-  const user = useCurrentUser();
-  const canCreate = useCan('create');
-  const canDaily = useCan('createDailyOps');
-  const canLock = useCan('lockDay');
-  const canTrade = useCan('manageTraders');
-  const canFinance = useCan('viewFinance');
-  const batches = useCompanyData().batches;
-  const active = batches.find(b => b.status === 'ACTIVE');
-  const b = active?.id ? `/batches/${active.id}` : '/batches';
-  const actions = [] as { icon: ReactNode; label: string; hint?: string; onClick: () => void }[];
-  if (!user || user.role === 'MASTER_ADMIN') return actions;
-  if (canDaily) {
-    actions.push(
-      { icon: <Egg size={16} />, label: 'Collect eggs', hint: 'Log today\'s trays', onClick: () => nav(`${b}/eggs`) },
-      { icon: <Skull size={16} />, label: 'Record mortality', hint: 'Add a daily entry', onClick: () => nav(`${b}/mortality`) },
-      { icon: <Wheat size={16} />, label: 'Feed consumption', hint: 'Tonnes for a shed', onClick: () => nav('/feed') },
-      { icon: <ClipboardList size={16} />, label: 'New task', hint: 'Assign daily work', onClick: () => nav('/tasks') },
-    );
-  }
-  if (canCreate) actions.push({ icon: <Receipt size={16} />, label: 'Sale log', hint: 'Trays handed over', onClick: () => nav('/sales') });
-  if (canTrade) actions.push({ icon: <Handshake size={16} />, label: 'Trader sale', hint: 'Collate sale logs', onClick: () => nav('/sales') });
-  if (canFinance) actions.push({ icon: <Wallet size={16} />, label: 'Add transaction', hint: 'Income or expense', onClick: () => nav('/finance') });
-  if (canLock) actions.push({ icon: <Lock size={16} />, label: 'Lock a day', hint: 'Freeze historical data', onClick: () => nav(`${b}/mortality`) });
-  return actions;
-}
-
 export function AppShell({ children }: { children: ReactNode }) {
   const [moreOpen, setMoreOpen] = useState(false);
-  const [quickOpen, setQuickOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
   const nav = useNavigate();
   const signOut = useApp(s => s.signOut);
   const user = useCurrentUser();
-  const quick = useQuickActions();
   const isLabor = user?.role === 'FARM_LABOR';
   const isMaster = user?.role === 'MASTER_ADMIN';
 
-  const moreActions = [
-    { icon: <ClipboardList size={16} />, label: 'Tasks', hint: 'Daily work & assignments', onClick: () => nav('/tasks') },
-    { icon: <BarChart3 size={16} />, label: 'Reports', hint: 'Operational reports', onClick: () => nav('/reports') },
-    { icon: <Wheat size={16} />, label: 'Godown', hint: 'Feed inventory in KG', onClick: () => nav('/feed') },
-    { icon: <FlaskConical size={16} />, label: 'Feed formulas', hint: 'Per-shed mix, versioned', onClick: () => nav('/feed/formulas') },
-    { icon: <Layers size={16} />, label: 'All batches', onClick: () => nav('/batches') },
-    { icon: <Receipt size={16} />, label: 'Sale logs', hint: 'Dispatch & trader sales', onClick: () => nav('/sales') },
-    { icon: <User size={16} />, label: 'Profile & settings', onClick: () => nav('/profile') },
-    { icon: <Phone size={16} />, label: 'Support', onClick: () => nav('/contact') },
-  ].filter(a => {
     const role = user?.role;
-    if (a.label === 'Reports') return role === 'OWNER' || role === 'FINANCIAL_SUPERVISOR' || role === 'FARM_SUPERVISOR';
-    if (a.label === 'Godown') return role === 'OWNER' || role === 'FARM_SUPERVISOR';
-    if (a.label === 'All batches') return role !== 'FINANCIAL_SUPERVISOR';
-    if (a.label === 'Feed formulas') return role !== 'FARM_LABOR';
-    if (a.label === 'Tasks') return role !== 'FINANCIAL_SUPERVISOR';
-    if (a.label === 'Sale logs') return true;
-    if (a.label === 'Support') return role !== 'FARM_LABOR';
-    return true;
-  });
+  const OPS: Role[] = ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER', M];
+  const MONEY: Role[] = ['OWNER', 'FINANCIAL_SUPERVISOR', M];
+
+  /** Everything the bottom nav has no room for, money and stock first (§IA). */
+  const moreActions = ([
+    { icon: <Wheat size={16} />, label: 'Godown', hint: 'Feed inventory in KG', onClick: () => nav('/feed'), roles: ['OWNER', 'FARM_SUPERVISOR', M] },
+    { icon: <Pill size={16} />, label: 'Medicines & Vaccines', hint: 'Central stock, ledger and flock usage', onClick: () => nav('/medicines'), roles: MEDICINE_ROLES },
+    { icon: <CalendarRange size={16} />, label: 'Egg Sale Planner', hint: 'Trays promised to traders, 5 days ahead', onClick: () => nav('/sales/planner'), roles: [...OPS, 'FINANCIAL_SUPERVISOR'] },
+    
+    { icon: <Handshake size={16} />, label: 'Traders', hint: 'Balances & collections', onClick: () => nav('/traders'), roles: MONEY },
+    { icon: <Wallet size={16} />, label: 'Finance', hint: 'Money ledger & shed P&L', onClick: () => nav('/finance'), roles: MONEY },
+    { icon: <BarChart3 size={16} />, label: 'Reports', hint: 'Every historical statement', onClick: () => nav('/reports'), roles: MONEY },
+    { icon: <User size={16} />, label: 'Profile', hint: 'Account & settings', onClick: () => nav('/profile') },
+    { icon: <Building2 size={16} />, label: 'Companies', hint: 'Platform administration', onClick: () => nav('/admin'), roles: [M] },
+    { icon: <Phone size={16} />, label: 'Support', onClick: () => nav('/contact'), roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', M] },
+  ] as MoreAction[]).filter(a => allowed(a, role ?? 'FARM_LABOR'));
 
   return (
     <div className="min-h-screen bg-canvas flex">
-      <Sidebar onQuickAdd={() => setQuickOpen(true)} />
+      <Sidebar />
       <div className="flex-1 min-w-0 flex flex-col">
         <main className="flex-1 min-w-0">
           <div className="mx-auto w-full max-w-[1080px] px-0 sm:px-6 lg:px-8">
@@ -373,21 +340,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </main>
       </div>
 
-      {!isLabor && !isMaster && (
-        <button
-          onClick={() => setQuickOpen(true)}
-          aria-label="Quick add"
-          className="lg:hidden fixed right-4 bottom-24 z-40 rounded-full bg-brand text-white shadow-float flex items-center justify-center press"
-          style={{ width: 52, height: 52 }}
-        >
-          <Plus size={22} />
-        </button>
-      )}
-
       <BottomNav onMore={() => setMoreOpen(true)} onSignOut={() => setSignOutOpen(true)} />
 
       <ActionSheet open={moreOpen} onClose={() => setMoreOpen(false)} title="More" actions={moreActions} />
-      <ActionSheet open={quickOpen} onClose={() => setQuickOpen(false)} title="Quick add" actions={quick} />
       <ConfirmDialog open={signOutOpen} title="Sign out?" message="You'll need your mobile number and PIN to sign in again."
         confirmLabel="Sign out" onCancel={() => setSignOutOpen(false)}
         onConfirm={() => { setSignOutOpen(false); signOut(); }} />

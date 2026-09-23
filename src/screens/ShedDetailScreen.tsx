@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { Building2, ChevronRight, Plus } from 'lucide-react';
 import { useApp, useCompanyData, useCurrentUser } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
@@ -9,13 +9,23 @@ import { Dialog } from '@/components/ui/Dialog';
 import { fmtClock, fmtIN, fmtPct, todayISO } from '@/lib/format';
 import { eggStockTrays } from '@/lib/calc';
 import { useBatchMetrics } from '@/hooks/useBatchMetrics';
-import { FEED_ROUNDS, FEED_ROUND_LABELS, type BirdType } from '@/types';
+import { VaccinationPlanStep } from '@/components/vaccination/VaccinationPlan';
+import { FEED_ROUNDS, FEED_ROUND_LABELS, type BirdType, type VaccinationDraft } from '@/types';
+
+/** A shed with a live flock has no page of its own: the flock's operating view is the shed. */
+export function ShedGate() {
+  const { shedId } = useParams();
+  const batches = useApp(s => s.batches);
+  const live = batches.find(b => b.shedId === shedId && b.status === 'ACTIVE');
+  if (live) return <Navigate to={`/batches/${live.id}`} replace />;
+  return <ShedDetailScreen />;
+}
 
 export function ShedDetailScreen() {
   const { shedId } = useParams();
   const nav = useNavigate();
   const data = useCompanyData();
-  const { sheds, farms, batches, eggs, saleLogs, feedRounds } = data;
+  const { sheds, farms, batches, eggs, saleEntries, feedRounds } = data;
   const shed = sheds.find(x => x.id === shedId);
   const farm = farms.find(f => f.id === shed?.farmId);
   const live = batches.find(b => b.shedId === shedId && b.status === 'ACTIVE');
@@ -28,8 +38,11 @@ export function ShedDetailScreen() {
   const [form, setForm] = useState({
     birdType: 'LAYER' as BirdType, breed: '', hatchDate: '', placementDate: todayISO(), birds: '',
   });
+  /** The plan copied into the new batch at placement; the batch owns these dates from then on. */
+  const [schedule, setSchedule] = useState<VaccinationDraft[]>([]);
 
   if (!shed) return <Page><Header title="Shed" /><div className="px-4 sm:px-0"><EmptyState title="Shed not found" /></div></Page>;
+
 
   const today = todayISO();
   /** Labor's feed round log for this shed — when the feed actually reached the birds. */
@@ -37,17 +50,24 @@ export function ShedDetailScreen() {
 
   const canPlace = !live && (user?.role === 'OWNER' || user?.role === 'FARM_SUPERVISOR');
 
+  function resetForm() {
+    setForm({ birdType: 'LAYER', breed: '', hatchDate: '', placementDate: todayISO(), birds: '' });
+    setSchedule([]);
+  }
+
   function submit() {
     const code = nextBatchCode(shed!.id);
     const r = addBatch({
       farmId: shed!.farmId, shedId: shed!.id, birdType: form.birdType, breed: form.breed,
       hatchDate: form.hatchDate || form.placementDate, placementDate: form.placementDate,
       initialBirds: parseInt(form.birds, 10) || 0,
-    });
+    }, schedule.length ? schedule : undefined);
     if (!r.ok) return pushToast('error', r.error ?? 'Failed');
-    pushToast('success', `Batch ${code} placed in ${shed!.name}`);
+    pushToast('success', schedule.length
+      ? `Batch ${code} placed with ${schedule.length} vaccination${schedule.length === 1 ? '' : 's'} scheduled`
+      : `Batch ${code} placed in ${shed!.name}`);
     setOpen(false);
-    setForm({ birdType: 'LAYER', breed: '', hatchDate: '', placementDate: todayISO(), birds: '' });
+    resetForm();
   }
 
   return (
@@ -79,7 +99,7 @@ export function ShedDetailScreen() {
               {live.birdType === 'LAYER' && (
                 <>
                   <Row label="Today's eggs" value={`${fmtIN(m.todaysEggs.total)} trays`} />
-                  <Row label="Egg stock" value={`${fmtIN(eggStockTrays(shed!.id, eggs, saleLogs).balance)} trays`} />
+                  <Row label="Egg stock" value={`${fmtIN(eggStockTrays(shed!.id, eggs, saleEntries).balance)} trays`} />
                 </>
               )}
               <Row label="Feed (30d)" value={`${fmtIN(m.feed30.tonnes, 2)} t · ${fmtIN(m.feed30.kg)} kg`} />
@@ -125,6 +145,8 @@ export function ShedDetailScreen() {
             <Field label="Birds placed" type="number" inputMode="numeric" value={form.birds}
               onChange={e => setForm(f => ({ ...f, birds: e.target.value }))}
               placeholder={`up to ${shed.capacity}`} className="font-mono" suffix="birds" hint={`Batch number ${nextBatchCode(shed.id)}`} />
+            <VaccinationPlanStep placementDate={form.placementDate} birdType={form.birdType}
+              drafts={schedule} onChange={setSchedule} />
           </div>
         </Dialog>
       )}

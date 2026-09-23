@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { FileText, Printer } from 'lucide-react';
+import clsx from 'clsx';
 import { useApp, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, EmptyState } from '@/components/ui/Card';
@@ -84,8 +85,8 @@ export function DailyReportScreen() {
             <table className="w-full text-[9px] font-mono tnum" style={{ minWidth: 760 }}>
               <thead>
                 <tr className="bg-brand-2 text-white">
-                  {['Day', 'Date', 'Live', 'Mort', 'Mort%', 'C.Mor', 'C.Mor%', 'Feed kg', 'C.Feed t', 'g/bird', ...(isLayer ? [...EGG_GRADES.map(g => EGG_GRADE_LABELS[g]), 'Trays', 'Eggs'] : [])].map(h => (
-                    <th key={h} className="px-1.5 py-1.5 text-left font-semibold whitespace-nowrap uppercase tracking-wide">{h}</th>
+                  {['Day', 'Date', 'Live', 'Mort', 'Mort%', 'C.Mor', 'C.Mor%', 'Feed kg', 'C.Feed t', 'g/bird', ...(isLayer ? [...EGG_GRADES.map(g => EGG_GRADE_LABELS[g]), 'Trays', 'Eggs'] : [])].map((h, hi) => (
+                    <th key={h} className={clsx('px-1.5 py-1.5 font-semibold whitespace-nowrap uppercase tracking-wide', hi > 1 ? 'text-right' : 'text-left')}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -94,17 +95,17 @@ export function DailyReportScreen() {
                   <tr key={r.date} className={i === rows.length - 1 ? 'bg-accent-soft font-semibold' : i % 2 ? 'bg-sunk/40' : ''}>
                     <td className="px-1.5 py-1 whitespace-nowrap">D{r.day}</td>
                     <td className="px-1.5 py-1 whitespace-nowrap">{r.date.slice(8)}/{r.date.slice(5, 7)}</td>
-                    <td className="px-1.5 py-1">{fmtIN(r.live)}</td>
-                    <td className="px-1.5 py-1 text-danger">{r.mort}</td>
-                    <td className="px-1.5 py-1">{r.mortPct.toFixed(3)}</td>
-                    <td className="px-1.5 py-1">{fmtIN(r.cumMort)}</td>
-                    <td className="px-1.5 py-1">{r.cumMortPct.toFixed(2)}</td>
-                    <td className="px-1.5 py-1">{fmtIN(r.feedKg)}</td>
-                    <td className="px-1.5 py-1">{(r.cumFeedKg / 1000).toFixed(2)}</td>
-                    <td className="px-1.5 py-1">{r.feedPerBirdG}</td>
-                    {isLayer && EGG_GRADES.map(g => <td key={g} className="px-1.5 py-1">{r.byGrade[g]}</td>)}
-                    {isLayer && <td className="px-1.5 py-1">{fmtIN(r.trays)}</td>}
-                    {isLayer && <td className="px-1.5 py-1">{fmtIN(r.eggs)}</td>}
+                    <td className="px-1.5 py-1 text-right">{fmtIN(r.live)}</td>
+                    <td className="px-1.5 py-1 text-right text-danger">{r.mort}</td>
+                    <td className="px-1.5 py-1 text-right">{r.mortPct.toFixed(3)}</td>
+                    <td className="px-1.5 py-1 text-right">{fmtIN(r.cumMort)}</td>
+                    <td className="px-1.5 py-1 text-right">{r.cumMortPct.toFixed(2)}</td>
+                    <td className="px-1.5 py-1 text-right">{fmtIN(r.feedKg)}</td>
+                    <td className="px-1.5 py-1 text-right">{(r.cumFeedKg / 1000).toFixed(2)}</td>
+                    <td className="px-1.5 py-1 text-right">{r.feedPerBirdG}</td>
+                    {isLayer && EGG_GRADES.map(g => <td key={g} className="px-1.5 py-1 text-right">{r.byGrade[g]}</td>)}
+                    {isLayer && <td className="px-1.5 py-1 text-right">{fmtIN(r.trays)}</td>}
+                    {isLayer && <td className="px-1.5 py-1 text-right">{fmtIN(r.eggs)}</td>}
                   </tr>
                 ))}
               </tbody>

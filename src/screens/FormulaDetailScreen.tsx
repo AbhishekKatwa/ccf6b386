@@ -4,10 +4,11 @@ import { Copy, Pencil, Power, History, FlaskConical } from 'lucide-react';
 import { useApp, useCan, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Badge, Card, EmptyState, Row, Stat, StatCell, StatStrip } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Form';
+import { Button, SelectField } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
 import { FormulaTable } from '@/components/ui/FormulaTable';
 import { formulaCostPerTonne, formulaTotalKg, formulaUsage } from '@/lib/calc';
+import { useGodownPrices } from '@/hooks/useGodownPrices';
 import { fmtDate, fmtIN, fmtMoney } from '@/lib/format';
 
 export function FormulaDetailScreen() {
@@ -20,8 +21,10 @@ export function FormulaDetailScreen() {
   const canManageFormula = useApp(s => s.canManageFormula);
   const pushToast = useApp(s => s.pushToast);
   const canFinance = useCan('viewFinance');
+  const { priceOf } = useGodownPrices();
   const [dupOpen, setDupOpen] = useState(false);
   const [dupName, setDupName] = useState('');
+  const [dupShed, setDupShed] = useState('');
 
   const formula = feedFormulas.find(f => f.id === formulaId);
   if (!formula) {
@@ -41,6 +44,8 @@ export function FormulaDetailScreen() {
   const isActive = formula.status === 'ACTIVE';
   const bound = formulaUsage(formula, feed, feedFormulas);
   const versions = feedFormulas.filter(f => f.familyId === formula.familyId).length;
+  /** A copy is its own formula, so its shed is chosen here — within what this user may manage. */
+  const copySheds = sheds.filter(s => canManageFormula(s.id));
 
   function toggleActive() {
     const r = setFormulaActive(formula!.id, !isActive);
@@ -51,10 +56,12 @@ export function FormulaDetailScreen() {
   }
 
   function duplicate() {
-    const r = duplicateFeedFormula(formula!.id, { name: dupName });
+    const shedId = dupShed || formula!.shedId;
+    const r = duplicateFeedFormula(formula!.id, { name: dupName, shedId });
     if (!r.ok || !r.id) return pushToast('error', r.error ?? 'Failed');
     setDupOpen(false);
-    pushToast('success', 'Copy created — it stays inactive until you activate it');
+    const target = sheds.find(s => s.id === shedId);
+    pushToast('success', `Copy created for ${target?.name ?? 'its shed'} — it stays inactive until you activate it`);
     nav(`/feed/formulas/${r.id}/edit`);
   }
 
@@ -67,13 +74,13 @@ export function FormulaDetailScreen() {
       <div className="px-4 sm:px-0 mt-3 space-y-4 pb-6">
         <Card padded={false} className="overflow-hidden">
           <StatStrip>
-            <StatCell><Stat label="Mix total" value={fmtIN(formulaTotalKg(formula.items), 2)} sub="kg / tonne" tone={Math.abs(formulaTotalKg(formula.items) - 1000) <= 1 ? 'success' : 'danger'} size="sm" /></StatCell>
+            <StatCell><Stat label="Mix total" value={fmtIN(formulaTotalKg(formula.items), 2)} sub="kg" tone="neutral" size="sm" /></StatCell>
             <StatCell><Stat label="Ingredients" value={String(formula.items.length)} tone="neutral" size="sm" /></StatCell>
-            <StatCell><Stat label="Cost / tonne" value={canFinance ? fmtMoney(formulaCostPerTonne(formula)) : '₹••••'} tone="brand" size="sm" /></StatCell>
+            <StatCell><Stat label="Cost / tonne" value={canFinance ? fmtMoney(formulaCostPerTonne(formula, priceOf)) : '₹••••'} sub="at godown averages" tone="brand" size="sm" /></StatCell>
           </StatStrip>
         </Card>
 
-        <FormulaTable formula={formula} showCosts={canFinance} />
+        <FormulaTable formula={formula} showCosts={canFinance} priceOf={priceOf} />
 
         <Card>
           <Row label="Version" value={`V${formula.version} of ${versions}`} />
@@ -97,7 +104,7 @@ export function FormulaDetailScreen() {
         <div className="grid grid-cols-2 gap-2">
           <Button variant="outline" icon={<History size={15} />} onClick={() => nav(`/feed/formulas/${formula.id}/history`)}>History</Button>
           {canManage && (
-            <Button variant="outline" icon={<Copy size={15} />} onClick={() => { setDupName(`${formula.name} (copy)`); setDupOpen(true); }}>Duplicate</Button>
+            <Button variant="outline" icon={<Copy size={15} />} onClick={() => { setDupName(`${formula.name} (copy)`); setDupShed(formula.shedId); setDupOpen(true); }}>Duplicate</Button>
           )}
           {canManage && (
             <Button variant="outline" icon={<Pencil size={15} />} onClick={() => nav(`/feed/formulas/${formula.id}/edit`)}>
@@ -111,7 +118,7 @@ export function FormulaDetailScreen() {
           )}
         </div>
 
-        <Button block variant="accent" icon={<FlaskConical size={16} />} onClick={() => nav('/feed')}>View godown stock</Button>
+        <Button block icon={<FlaskConical size={16} />} onClick={() => nav('/feed')}>View godown stock</Button>
       </div>
 
       <Dialog open={dupOpen} onClose={() => setDupOpen(false)} title="Duplicate formula"
@@ -128,8 +135,11 @@ export function FormulaDetailScreen() {
             <input value={dupName} onChange={e => setDupName(e.target.value)}
               className="w-full bg-card border border-line rounded-[12px] px-3 py-2.5 text-[14px] text-ink outline-none focus:border-brand" />
           </label>
+          <SelectField label="Shed" value={dupShed} onChange={e => setDupShed(e.target.value)}
+            options={copySheds.map(s => ({ value: s.id, label: s.name }))} />
           <p className="text-[12px] text-muted leading-relaxed">
-            The copy carries all {formula.items.length} ingredients at the same KG per tonne. Edit it, then activate it when you want it to drive deduction.
+            The copy carries all {formula.items.length} ingredients at the same KG per tonne and belongs to the shed you choose here —
+            it need not be the original&rsquo;s. Edit it, then activate it when you want it to drive deduction.
           </p>
         </div>
       </Dialog>

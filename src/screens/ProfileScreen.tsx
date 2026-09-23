@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  User, CreditCard, Gem, Globe, Lock, Bell, Share2, Star,
-  FileText, LogOut, Wifi, WifiOff, RefreshCw, Check,
+  User, CreditCard, Gem, Lock, Share2, LogOut, Wifi, WifiOff, MapPin,
 } from 'lucide-react';
 import { useApp, useCurrentUser, useCompanyData } from '@/store/app';
 import { Page, ScreenTitle } from '@/components/ui/Header';
@@ -12,7 +11,7 @@ import { ConfirmDialog, Dialog } from '@/components/ui/Dialog';
 import { fmtDateTime } from '@/lib/format';
 import { ROLE_LABELS } from '@/types';
 
-type Group = { title: string; items: Array<{ icon: typeof User; title: string; sub: string; badge?: string; danger?: boolean; action: () => void }> };
+type Group = { title: string; items: Array<{ icon: typeof User; title: string; sub: string; badge?: string; danger?: boolean; ownerOnly?: boolean; action: () => void }> };
 
 export function ProfileScreen() {
   const nav = useNavigate();
@@ -20,14 +19,11 @@ export function ProfileScreen() {
   const signOut = useApp(s => s.signOut);
   const online = useApp(s => s.online);
   const syncPending = useApp(s => s.syncPending);
-  const resetDemo = useApp(s => s.resetDemo);
   const pushToast = useApp(s => s.pushToast);
   const { companyId, companies, farms, batches, mortality } = useCompanyData();
 
   const [confirmOut, setConfirmOut] = useState(false);
-  const [langOpen, setLangOpen] = useState(false);
   const [pwdOpen, setPwdOpen] = useState(false);
-  const [lang, setLang] = useState('English (India)');
   const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' });
 
   if (!user) return null;
@@ -40,35 +36,31 @@ export function ProfileScreen() {
       title: 'Account',
       items: [
         { icon: User, title: 'My profile', sub: `${user.name} · +91 ${user.mobile}`, action: () => pushToast('info', 'Profile editor coming soon') },
-        { icon: CreditCard, title: 'Membership details', sub: 'Current plan: Free trial', action: () => pushToast('info', 'Membership: Free trial · 30 days left') },
-        { icon: Gem, title: 'Subscription plan', sub: 'Upgrade for advanced analytics', badge: 'Upgrade', action: () => pushToast('info', 'Subscription plans coming soon') },
+        { icon: CreditCard, title: 'Membership details', sub: 'Current plan: Free trial', ownerOnly: true, action: () => pushToast('info', 'Membership: Free trial · 30 days left') },
+        { icon: Gem, title: 'Subscription plan', sub: 'Upgrade for advanced analytics', badge: 'Upgrade', ownerOnly: true, action: () => pushToast('info', 'Subscription plans coming soon') },
       ],
     },
     {
       title: 'Settings',
       items: [
-        { icon: Globe, title: 'Change language', sub: lang, action: () => setLangOpen(true) },
-        { icon: Lock, title: 'Change password', sub: 'Last changed 30 days ago', action: () => setPwdOpen(true) },
-        { icon: Bell, title: 'Notifications', sub: 'Alerts & reminders', action: () => pushToast('info', 'Notifications enabled') },
+        { icon: Lock, title: 'Change password', sub: 'Last changed 30 days ago', ownerOnly: true, action: () => setPwdOpen(true) },
       ],
     },
     {
       title: 'Data & sync',
       items: [
         { icon: online ? Wifi : WifiOff, title: online ? 'Online — synced' : 'Offline mode', sub: pendingSync > 0 ? `${pendingSync} records pending sync` : 'All records synced', action: () => { if (pendingSync > 0) { syncPending(); pushToast('success', 'Synced pending records'); } else pushToast('info', 'Already in sync'); } },
-        { icon: RefreshCw, title: 'Reset demo data', sub: 'Restore seed data', danger: true, action: () => { resetDemo(); pushToast('success', 'Demo data reset'); } },
       ],
     },
     {
       title: 'More',
       items: [
-        { icon: Share2, title: 'Share app', sub: 'Refer a farmer', action: () => pushToast('success', 'Share link copied') },
-        { icon: Star, title: 'Rate app', sub: 'Leave a review', action: () => pushToast('info', 'Thanks for the love!') },
-        { icon: FileText, title: 'Privacy policy', sub: 'Terms & conditions', action: () => pushToast('info', 'Privacy policy: data stays on your device') },
+        { icon: Share2, title: 'Share app', sub: 'Refer a farmer', ownerOnly: true, action: () => pushToast('success', 'Share link copied') },
         { icon: LogOut, title: 'Sign out', sub: 'Log out of your account', danger: true, action: () => setConfirmOut(true) },
       ],
     },
-  ];
+  ].map(g => ({ ...g, items: g.items.filter(it => !it.ownerOnly || user.role === 'OWNER') }))
+    .filter(g => g.items.length > 0);
 
   function submitPwd() {
     if (!pwd.current || !pwd.next) return pushToast('error', 'All fields required');
@@ -115,6 +107,19 @@ export function ProfileScreen() {
           <Row label="Sync status" value={online ? 'Online' : 'Offline'} mono={false} />
         </Card>
 
+        <Card>
+          <p className="font-display font-bold text-ink text-sm mb-2">Head office</p>
+          <div className="flex items-start gap-3">
+            <IconTile tone="brand"><MapPin size={17} /></IconTile>
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-semibold text-ink">Guledagudd, Karnataka, India</p>
+              <a href="mailto:amrutpoultryfarms@gmail.com" className="font-mono text-[12px] text-brand break-all">
+                amrutpoultryfarms@gmail.com
+              </a>
+            </div>
+          </div>
+        </Card>
+
         {groups.map(g => (
           <div key={g.title}>
             <p className="font-display font-bold text-ink text-sm uppercase tracking-wider mb-2 px-1">{g.title}</p>
@@ -142,19 +147,6 @@ export function ProfileScreen() {
         message="You will need to sign in again with your mobile number."
         confirmLabel="Sign out" onCancel={() => setConfirmOut(false)}
         onConfirm={() => { signOut(); nav('/login', { replace: true }); }} />
-
-      <Dialog open={langOpen} onClose={() => setLangOpen(false)} title="Change language"
-        footer={<Button block onClick={() => { setLangOpen(false); pushToast('success', `Language: ${lang}`); }}>Save</Button>}>
-        <div className="space-y-2">
-          {['English (India)', 'हिंदी', 'मराठी', 'ગુજરાતી', 'తెలుగు', 'ಕನ್ನಡ'].map(l => (
-            <button key={l} onClick={() => setLang(l)}
-              className={`press w-full flex items-center justify-between px-4 py-3 rounded-2xl border transition-all ${lang === l ? 'border-brand bg-brand-soft' : 'border-line bg-card'}`}>
-              <span className="text-sm font-semibold text-ink">{l}</span>
-              {lang === l && <Check size={16} className="text-brand" strokeWidth={2.5} />}
-            </button>
-          ))}
-        </div>
-      </Dialog>
 
       <Dialog open={pwdOpen} onClose={() => setPwdOpen(false)} title="Change password"
         footer={<div className="flex gap-2"><Button variant="outline" block onClick={() => setPwdOpen(false)}>Cancel</Button><Button block onClick={submitPwd}>Update</Button></div>}>

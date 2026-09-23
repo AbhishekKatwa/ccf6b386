@@ -1,4 +1,4 @@
-import { format, parseISO, differenceInDays, isValid } from 'date-fns';
+import { addDays, format, parseISO, differenceInDays, isValid } from 'date-fns';
 
 export function fmtIN(n: number, decimals = 0): string {
   if (!isFinite(n)) return '0';
@@ -53,6 +53,15 @@ export function todayISO(): string {
 
 export function nowISO(): string {
   return new Date().toISOString();
+}
+
+/**
+ * A calendar day moved by a whole number of days — read and written as a date, never as a
+ * UTC instant, which would put an Indian flock-day one day early.
+ */
+export function shiftDate(iso: string, days: number): string {
+  const d = safeDate(iso);
+  return d ? format(addDays(d, days), 'yyyy-MM-dd') : iso;
 }
 
 export function daysBetween(fromISO: string, toISO: string): number {

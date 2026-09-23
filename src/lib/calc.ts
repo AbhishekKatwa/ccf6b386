@@ -1,8 +1,9 @@
 import type {
-  Batch, EggCollection, EggGrade, EggGradeCounts, EggSale, FeedConsumption,
-  FeedStockEntry, MortalityEntry, SaleLog, FeedFormula,
+  Batch, EggCollection, EggGrade, EggGradeCounts, FeedConsumption,
+  FeedStockEntry, GradeRates, MortalityEntry, PaymentStatus, SaleEntry,
+  SaleEntryLine, SalePricing, FeedFormula, TraderTxn, TraderTxnKind,
 } from '@/types';
-import { EGG_GRADES, EMPTY_GRADE_COUNTS } from '@/types';
+import { EGG_GRADES, EGGS_PER_TRAY, EMPTY_GRADE_COUNTS } from '@/types';
 import { daysBetween, todayISO } from './format';
 
 /* ============================= BIRDS / MORTALITY ============================= */
@@ -22,6 +23,13 @@ export function cumulativeMortality(batchId: string, mortality: MortalityEntry[]
 
 export function batchAgeDays(batch: Batch, onDate = todayISO()): number {
   return Math.max(0, daysBetween(batch.placementDate, onDate));
+}
+
+/** The batch that held this shed on a date, so income and feed land on the right batch. */
+export function batchOfShedOn(batches: Batch[], shedId: string, date: string): Batch | undefined {
+  return batches
+    .filter(b => b.shedId === shedId && b.startDate <= date && (!b.closing?.date || date <= b.closing.date))
+    .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
 }
 
 /* ============================= EGGS (TRAYS) ============================= */
@@ -56,25 +64,43 @@ export function eggTotalsRange(shedId: string, eggs: EggCollection[], from: stri
 
 export type GradeStock = { collected: number; dispatched: number; balance: number };
 
+/** Trays per grade across a set of sale-entry lines, optionally for one shed only. */
+export function linesByGrade(lines: SaleEntryLine[], shedId?: string): EggGradeCounts {
+  const out = { ...EMPTY_GRADE_COUNTS };
+  for (const line of lines) {
+    if (shedId && line.shedId !== shedId) continue;
+    for (const g of EGG_GRADES) out[g] += line.byGrade[g] || 0;
+  }
+  return out;
+}
+
+/** Trays sold per grade across sale entries, optionally for one shed only. */
+export function entryTraysByGrade(entries: SaleEntry[], shedId?: string): EggGradeCounts {
+  return linesByGrade(entries.flatMap(e => e.lines), shedId);
+}
+
+/** Every tray in one entry, across sheds and grades. */
+export function entryTrays(entry: SaleEntry): number {
+  return gradeTotal(linesByGrade(entry.lines));
+}
+
 /**
  * Physical egg stock per grade for a shed in TRAYS, as of a date:
- *   collected − dispatched via sale logs of the same grade.
- * Sale logs deduct at creation, so acknowledging or converting to a trader sale
- * must NOT deduct again.
+ *   collected − sold in a final sale entry.
+ * A shed dispatch log does not move stock; only the accounts entry does, so a
+ * load that leaves the shed but is not yet billed still counts as unsold.
  */
 export function eggStockByGrade(
   shedId: string,
   eggs: EggCollection[],
-  saleLogs: SaleLog[],
+  entries: SaleEntry[],
   asOf = todayISO(),
 ): Record<EggGrade, GradeStock> {
   const collected = eggGradeTotals(eggs.filter(e => e.shedId === shedId && e.date <= asOf));
+  const sold = entryTraysByGrade(entries.filter(e => e.date <= asOf), shedId);
   const out = {} as Record<EggGrade, GradeStock>;
   for (const g of EGG_GRADES) {
-    const dispatched = saleLogs
-      .filter(l => l.shedId === shedId && l.date <= asOf && l.grade === g)
-      .reduce((s, l) => s + l.trays, 0);
-    out[g] = { collected: collected[g], dispatched, balance: collected[g] - dispatched };
+    out[g] = { collected: collected[g], dispatched: sold[g], balance: collected[g] - sold[g] };
   }
   return out;
 }
@@ -83,10 +109,10 @@ export function eggStockByGrade(
 export function eggStockTrays(
   shedId: string,
   eggs: EggCollection[],
-  saleLogs: SaleLog[],
+  entries: SaleEntry[],
   asOf = todayISO(),
 ): GradeStock {
-  const byGrade = eggStockByGrade(shedId, eggs, saleLogs, asOf);
+  const byGrade = eggStockByGrade(shedId, eggs, entries, asOf);
   return EGG_GRADES.reduce<GradeStock>(
     (acc, g) => ({
       collected: acc.collected + byGrade[g].collected,
@@ -97,15 +123,205 @@ export function eggStockTrays(
   );
 }
 
-export function saleTotals(sales: EggSale[]) {
-  const trays = sales.reduce((s, x) => s + x.trays, 0);
-  const amount = sales.reduce((s, x) => s + x.amount, 0);
-  return { trays, amount, avgRatePerTray: trays ? amount / trays : 0 };
+const round2 = (n: number) => Number(n.toFixed(2));
+
+/**
+ * Money for a sale entry in progress: trays × eggs-per-tray × the per-egg rate the
+ * trader quoted, or the single figure accounts agreed with them for the whole load.
+ * This is the egg value alone — loading labour is billed on top of it.
+ */
+export function entryAmount(lines: SaleEntryLine[], rates: GradeRates, pricing: SalePricing, agreed = 0): number {
+  if (pricing === 'AGREED') return Math.max(0, round2(agreed));
+  const byGrade = linesByGrade(lines);
+  return round2(EGG_GRADES.reduce((s, g) => s + byGrade[g] * EGGS_PER_TRAY * (rates[g] ?? 0), 0));
+}
+
+/** What the trader is billed for a load: its eggs plus the loading labour recovered on it. */
+export function loadBilled(amount: number, laborCharge: number): number {
+  return round2(amount + laborCharge);
+}
+
+/**
+ * The selling price of a load in the only unit the trade thinks in: ₹ per egg.
+ * The numerator is egg money alone — loading labour is recovered on the same voucher
+ * but it is not a price — and the denominator is the eggs those trays hold.
+ */
+export function ratePerEgg(eggsMoney: number | null, trays: number | null): number | null {
+  if (eggsMoney === null || trays === null || !Number.isFinite(eggsMoney) || !Number.isFinite(trays)) return null;
+  const eggs = trays * EGGS_PER_TRAY;
+  return eggs > 0 ? round2(eggsMoney / eggs) : null;
+}
+
+/** Money applied to a load: cash and PhonePe handed over, plus advance adjusted. */
+export function loadPaid(cash: number, phonepe: number, advance: number): number {
+  return round2(cash + phonepe + advance);
+}
+
+/**
+ * What one load leaves on the trader's balance:
+ *   eggs + loading labour + old dues − cash − PhonePe − advance.
+ * The old dues are the trader's own balance, so this is only the load's part of it.
+ * Negative means the trader overpaid and money is held for them.
+ */
+export function loadCredit(load: { amount: number; laborCharge: number; cash: number; phonepe: number; advance: number }): number {
+  return round2(loadBilled(load.amount, load.laborCharge) - loadPaid(load.cash, load.phonepe, load.advance));
+}
+
+export function paymentStatusOf(entry: SaleEntry): PaymentStatus {
+  const credit = loadCredit(entry);
+  if (credit <= 0) return 'PAID';
+  return credit >= loadBilled(entry.amount, entry.laborCharge) ? 'PENDING' : 'PARTIAL';
+}
+
+/* ============================= SALE PAYMENTS ============================= */
+
+/** Receipts handed in after the load left, booked against this sale. */
+export function salePayments(entry: SaleEntry, txns: TraderTxn[]): TraderTxn[] {
+  return txns.filter(t => t.saleId === entry.id && t.kind === 'PAYMENT_IN');
+}
+
+/** ₹ actually received for one load: the money on the voucher plus every later receipt against it. */
+export function salePaid(entry: SaleEntry, txns: TraderTxn[]): number {
+  return round2(loadPaid(entry.cash, entry.phonepe, entry.advance)
+    + salePayments(entry, txns).reduce((s, t) => s + (t.amount || 0), 0));
+}
+
+/** What a load was billed for — eggs plus the loading labour recovered on it. */
+export function saleBilled(entry: SaleEntry): number {
+  return loadBilled(entry.amount, entry.laborCharge);
+}
+
+/** What the trader still owes for this load. Negative means they have overpaid. */
+export function saleOutstanding(entry: SaleEntry, txns: TraderTxn[]): number {
+  return round2(saleBilled(entry) - salePaid(entry, txns));
+}
+
+/** A load's standing, read the same way a purchase's is: billed against what arrived. */
+export function saleStatus(entry: SaleEntry, txns: TraderTxn[]): PaymentStatus {
+  const paid = salePaid(entry, txns);
+  if (paid <= 0) return 'PENDING';
+  return saleOutstanding(entry, txns) > 0 ? 'PARTIAL' : 'PAID';
+}
+
+export type SalePosition = {
+  entry: SaleEntry;
+  billed: number;
+  paid: number;
+  /** What the trader still owes on this load. Negative means they have overpaid. */
+  outstanding: number;
+  status: PaymentStatus;
+  payments: TraderTxn[];
+};
+
+/**
+ * Every load billed to a trader, next to the money that arrived against it — the sales mirror
+ * of a godown purchase: the sale is the billing event, a receipt is a separate money event.
+ */
+export function salePositions(entries: SaleEntry[], txns: TraderTxn[]): SalePosition[] {
+  return entries
+    .map(entry => {
+      const payments = txns.filter(t => t.saleId === entry.id && t.kind === 'PAYMENT_IN')
+        .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+      const paid = salePaid(entry, payments);
+      const billed = saleBilled(entry);
+      return {
+        entry, billed, paid,
+        outstanding: round2(billed - paid),
+        status: paid <= 0 ? 'PENDING' as const : billed - paid > 0 ? 'PARTIAL' as const : 'PAID' as const,
+        payments,
+      };
+    })
+    .sort((a, b) => b.entry.date.localeCompare(a.entry.date) || b.entry.id.localeCompare(a.entry.id));
+}
+
+/** The dues a trader still has across every load — receivables, from the same positions. */
+export function saleReceivableTotal(positions: SalePosition[]): number {
+  return round2(positions.reduce((s, p) => s + Math.max(0, p.outstanding), 0));
+}
+
+/* ============================= TRADER LEDGER ============================= */
+
+/** How one ledger row moves the balance it sits on. The opening row is the base, not a movement. */
+export function txnSignedAmount(t: TraderTxn): number {
+  if (t.kind === 'EGG_SALE' || t.kind === 'PAYMENT_OUT') return t.amount;
+  if (t.kind === 'PAYMENT_IN') return -t.amount;
+  return 0;
+}
+
+/**
+ * A trader's balance read back off their ledger: opening dues, plus everything billed,
+ * minus everything handed over. Kept derived rather than stored as a running total so it
+ * can never disagree with the rows the trader page adds up. Negative means they have paid
+ * ahead and the farm is holding their money.
+ */
+export function traderBalance(openingBalance: number, txns: TraderTxn[]): number {
+  return round2(txns.reduce((n, t) => n + txnSignedAmount(t), openingBalance));
+}
+
+/** How each ledger type is named wherever a trader's account is shown. */
+export const TRADER_TXN_LABEL: Record<TraderTxnKind, string> = {
+  OPENING: 'Opening balance',
+  EGG_SALE: 'Egg sale billed',
+  PAYMENT_IN: 'Payment received',
+  PAYMENT_OUT: 'Additional billed',
+  RATE_UPDATE: 'Rate revision',
+};
+
+/** Within one trading day the load is billed before the money that settles it. */
+const BOOKED_FIRST: Record<TraderTxnKind, number> = {
+  OPENING: 0, EGG_SALE: 1, PAYMENT_OUT: 1, RATE_UPDATE: 2, PAYMENT_IN: 3,
+};
+
+/** A ledger row, how it moved the dues, and the balance it left behind. */export type TraderLedgerRow = { txn: TraderTxn; effect: number; running: number };
+
+/**
+ * The trader's statement: newest day first, and within a day the newest booking on
+ * top. The running column is the one replay every screen reads, so the last row
+ * always lands on `traderBalance` — no second balance source exists.
+ */
+export function traderLedger(openingBalance: number, txns: TraderTxn[]): TraderLedgerRow[] {
+  const booked = [...txns].sort((a, b) => a.date.localeCompare(b.date)
+    || BOOKED_FIRST[a.kind] - BOOKED_FIRST[b.kind]
+    || (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
+    || a.id.localeCompare(b.id));
+  let bal = openingBalance;
+  return booked.map(txn => {
+    const effect = txnSignedAmount(txn);
+    bal = round2(bal + effect);
+    return { txn, effect, running: bal };
+  }).reverse();
+}
+
+/** Money and trays across a set of sale entries. `net` is cash in hand after labour. */
+export function saleEntryTotals(entries: SaleEntry[]) {
+  const trays = entries.reduce((s, e) => s + entryTrays(e), 0);
+  const amount = entries.reduce((s, e) => s + e.amount, 0);
+  const labor = entries.reduce((s, e) => s + e.laborCharge, 0);
+  const credit = entries.reduce((s, e) => s + loadCredit(e), 0);
+  const received = entries.reduce((s, e) => s + loadPaid(e.cash, e.phonepe, e.advance), 0);
+  return {
+    count: entries.length, trays, amount, labor, credit,
+    billed: loadBilled(amount, labor), received, net: round2(received - labor),
+  };
 }
 
 /* ============================= GODOWN (KG) ============================= */
 
-function stockDelta(e: FeedStockEntry): number {
+/**
+ * The godown's own reorder levels, in KG. No per-ingredient minimum is configured
+ * anywhere in the app, so this single pair is what both the godown list and the
+ * owner's stock graphs judge an ingredient against — the alternative would be
+ * inventing thresholds the farm never set.
+ */
+export const GODOWN_LOW_KG = 1000;
+export const GODOWN_CRITICAL_KG = 500;
+
+export function stockStatus(kg: number): 'NORMAL' | 'LOW' | 'CRITICAL' {
+  return kg < GODOWN_CRITICAL_KG ? 'CRITICAL' : kg < GODOWN_LOW_KG ? 'LOW' : 'NORMAL';
+}
+
+/** How one ledger row moves physical stock, in KG. The valuation replays these deltas. */
+export function stockDelta(e: FeedStockEntry): number {
   switch (e.kind) {
     case 'OPENING':
     case 'FEED_IN':
@@ -115,6 +331,8 @@ function stockDelta(e: FeedStockEntry): number {
       return -e.qtyKg;
     case 'ADJUSTMENT':
       return e.qtyKg; // signed quantity
+    case 'SHORTAGE':
+      return -Math.abs(e.qtyKg); // always takes stock out, however it was typed
     default:
       return 0;
   }
@@ -136,29 +354,18 @@ export function ingredientBalance(entries: FeedStockEntry[], ingredient: string,
     .reduce((s, e) => s + stockDelta(e), 0);
 }
 
-/* ============================= FEED FORMULAS ============================= */
-
-/** A formula always describes exactly one tonne of finished mix. */
-export const FORMULA_TONNE_KG = 1000;
-/** Weighing rounds to grams, so a mix within ±1 kg of a tonne is accepted. */
-export const FORMULA_TOLERANCE_KG = 1;
+/* ============================= FEED FORMULAS =============================
+ * A formula is simply the mix a shed is fed: each ingredient carries the KG it
+ * contributes per tonne of that mix. The total is never policed — a farm's own
+ * recipe may add up to anything. */
 
 export function formulaTotalKg(items: { kgPerTonne: number }[]): number {
   return Number(items.reduce((s, i) => s + (i.kgPerTonne || 0), 0).toFixed(2));
 }
 
-/** KG per tonne maps 1:10 onto a percentage of the mix. */
-export function formulaPct(kgPerTonne: number): number {
-  return Number((kgPerTonne / 10).toFixed(2));
-}
-
-/** Null when the mix totals one tonne within tolerance. */
-export function formulaTotalError(totalKg: number): string | null {
-  const diff = Number((totalKg - FORMULA_TONNE_KG).toFixed(2));
-  if (Math.abs(diff) <= FORMULA_TOLERANCE_KG) return null;
-  return diff > 0
-    ? `Mix totals ${diff} kg over one tonne`
-    : `Mix is ${Math.abs(diff)} kg short of one tonne`;
+/** An ingredient's share of the mix, as a percentage of whatever it totals. */
+export function formulaPct(kgPerTonne: number, totalKg: number): number {
+  return totalKg > 0 ? Number(((kgPerTonne / totalKg) * 100).toFixed(2)) : 0;
 }
 
 export function formulaDeduction(formula: FeedFormula, tonnes: number): { ingredient: string; kg: number }[] {
@@ -210,8 +417,15 @@ export function consumptionDeduction(entry: FeedConsumption, formulas: FeedFormu
   return version ? formulaDeduction(version, entry.tonnes) : [];
 }
 
-export function formulaCostPerTonne(formula: FeedFormula): number {
-  return formula.items.reduce((s, it) => s + it.kgPerTonne * (it.costPerKg ?? 0), 0);
+/**
+ * What one tonne of this mix costs right now. The price of every ingredient comes
+ * from the godown's own weighted average — a formula carries no rates of its own, so
+ * there is one price chain: godown average → formula cost → shed feed expense.
+ * Ingredients the godown has never priced contribute kg but no money and are reported
+ * by the caller through `priceOf` returning null.
+ */
+export function formulaCostPerTonne(formula: Pick<FeedFormula, 'items'>, priceOf: (ingredient: string) => number | null): number {
+  return formula.items.reduce((s, it) => s + it.kgPerTonne * (priceOf(it.ingredient) ?? 0), 0);
 }
 
 export function feedSummary(shedId: string, feed: FeedConsumption[], from: string, to: string) {

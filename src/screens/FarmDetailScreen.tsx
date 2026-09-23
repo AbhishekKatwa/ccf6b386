@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { MapPin, Plus, ChevronRight, Building2, Phone } from 'lucide-react';
-import { useApp, useCompanyData } from '@/store/app';
+import { useApp, useCompanyData, useVisibleSheds } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, StatusBadge, EmptyState, IconTile, GroupList, ListRow, StatStrip, StatCell, Stat } from '@/components/ui/Card';
 import { Button, Field } from '@/components/ui/Form';
@@ -11,12 +11,12 @@ import { fmtIN } from '@/lib/format';
 export function FarmDetailScreen() {
   const { farmId } = useParams();
   const nav = useNavigate();
-  const { farms, sheds, batches } = useCompanyData();
+  const { farms, batches } = useCompanyData();
   const addShed = useApp(s => s.addShed);
   const pushToast = useApp(s => s.pushToast);
 
   const farm = farms.find(f => f.id === farmId);
-  const farmSheds = sheds.filter(s => s.farmId === farmId);
+  const farmSheds = useVisibleSheds().filter(s => s.farmId === farmId);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [cap, setCap] = useState('');
@@ -52,7 +52,7 @@ export function FarmDetailScreen() {
           <StatStrip className="border-t border-line-2">
             <StatCell><Stat label="Sheds" value={fmtIN(farmSheds.length)} tone="brand" size="md" /></StatCell>
             <StatCell><Stat label="Capacity" value={fmtIN(farmSheds.reduce((s, x) => s + x.capacity, 0))} tone="neutral" size="md" /></StatCell>
-            <StatCell><Stat label="Live batches" value={fmtIN(batches.filter(b => b.farmId === farm.id && b.status === 'ACTIVE').length)} tone="accent" size="md" /></StatCell>
+            <StatCell><Stat label="Live batches" value={fmtIN(batches.filter(b => b.farmId === farm.id && b.status === 'ACTIVE' && farmSheds.some(s => s.id === b.shedId)).length)} tone="accent" size="md" /></StatCell>
           </StatStrip>
         </Card>
 

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Egg, Skull, Wheat, AlertTriangle, ClipboardList, Handshake, ChevronRight,
+  Egg, Skull, Wheat, AlertTriangle, ClipboardList, Handshake, ChevronRight, Syringe,
   Activity, Layers, Lock, PlusCircle, CheckCircle2, Trash2, Pencil, Package,
   TriangleAlert, Flame, Sun, Moon,
 } from 'lucide-react';
@@ -10,7 +10,11 @@ import { useApp, useCurrentUser, useCan, useCompanyData } from '@/store/app';
 import { SyncPill } from '@/components/layout/AppShell';
 import { fmtIN, fmtMoney, fmtPct, greeting, todayISO, fmtDateShort, fmtDateTime } from '@/lib/format';
 import { liveBirdsOn, cumulativeMortality, eggSummary } from '@/lib/calc';
+import { vaccinationPositions, vaccinationReminders } from '@/lib/vaccination';
+import { buildFarmAlerts } from '@/lib/alerts';
+import { OPS_ROLES } from '@/lib/permissions';
 import { Page } from '@/components/ui/Header';
+import { AttentionButtons } from '@/components/ui/AttentionButtons';
 import { Card, SectionTitle, GroupList, ListRow, StatusBadge, EmptyState, AllClear, Avatar, IconTile, Badge } from '@/components/ui/Card';
 import { Button, Field } from '@/components/ui/Form';
 import { Dialog as Modal } from '@/components/ui/Dialog';
@@ -18,6 +22,7 @@ import { AreaTrend, CHART } from '@/components/ui/Charts';
 import { ROLE_LABELS, EGGS_PER_TRAY } from '@/types';
 import type { Batch } from '@/types';
 import { LaborHomeScreen } from '@/screens/LaborScreen';
+import { OwnerDashboard } from '@/screens/OwnerDashboard';
 
 type Attention = {
   id: string; icon: ReactNode; tone: 'danger' | 'warn' | 'accent' | 'brand';
@@ -26,15 +31,20 @@ type Attention = {
 
 const VERB: Record<string, string> = { CREATE: 'added', UPDATE: 'updated', DELETE: 'removed', LOCK: 'locked', UNLOCK: 'unlocked' };
 const ENTITY: Record<string, string> = {
-  Mortality: 'mortality', Feed: 'feed', EggCollection: 'egg collection', EggSale: 'egg sale',
+  Mortality: 'mortality', Feed: 'feed', EggCollection: 'egg collection', SaleEntry: 'sale entry',
   Finance: 'transaction', Task: 'task', Batch: 'batch', DayLock: 'a day', Session: 'session',
   Assignment: 'access', Trader: 'trader', Farm: 'farm', FeedStock: 'feed stock', TraderTxn: 'trader txn',
-  SaleLog: 'sale log', Disposal: 'disposal', FeedConsumption: 'feed',
+  SaleLog: 'dispatch log', FeedConsumption: 'feed',
+  Vaccination: 'vaccination', VaccinationTemplate: 'vaccination template',
+  EggSaleBooking: 'egg sale booking',
 };
 
 export function HomeScreen() {
   const user = useCurrentUser();
   if (user?.role === 'FARM_LABOR') return <LaborHomeScreen />;
+  // The owner's home is the graph-led control centre; every other role keeps the
+  // attention-first home built around their own batches.
+  if (user?.role === 'OWNER') return <OwnerDashboard />;
   return <ManagerHome />;
 }
 
@@ -44,8 +54,10 @@ function ManagerHome() {
   const nav = useNavigate();
   const user = useCurrentUser();
   const data = useCompanyData();
-  const { batches, mortality, feed, eggs, traders, tasks, users, assignments, audit } = data;
+  const { batches, mortality, feed, eggs, traders, tasks, users, assignments, audit, sheds, vaccinations } = data;
   const canViewFinance = useCan('viewFinance');
+  const canReport = useCan('exportReports');
+  const canVaccinate = useCan('completeVaccination');
 
   const today = todayISO();
 
@@ -88,8 +100,30 @@ function ManagerHome() {
 
   const pendingTasks = tasks.filter(t => t.date === today && (t.status === 'PENDING' || t.status === 'IN_PROGRESS'));
 
+  /**
+   * The Alerts badge counts what the Alerts page actually shows, so the number on the
+   * button and the list behind it can never disagree — the home preview below is a
+   * shorter cut of the same picture, not a second source.
+   */
+  const alertCount = useMemo(() => buildFarmAlerts({
+    batches, mortality, feed, eggs, tasks, traders, feedStock: data.feedStock, traderTxns: data.traderTxns,
+    sheds, vaccinations, today, canReport, canViewFinance, canViewVaccination: canVaccinate,
+  }).length, [batches, mortality, feed, eggs, tasks, traders, data.feedStock, data.traderTxns, sheds,
+    vaccinations, today, canReport, canViewFinance, canVaccinate]);
+
+  const tasksOpen = tasks.filter(t => t.status === 'PENDING' || t.status === 'IN_PROGRESS').length;
+  const canSeeAlerts = !!user && OPS_ROLES.includes(user.role);
+
   const attention = useMemo<Attention[]>(() => {
     const items: Attention[] = [];
+    // A dose the flock is owed leads the list: it is the one thing that cannot wait for the next round.
+    if (canVaccinate) {
+      const mine = new Set(myLive.map(b => b.id));
+      const owed = vaccinations.filter(v => mine.has(v.batchId));
+      for (const r of vaccinationReminders(vaccinationPositions(owed, batches, sheds, today))) {
+        items.push({ ...r, icon: <Syringe size={16} /> });
+      }
+    }
     for (const b of myLive) {
       const loggedMort = mortality.some(m => m.batchId === b.id && m.date === today);
       const loggedFeed = feed.some(f => f.batchId === b.id && f.date === today);
@@ -99,7 +133,7 @@ function ManagerHome() {
         items.push({
           id: `log-${b.id}`, icon: <Wheat size={16} />, tone: 'accent',
           title: `${b.code} — not logged today`, detail: `Missing ${missing}`,
-          actionLabel: 'Log', to: `/batches/${b.id}/daily-report`,
+          actionLabel: 'Log', to: canReport ? `/batches/${b.id}/daily-report` : `/batches/${b.id}`,
         });
       }
       const cum = cumulativeMortality(b.id, mortality, today);
@@ -131,7 +165,7 @@ function ManagerHome() {
       }
     }
     return items;
-  }, [myLive, mortality, feed, eggs, today, pendingTasks.length, canViewFinance, traders]);
+  }, [myLive, mortality, feed, eggs, today, pendingTasks.length, canViewFinance, canReport, traders, canVaccinate, vaccinations, batches, sheds]);
 
   const recent = useMemo(() => audit.slice(0, 7), [audit]);
   const firstName = user?.name.split(' ')[0] ?? 'there';
@@ -195,6 +229,11 @@ function ManagerHome() {
                 </div>
               </div>
             </div>
+          </section>
+
+          {/* alerts & tasks, merged into one pair of count buttons */}
+          <section className="px-4 sm:px-0 mt-4">
+            <AttentionButtons alerts={canSeeAlerts ? alertCount : undefined} tasks={tasksOpen} />
           </section>
 
           {/* needs attention */}

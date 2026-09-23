@@ -10,6 +10,7 @@ import { DayLockPanel } from '@/components/ui/DayLockPanel';
 import { BatchClosedNotice } from '@/components/ui/BatchClosedNotice';
 import { BarChart, CHART } from '@/components/ui/Charts';
 import { fmtIN, fmtPct, fmtDate, fmtDateShort, todayISO } from '@/lib/format';
+import { latestFirst } from '@/lib/order';
 import { useBatchMetrics } from '@/hooks/useBatchMetrics';
 import type { MortalityEntry } from '@/types';
 
@@ -35,7 +36,7 @@ export function MortalityScreen() {
   const [editForm, setEditForm] = useState({ count: '', remarks: '' });
 
   const list = useMemo(
-    () => mortality.filter(x => x.batchId === batchId).sort((a, b) => b.date.localeCompare(a.date)),
+    () => latestFirst(mortality.filter(x => x.batchId === batchId)),
     [mortality, batchId],
   );
 
