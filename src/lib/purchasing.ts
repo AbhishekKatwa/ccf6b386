@@ -10,7 +10,7 @@
  * has no value either, which is reported as a gap rather than rounded down to ₹0.
  */
 import type { FeedStockEntry, FinanceTxn, MedicineItem, MedicineStockEntry, PaymentStatus } from '@/types';
-import { INVENTORY_CATEGORIES, isInflow } from './accounting';
+import { INVENTORY_CATEGORIES, isLivestockPurchase, isInflow } from './accounting';
 import { fin } from './analytics';
 import { asLedgerRow } from './medicines';
 
@@ -30,10 +30,11 @@ export function purchaseValue(e: FeedStockEntry): number | null {
 /**
  * Is this ledger row money that went out to buy stock? A row linked to a receipt is one by
  * definition; a legacy purchase payment is recognised by its own kind or category, which is
- * how the ledger already separates inventory money from operating spend.
+ * how the ledger already separates inventory money from operating spend. Birds are exempt —
+ * a flock has no receipt to settle and no store to draw from, so its payment is plain expense.
  */
 export function isPurchasePayment(t: FinanceTxn): boolean {
-  if (isInflow(t.kind)) return false;
+  if (isInflow(t.kind) || isLivestockPurchase(t)) return false;
   return !!t.purchaseId || t.kind === 'PURCHASE' || INVENTORY_CATEGORIES.has(t.category);
 }
 

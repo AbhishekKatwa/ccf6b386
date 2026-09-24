@@ -26,7 +26,7 @@ import { fmtMoney, fmtIN, fmtDate, fmtDateShort, todayISO } from '@/lib/format';
 import { latestFirst } from '@/lib/order';
 import { feedCostByShed, feedExpenseTraces, revenueBreakdown, pnlTrend, type FeedTrace, type PnlMode, type Range } from '@/lib/analytics';
 import {
-  allocateShortage, computeFarmPnl, FINANCE_CATEGORIES, godownLedger, INVENTORY_CATEGORIES, isInventoryPurchase, isInflow, shortageRows,
+  allocateShortage, CHICK_PURCHASE_CATEGORY, computeFarmPnl, FINANCE_CATEGORIES, godownLedger, INVENTORY_CATEGORIES, isInventoryPurchase, isLivestockPurchase, isInflow, shortageRows,
   type ShedPnl,
 } from '@/lib/accounting';
 import {
@@ -515,8 +515,8 @@ export function FinanceScreen() {
   }
 
   const revDonut = revBreak.donut && revBreak.rows.length >= 2;
-  /** Buys stock or livestock in — the ledger records the cash, the P&L does not expense it. */
-  const isStockBuy = form.kind === 'PURCHASE' || INVENTORY_CATEGORIES.has(form.category);
+  /** Buys consumable stock in — the ledger books the cash, the P&L realises it when a shed draws the store. */
+  const isStockBuy = (form.kind === 'PURCHASE' || INVENTORY_CATEGORIES.has(form.category)) && form.category !== CHICK_PURCHASE_CATEGORY;
 
   /** A shed row opens the ledger tab filtered to that shed's money. */
   const openShedLedger = (shedId: string) => {
@@ -630,11 +630,16 @@ export function FinanceScreen() {
               )}
               <div className="h-px bg-line-2" />
               <AcctLine label="Total expense" hint="the figure in the summary above" value={acct.totalExpense} strong />
+              {acct.chickExpense > 0 && (
+                <AcctLine label="of which chicks" hint="the breakout of a line above — not an extra charge" value={acct.chickExpense} />
+              )}
             </div>
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <p className="text-[11px] text-muted leading-relaxed">
-                Feed and chick purchases are <strong className="text-ink-2">stock, not expense</strong>: {money(acct.inventoryPurchase)} of purchases in this period sits in the godown
-                (or in the birds) and is only expensed as the shed eats feed or the flock is sold. Buying it twice — once as purchase, once as consumption — would double-count.
+                Feed and medicine purchases are <strong className="text-ink-2">stock, not expense</strong>: {money(acct.inventoryPurchase)} of purchases in this period stands on the shelves
+                and is expensed only as a shed draws it. Buying it twice — once as purchase, once as consumption — would double-count.
+                {' '}Chicks are the exception: a flock is never drawn out of a store, so {money(acct.chickExpense)} of birds is expense
+                on the day it was paid, and it is already counted above.
               </p>
               <div className="rounded-[12px] bg-sunk px-3 py-2.5 min-w-0">
                 <p className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-2">Money by payment method</p>
@@ -1148,7 +1153,7 @@ export function FinanceScreen() {
                 <FlowRow label="Money in" hint="every credit entry in the period" value={flow.in.total} tone="success" />
                 <FlowRow label="Money out" hint="every debit entry in the period" value={-flow.out.total} tone="danger" />
                 <FlowRow label="Net movement" hint="the ledger's own cash position" value={acct.cashNet} tone={acct.cashNet >= 0 ? 'brand' : 'danger'} strong />
-                <p className="text-[11px] text-muted pt-0.5">{money(acct.inventoryPurchase)} of that went into godown stock or chicks — an asset, so the P&amp;L above does not treat it as spend.</p>
+                <p className="text-[11px] text-muted pt-0.5">{money(acct.inventoryPurchase)} of that went into godown or medicine stock — an asset, so the P&amp;L above does not treat it as spend until a shed draws it.</p>
               </div>
             </div>
           </Card>
@@ -1597,7 +1602,13 @@ export function FinanceScreen() {
             )}
             {!txnDetail.purchaseId && isInventoryPurchase(txnDetail) && (
               <p className="pt-2 text-[12px] text-muted leading-relaxed">
-                This bought stock or birds, so it is an asset: the money left the farm, the P&amp;L waits until the shed eats it or the flock is sold.
+                This bought stock, so it is an asset: the money left the farm, the P&amp;L waits until a shed draws it.
+              </p>
+            )}
+            {isLivestockPurchase(txnDetail) && (
+              <p className="pt-2 text-[12px] text-muted leading-relaxed">
+                Birds are expensed the day they are paid for — a flock is never drawn out of a store, so nothing would realise this cost later.
+                It is already inside Total expense.
               </p>
             )}
           </div>

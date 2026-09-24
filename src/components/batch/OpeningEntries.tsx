@@ -6,9 +6,9 @@
  * the Finance ledger, tagged to the new batch — there is no second money store, so the
  * ledger, the cash position and every report see exactly what they see for a hand-typed entry.
  *
- * The category decides the accounting, not this form: a stock or livestock head stays capital
- * (money out, cost realised later) exactly as it does when the same purchase is booked by
- * hand, and the step says so on the row rather than letting it be discovered in a report.
+ * The category decides the accounting, not this form: a stock head stays capital (money out,
+ * cost realised later) exactly as it does when the same purchase is booked by hand, and the
+ * step says so on the row rather than letting it be discovered in a report.
  */
 import { useMemo, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, ChevronDown, Plus, Trash2 } from 'lucide-react';
@@ -145,8 +145,8 @@ export function OpeningEntriesStep({ placementDate, forms, onChange }: {
                       hint={f.date !== placementDate ? undefined : 'Defaults to the placement date — move it back for anything already paid'} />
                     {capital && (
                       <p className="text-[11px] text-muted leading-relaxed">
-                        {f.category} is stock or livestock: it is money out on that day, and its cost is
-                        realised later, so it is not charged to this batch as an expense.
+                        {f.category} is stock: it is money out on that day, and its cost is
+                        realised later when a shed draws it, so it is not charged to this batch as an expense.
                       </p>
                     )}
                     <PaymentFields draft={f.pay} onChange={p => patch(i, { pay: { ...f.pay, ...p } })}

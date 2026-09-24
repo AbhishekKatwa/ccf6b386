@@ -5,11 +5,14 @@
  * turns that plus the derived godown numbers into a proper accrual P&L, holding
  * one rule above all — GODOWN IS INVENTORY, SHEDS ARE OPERATING UNITS. So:
  *
- *  - Buying feed or chicks into the godown, or medicine into the store, is an inventory
+ *  - Buying feed into the godown, or medicine into the store, is an inventory
  *    acquisition, NOT a period expense. Charging it as expense AND charging the derived
  *    consumption would be double counting (spec §6, §24). The consumed feed, valued as it
  *    leaves the godown, and the medicine drawn for a flock, valued as it leaves the shelf,
  *    are the shed's expenses.
+ *  - Livestock is the exception the farm asked for: a chick purchase is charged as expense
+ *    on the day the money is paid. A flock has no issue ledger, so nothing would ever
+ *    realise its cost later, and leaving it out hid the largest sum on the farm.
  *  - A godown shortage is one economically meaningful loss. It is recognised once
  *    and shared across sheds so the total allocated equals the source exactly.
  *  - Nothing is invented. An unmapped amount stays "Unallocated" and is reported;
@@ -32,14 +35,15 @@ const round = (n: number) => Number(n.toFixed(2));
 export const isInflow = (k: TxnKind) => k === 'INCOME' || k === 'SALE' || k === 'PAYMENT_IN';
 
 /**
- * Categories that buy stock or livestock in — inventory/capital, never a period expense.
- * Medicine and vaccine purchases sit here for the same reason feed does: the money left,
- * but the cost is realised when a dose is drawn for a flock, not on the day it was bought.
+ * Categories that buy consumable stock in — inventory, never a period expense. Medicine and
+ * vaccine purchases sit here for the same reason feed does: the money left, but the cost is
+ * realised when a dose is drawn for a flock, not on the day it was bought. Livestock is
+ * deliberately absent — see `isLivestockPurchase`.
  */
 export const FEED_PURCHASE_CATEGORY = 'Feed Purchase';
 export const MEDICINE_PURCHASE_CATEGORY = 'Medicine Purchase';
 export const CHICK_PURCHASE_CATEGORY = 'Chick Purchase';
-export const INVENTORY_CATEGORIES = new Set([FEED_PURCHASE_CATEGORY, MEDICINE_PURCHASE_CATEGORY, CHICK_PURCHASE_CATEGORY]);
+export const INVENTORY_CATEGORIES = new Set([FEED_PURCHASE_CATEGORY, MEDICINE_PURCHASE_CATEGORY]);
 
 /** The heads the money forms offer. One list, so a category means the same thing everywhere. */
 export const FINANCE_CATEGORIES = [
@@ -49,13 +53,20 @@ export const FINANCE_CATEGORIES = [
 ];
 
 /**
- * Is this outflow an inventory/capital acquisition rather than operating spend?
- * Feed and chick purchases build the godown / place the birds; their cost is
- * realised later (as feed consumption, or as the birds are sold), so they must
- * not also stand as an expense the day the money left.
+ * Money paid for birds. A flock is never drawn out of a store, so nothing realises its cost
+ * later — it is expense on the day it is paid, whichever kind the row was entered as.
+ */
+export function isLivestockPurchase(t: FinanceTxn): boolean {
+  return !isInflow(t.kind) && t.category === CHICK_PURCHASE_CATEGORY;
+}
+
+/**
+ * Is this outflow an inventory acquisition rather than operating spend? Feed and medicine
+ * build the godown and the store; their cost is realised as a shed draws them, so they must
+ * not also stand as an expense the day the money left. Livestock is exempted by rule.
  */
 export function isInventoryPurchase(t: FinanceTxn): boolean {
-  if (isInflow(t.kind)) return false;
+  if (isInflow(t.kind) || isLivestockPurchase(t)) return false;
   return t.kind === 'PURCHASE' || INVENTORY_CATEGORIES.has(t.category);
 }
 
@@ -100,7 +111,8 @@ export type FarmPnl = {
   sheds: ShedPnl[];
   income: number;                 // every inflow in period
   operatingExpense: number;       // every non-inventory outflow in period
-  inventoryPurchase: number;      // feed/chick purchases — inventory, memo only
+  inventoryPurchase: number;      // feed/medicine purchases — inventory, memo only
+  chickExpense: number;           // livestock bought in the period — inside operatingExpense
   feedExpense: number;            // derived consumption cost
   medicineExpense: number;        // derived medicine/vaccine usage cost, same basis as feed
   unpricedMedicineQty: number;    // units drawn with no rate anywhere
@@ -125,9 +137,10 @@ export type FarmPnl = {
  * Build the reconciled P&L for the period.
  *
  * Shed expense = operating outflows mapped to that shed + its derived feed cost
- * + its medicine drawn for the flock + its share of the godown shortage. Feed, chick
- * and medicine purchases are excluded from every expense total; they surface as an
- * inventory memo and in the cash view.
+ * + its medicine drawn for the flock + its share of the godown shortage. Feed and
+ * medicine purchases are excluded from every expense total; they surface as an
+ * inventory memo and in the cash view. Chick purchase is not excluded — it is an
+ * operating outflow of the day it was paid.
  * Farm totals reconcile as SUM(sheds) + farm-level retained = farm expense.
  */
 export function computeFarmPnl(args: {
@@ -163,6 +176,7 @@ export function computeFarmPnl(args: {
   for (const s of sheds) shedRow(s.id);
 
   let inventoryPurchase = 0;
+  let chickExpense = 0;
   let godownOperatingExpense = 0;
   let unallocatedExpense = 0;
   let unallocatedIncome = 0;
@@ -175,6 +189,7 @@ export function computeFarmPnl(args: {
       else { unallocatedIncome += t.amount; unallocatedCount++; } // godown income is unusual — hold it visibly
       continue;
     }
+    if (isLivestockPurchase(t)) chickExpense += t.amount; // counted below as spend of this day
     if (isInventoryPurchase(t)) { inventoryPurchase += t.amount; continue; }
     const sc = scopeOf(t, batchShed);
     if (sc.kind === 'shed') { const r = shedRow(sc.shedId); r.directExpense += t.amount; r.directCount++; }
@@ -236,6 +251,7 @@ export function computeFarmPnl(args: {
     income: round(income),
     operatingExpense: round(operatingExpense),
     inventoryPurchase: round(inventoryPurchase),
+    chickExpense: round(chickExpense),
     feedExpense: round(feedExpense),
     medicineExpense: round(medicineExpense),
     unpricedMedicineQty: medicineCost.unpricedQty,

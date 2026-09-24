@@ -402,10 +402,10 @@ const farmPnl: ReportDef['build'] = ctx => {
         row('feed', ['Feed consumed', spend(ctx, p.feedExpense), 'Priced at the godown average of the day it left']),
         row('med', ['Medicine drawn', spend(ctx, p.medicineExpense), 'Priced at the medicine store average of the day it left']),
         row('short', ['Godown shortage', spend(ctx, p.shortageExpense), 'Recognised once, shared to sheds']),
-        row('total', ['Total expense', ctx.money(p.totalExpense), 'Operating + feed + medicine + shortage'], undefined, 'muted'),
+        row('total', ['Total expense', ctx.money(p.totalExpense), `Operating + feed + medicine + shortage${p.chickExpense > 0 ? `, including ${ctx.money(p.chickExpense)} paid for chicks` : ''}`], undefined, 'muted'),
         row('net', ['Net result', ctx.money(p.net), 'Income less total expense'], undefined,
           p.net >= 0 ? 'success' : 'danger'),
-        row('inv', ['Memo · feed, medicine & chick purchases', ctx.money(p.inventoryPurchase), 'Inventory acquired, not an expense'], undefined, 'muted'),
+        row('inv', ['Memo · feed & medicine purchases', ctx.money(p.inventoryPurchase), 'Inventory acquired, not an expense'], undefined, 'muted'),
         row('unalloc', ['Memo · unallocated money', ctx.money(p.unallocatedExpense + p.unallocatedIncome), `${plural(p.unallocatedCount, 'row')} not yet mapped`], undefined, 'muted'),
       ],
     }],
@@ -510,7 +510,7 @@ const batchPnl: ReportDef['build'] = ctx => {
     }],
     notes: [
       'Godown shortage is shared across sheds, not across batches, so it is held out of the batch result rather than spread by a rule that was never defined.',
-      'Feed, chick and medicine purchase vouchers are inventory movements; they are never charged to a batch here.',
+      'Feed and medicine purchases are inventory movements and never charged to a batch; chicks are expensed on the day they are paid for.',
       'Medicine drawn is derived from the stock ledger, not from a Finance row, so the same rupee is never counted twice.',
     ],
     warnings: [
@@ -617,7 +617,7 @@ const incomeStatement: ReportDef['build'] = ctx => {
 const expenseStatement: ReportDef['build'] = ctx => {
   const p = pnlOf(ctx);
   const cats = expenseBreakdown(ctx.src.finance, ctx.range)
-    .filter(r => !/feed purchase|chick purchase|medicine purchase/i.test(r.label));
+    .filter(r => !/feed purchase|medicine purchase/i.test(r.label));
   return result({
     summary: [
       metric('Operating expense', ctx.money(p.operatingExpense), 'Excludes feed consumed and inventory'),
@@ -637,7 +637,7 @@ const expenseStatement: ReportDef['build'] = ctx => {
     }),
     tables: [{
       title: 'Expense lines',
-      caption: 'Feed, medicine and chick purchases are excluded below: they are inventory, and their cost is realised as the feed a shed eats or the stock a flock is given.',
+      caption: 'Feed and medicine purchases are excluded below: they are inventory, and their cost is realised as a shed eats the feed or draws the stock. Chicks are not excluded — a flock is expensed the day it is paid for.',
       columns: [col('Line'), rcol('Amount'), rcol('Share')],
       emptyText: 'No expense recorded in this period.',
       rows: [
@@ -646,7 +646,7 @@ const expenseStatement: ReportDef['build'] = ctx => {
         row('med', ['Medicine drawn (derived)', ctx.money(p.medicineExpense), null]),
         row('short', ['Godown shortage', ctx.money(p.shortageExpense), null]),
         row('total', ['Total expense', ctx.money(p.totalExpense), null], undefined, 'muted'),
-        row('inv', ['Memo · feed, medicine & chick purchases', ctx.money(p.inventoryPurchase), 'Inventory, not expense'], undefined, 'muted'),
+        row('inv', ['Memo · feed & medicine purchases', ctx.money(p.inventoryPurchase), 'Inventory, not expense'], undefined, 'muted'),
       ],
     }],
     notes: ['Shares are of the operating expense ledger only, so feed, medicine and shortage — which are derived, not paid out — stay unshared.'],
