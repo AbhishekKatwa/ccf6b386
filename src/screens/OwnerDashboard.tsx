@@ -1,56 +1,56 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  AlertTriangle, ChevronRight, ClipboardList, Egg, Handshake, Skull, Syringe, Wheat,
-} from 'lucide-react';
+import { AlertTriangle, ChevronRight, Syringe } from 'lucide-react';
 import { useCompanyData, useCurrentUser, useCan, useVisibleSheds } from '@/store/app';
-import { fmtDateShort, fmtIN, fmtMoney, fmtPct, greeting, shiftDate, todayISO } from '@/lib/format';
+import { fmtDateTime, fmtDateShort, fmtIN, fmtMoney, fmtPct, greeting, shiftDate, todayISO } from '@/lib/format';
 import { useVaccinations } from '@/hooks/useVaccinations';
+import { usePurchasePositions } from '@/hooks/usePaymentPositions';
 import { countsSummaryLine } from '@/lib/vaccination';
-import { GODOWN_CRITICAL_KG, GODOWN_LOW_KG, cumulativeMortality, entryTrays, liveBirdsOn, loadBilled } from '@/lib/calc';
 import {
-  damageByShed, eggDamageTrend, eggProductionTrend, eggSalesTrend, eggStockMovement,
-  feedByShed, feedConsumptionTrend, feedCostTrend, fin, godownIngredients, godownPosition,
-  ingredientStockTrend, mortalityTrend, pnlTrend, productionByShed, rangeOf, revenueBreakdown,
-  revenueTrend, salesByTrader, sumPoints, traderCollections, traderOutstanding,
-  type PnlMode, type Point, type RangeKey, type SalesMode,
+  cumulativeMortality, eggGradeTotals, eggStockByGrade, entryTrays, godownBalances,
+  gradeTotal, liveBirdsOn, saleBilled, saleOutstanding, salePaid,
+} from '@/lib/calc';
+import {
+  eggDamageTrend, eggProductionTrend, eggSalesTrend, feedConsumptionTrend,
+  godownIngredients, godownPosition, mortalityTrend, rangeOf, traderOutstanding,
+  type Point, type RangeKey,
 } from '@/lib/analytics';
-import { axisNum, BarSeries, ChartLegend, DonutChart, HBarList, PairedBars, SERIES_COLORS, TrendChart, type HRow, type VBar, type VSeries } from '@/components/charts/DataViz';
-import { GraphCard, GraphRange, type GraphStat } from '@/components/charts/GraphCard';
+import {
+  COVERAGE_CRITICAL_DAYS, coverageRows, feedForecast,
+  type CoverageStatus, type IngredientCoverage,
+} from '@/lib/coverage';
+import { cashFlowOf, inWindow } from '@/lib/cashflow';
+import { payableTotals, payablesBySupplier, UNSUPPLIED } from '@/lib/purchasing';
+import { ChartLegend, HBarList, TrendChart, type HRow, type VSeries } from '@/components/charts/DataViz';
+import { GraphCard, GraphRange } from '@/components/charts/GraphCard';
 import { AlertRow } from '@/components/ui/AlertRow';
 import { AttentionButtons } from '@/components/ui/AttentionButtons';
 import { buildFarmAlerts, type FarmAlert } from '@/lib/alerts';
 import { CHART } from '@/components/ui/Charts';
 import { Page, ScreenTitle } from '@/components/ui/Header';
-import { AllClear, Badge, EmptyState, GroupList, KpiCard, SectionTitle } from '@/components/ui/Card';
-import { ChipGroup } from '@/components/ui/Form';
+import {
+  AllClear, Badge, EmptyState, GroupList, ListRow, Row, SectionTitle, Stat, Surface,
+} from '@/components/ui/Card';
 import { SyncPill } from '@/components/layout/AppShell';
-import { ROLE_LABELS } from '@/types';
+import { EGG_GRADES, EGG_GRADE_LABELS, EMPTY_GRADE_COUNTS, ROLE_LABELS } from '@/types';
+import type { EggGradeCounts, Shed } from '@/types';
 
 /**
- * The owner's control centre: one graph per question the farm actually asks, each
- * reading only this company's rows through `lib/analytics`. Nothing here stores a
- * number — every figure is derived from the records on screen when you open them.
+ * The owner's command centre, read in ten seconds: TODAY, then what needs ATTENTION,
+ * then the flock, the eggs, the shelf and the money — and only then the trends.
+ *
+ * Nothing here stores a number. Each figure comes from the same selector the module
+ * screen uses, filtered to this company and to the signed-in role, so the dashboard
+ * cannot disagree with the ledger behind it. Detailed history deliberately does not
+ * live here; it stays on the screen that owns it.
  */
 
 type Data = ReturnType<typeof useCompanyData>;
 
-const RANGES = [
+const TREND_RANGES = [
   { value: '7D', label: '7D' },
   { value: '30D', label: '30D' },
-  { value: '90D', label: '90D' },
 ] as const;
-
-function useWindow(initial: RangeKey = '30D') {
-  const [key, setKey] = useState<RangeKey>(initial);
-  const today = todayISO();
-  const range = useMemo(() => rangeOf(key, today), [key, today]);
-  return {
-    key,
-    range,
-    control: <GraphRange value={key} onChange={setKey} options={RANGES} label="Period" />,
-  };
-}
 
 /** A series with nothing in it is an empty graph, not a flat line at zero. */
 function blank(points: Point[]): boolean {
@@ -65,9 +65,6 @@ function useMoney() {
   return {
     canView,
     m: (v: number | null): string => v === null ? 'Unavailable' : canView ? fmtMoney(v) : '₹ •••••',
-    /** A per-egg price is paise-level detail — never rounded to the rupee. */
-    r: (v: number | null): string => v === null ? 'Unavailable' : canView ? fmtMoney(v, 2) : '₹ •••••',
-    mA: (v: number): string => canView ? `₹${axisNum(v)}` : '₹ •••••',
   };
 }
 
@@ -78,855 +75,551 @@ function useSettled(): boolean {
   return settled;
 }
 
-/* ============================= 0 · EXECUTIVE KPI LAYER ============================= */
-
-/** The six questions the owner asks, answered before any chart is read. */
-function KpiLayer({ data }: { data: Data }) {
-  const { eggs, saleEntries, eggWastages, feedStock, traders, traderTxns, batches, mortality } = data;
-  const money = useMoney();
-  const today = todayISO();
-  const week = useMemo(() => rangeOf('7D', today), [today]);
-
-  const prod = useMemo(() => eggProductionTrend(eggs, week), [eggs, week]);
-  const stock = useMemo(() => eggStockMovement(eggs, saleEntries, eggWastages, week), [eggs, saleEntries, eggWastages, week]);
-  const godown = useMemo(() => godownPosition(feedStock), [feedStock]);
-  const due = useMemo(() => traderOutstanding(traders, traderTxns), [traders, traderTxns]);
-
-  const billedOn = (date: string) => saleEntries.filter(e => e.date === date)
-    .reduce((s, e) => s + (fin(loadBilled(e.amount, e.laborCharge)) ?? 0), 0);
-  const salesToday = billedOn(today);
-  const salesYesterday = billedOn(shiftDate(today, -1));
-  const hadSalesToday = saleEntries.some(e => e.date === today);
-  const hadSalesYesterday = saleEntries.some(e => e.date === shiftDate(today, -1));
-
-  const liveBirds = useMemo(() => batches
-    .filter(b => b.status === 'ACTIVE')
-    .reduce((s, b) => s + liveBirdsOn(b, today, mortality), 0), [batches, mortality, today]);
-  const liveCount = batches.filter(b => b.status === 'ACTIVE').length;
-
-  const totalKg = godown.rows.reduce((s, r) => s + r.stockKg, 0);
-  const belowReorder = godown.rows.filter(r => r.status !== 'NORMAL').length;
-  const owed = due.filter(t => t.balance > 0);
-  const owedTotal = owed.reduce((s, t) => s + t.balance, 0);
-
+/** A quiet link in a section header — every section is a preview of a real screen. */
+function Drill({ label, to }: { label: string; to: string }) {
+  const nav = useNavigate();
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
-      <KpiCard label="Egg production" value={prod.today === null ? 'No record' : fmtIN(prod.today)} unit="trays"
-        foot={prod.today === null ? 'nothing collected today'
-          : prod.changePct === null ? 'no collection last week to compare'
-          : `${prod.changePct > 0 ? '↑' : prod.changePct < 0 ? '↓' : '→'} ${fmtPct(Math.abs(prod.changePct), 1)} vs previous 7 days`}
-        footTone={prod.changePct === null ? 'muted' : prod.changePct >= 0 ? 'success' : 'danger'} />
-      <KpiCard label="Egg stock" value={fmtIN(stock.closingNow)} unit="trays"
-        foot={`${stock.change >= 0 ? '+' : ''}${fmtIN(stock.change)} vs 7 days ago`}
-        footTone={stock.closingNow < 0 ? 'danger' : stock.change >= 0 ? 'success' : 'muted'} />
-      <KpiCard label="Feed stock" value={tonnes(totalKg / 1000).replace(' t', '')} unit="MT"
-        foot={belowReorder ? `${belowReorder} ${belowReorder === 1 ? 'ingredient' : 'ingredients'} below reorder level` : `${godown.rows.length} ingredients on record`}
-        footTone={belowReorder ? 'warn' : 'muted'} />
-      <KpiCard label="Today's sales" value={!money.canView ? '₹ •••••' : hadSalesToday ? fmtMoney(salesToday) : 'No sale billed'} unit={money.canView && hadSalesToday ? 'billed' : ''}
-        foot={money.canView && hadSalesToday && hadSalesYesterday
-          ? `${salesToday - salesYesterday >= 0 ? '+' : '−'}${fmtMoney(Math.abs(salesToday - salesYesterday))} vs yesterday`
-          : money.canView && hadSalesToday ? 'nothing billed yesterday to compare' : ''}
-        footTone={money.canView && hadSalesToday && hadSalesYesterday && salesToday < salesYesterday ? 'danger' : 'muted'} />
-      <KpiCard label="Trader outstanding" value={money.m(owedTotal)}
-        foot={owed.length ? `due from ${owed.length} ${owed.length === 1 ? 'trader' : 'traders'}` : 'every trader settled'}
-        footTone={owed.length ? 'danger' : 'success'} />
-      <KpiCard label="Active birds" value={fmtIN(liveBirds)} unit="live"
-        foot={`across ${liveCount} ${liveCount === 1 ? 'batch' : 'batches'}`} />
-    </div>
+    <button type="button" onClick={() => nav(to)}
+      className="inline-flex items-center gap-1 font-mono text-[11px] text-brand font-semibold press hover:underline">
+      {label} <ChevronRight size={12} />
+    </button>
   );
 }
 
-/* ============================= 9 · ATTENTION REQUIRED ============================= */
+/* ============================= SHARED READS ============================= */
+
+/** The day's collection by grade, and whether any shed has reported at all. */
+function useTodayEggs(data: Data, today: string) {
+  return useMemo(() => {
+    const rows = data.eggs.filter(e => e.date === today);
+    return { recorded: rows.length > 0, byGrade: eggGradeTotals(rows) };
+  }, [data.eggs, today]);
+}
+
+/** Egg stock in trays, per grade, across the sheds this role may see. */
+function useGradeStock(data: Data, sheds: Shed[], today: string): EggGradeCounts {
+  return useMemo(() => {
+    const out = { ...EMPTY_GRADE_COUNTS } as EggGradeCounts;
+    for (const s of sheds) {
+      const byGrade = eggStockByGrade(s.id, data.eggs, data.saleEntries, data.eggWastages, today);
+      for (const g of EGG_GRADES) out[g] += byGrade[g].balance;
+    }
+    return out;
+  }, [data.eggs, data.saleEntries, data.eggWastages, sheds, today]);
+}
+
+/** Birds standing on the live batches, and how many batches that is. */
+function useFlock(data: Data, today: string) {
+  return useMemo(() => {
+    const live = data.batches.filter(b => b.status === 'ACTIVE');
+    return {
+      batches: live,
+      birds: live.reduce((s, b) => s + liveBirdsOn(b, today, data.mortality), 0),
+      placed: live.reduce((s, b) => s + (b.initialBirds || 0), 0),
+    };
+  }, [data.batches, data.mortality, today]);
+}
+
+/** What the loads billed today were worth, against the money that arrived on them. */
+function useTodaySales(data: Data, today: string) {
+  return useMemo(() => {
+    const entries = data.saleEntries.filter(e => e.date === today);
+    return {
+      entries,
+      trays: entries.reduce((s, e) => s + entryTrays(e), 0),
+      billed: entries.reduce((s, e) => s + saleBilled(e), 0),
+      received: entries.reduce((s, e) => s + salePaid(e, data.traderTxns), 0),
+      owed: entries.reduce((s, e) => s + Math.max(0, saleOutstanding(e, data.traderTxns)), 0),
+    };
+  }, [data.saleEntries, data.traderTxns, today]);
+}
+
+/** Dues read back off the signed trader ledger — never a typed balance. */
+function useReceivables(data: Data) {
+  return useMemo(() => {
+    const owed = traderOutstanding(data.traders, data.traderTxns)
+      .filter(t => t.balance > 0)
+      .sort((a, b) => b.balance - a.balance);
+    return { owed, total: owed.reduce((s, t) => s + t.balance, 0) };
+  }, [data.traders, data.traderTxns]);
+}
+
+/* ============================= 1 · TODAY ============================= */
+
+// /** The six P0 answers in one strip — prominent figures, no card per metric. */
+// function TodayStrip({ data, sheds }: { data: Data; sheds: Shed[] }) {
+//   const money = useMoney();
+//   const today = todayISO();
+//   const eggsToday = useTodayEggs(data, today);
+//   const stock = useGradeStock(data, sheds, today);
+//   const flock = useFlock(data, today);
+//   const sales = useTodaySales(data, today);
+//   const due = useReceivables(data);
+//   const received = useMemo(() => revenueTrend(data.finance, rangeOf('7D', today)).today, [data.finance, today]);
+
+//   return (
+//     <Surface className="px-4 py-3.5">
+//       <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3 xl:grid-cols-6">
+//         <Stat label="Live birds" value={fmtIN(flock.birds)}
+//           sub={`${flock.batches.length} ${flock.batches.length === 1 ? 'batch' : 'batches'} standing`} />
+//         <Stat label="Eggs today" value={eggsToday.recorded ? fmtIN(eggsToday.byGrade.GOOD) : 'No record'}
+//           sub={eggsToday.recorded ? 'trays · normal grade' : 'no shed has collected yet'} />
+//         <Stat label="Normal egg stock" value={fmtIN(stock.GOOD)}
+//           sub={`trays · ${fmtIN(gradeTotal(stock))} all grades`} />
+//         <Stat label="Egg sales" value={sales.entries.length ? fmtIN(sales.trays) : 'No sale'}
+//           sub={sales.entries.length ? `trays · ${money.m(sales.billed)} billed` : 'nothing billed today'} />
+//         <Stat label="Money received" value={money.m(received)}
+//           sub={received === null ? 'no finance row today' : 'into the ledger today'} />
+//         <Stat label="Trader outstanding" value={money.m(due.total)} tone={due.owed.length ? 'danger' : 'success'}
+//           sub={due.owed.length ? `due from ${due.owed.length} ${due.owed.length === 1 ? 'trader' : 'traders'}` : 'every trader settled'} />
+//       </div>
+//     </Surface>
+//   );
+// }
+
+// /* ============================= 2 · NEEDS ATTENTION ============================= */
+
+// /**
+//  * The dashboard preview of the shared rule engine in lib/alerts — the same rules that
+//  * fill the Alerts page, capped at the five that matter most. No alert starts here.
+//  */
+// function NeedsAttention({ alerts }: { alerts: FarmAlert[] }) {
+//   const nav = useNavigate();
+//   const canVaccinate = useCan('completeVaccination');
+//   const vac = useVaccinations();
+//   const shown = alerts.slice(0, 5);
+
+//   return (
+//     <div>
+//       <SectionTitle right={alerts.length ? <Drill label="View all" to="/alerts" /> : undefined}>
+//         Needs attention
+//       </SectionTitle>
+//       {/* §15: the vaccination tally reads on its own line, next to the rows it summarises.
+//           It opens the alerts it came from — a dose is recorded on the flock that owes it. */}
+//       {canVaccinate && (
+//         <button type="button" onClick={() => nav('/alerts')}
+//           className="mb-2 w-full flex items-center gap-2 rounded-card border border-line bg-sunk px-3 py-2 text-left press hover:bg-card">
+//           <Syringe size={14} className={vac.counts.overdue ? 'text-danger shrink-0' : 'text-brand shrink-0'} />
+//           <span className="flex-1 min-w-0">
+//             <span className="block font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">Vaccination</span>
+//             <span className={`block text-[12.5px] tnum truncate ${vac.counts.overdue ? 'text-danger font-semibold' : 'text-ink-2'}`}>
+//               {countsSummaryLine(vac.counts)}
+//             </span>
+//           </span>
+//           <ChevronRight size={14} className="text-muted shrink-0" />
+//         </button>
+//       )}
+//       {alerts.length === 0 ? (
+//         <AllClear title="Everything looks up to date" description="Every live batch is logged today, no dose is due, godown stock is above the reorder level, no trader is owed money and today's tasks are clear." />
+//       ) : (
+//         <GroupList>
+//           {shown.map(a => <AlertRow key={a.id} alert={a} />)}
+//         </GroupList>
+//       )}
+//     </div>
+//   );
+// }
+
+/* ============================= 3 · FLOCK ============================= */
+
+/** Are the birds and the lay all right — compact lines rather than six tiles. */
+function FlockPanel({ data }: { data: Data }) {
+  const today = todayISO();
+  const eggsToday = useTodayEggs(data, today);
+  const flock = useFlock(data, today);
+  const prod = useMemo(() => eggProductionTrend(data.eggs, rangeOf('7D', today)), [data.eggs, today]);
+  const damage = useMemo(() => eggDamageTrend(data.eggs, rangeOf('7D', today)), [data.eggs, today]);
+
+  const deathsToday = data.mortality.filter(m => m.date === today);
+  const dead = deathsToday.reduce((s, m) => s + (m.count || 0), 0);
+  const cum = flock.batches.reduce((s, b) => s + cumulativeMortality(b.id, data.mortality, today), 0);
+  const cumPct = flock.placed > 0 ? (cum / flock.placed) * 100 : null;
+
+  return (
+    <Surface className="p-4 min-w-0">
+      <SectionTitle right={<Drill label="Open batches" to="/farms" />}>Flock</SectionTitle>
+      <Row label="Eggs today" value={eggsToday.recorded ? `${fmtIN(eggsToday.byGrade.GOOD)} trays` : 'No record'} />
+      <Row label="7-day average" value={prod.avg7 === null ? 'Unavailable' : `${fmtIN(Math.round(prod.avg7))} trays/day`} />
+      <Row label="Mortality today" value={deathsToday.length ? `${fmtIN(dead)} birds` : 'No record'} danger={dead > 0} />
+      <Row label="Cumulative mortality" value={flock.batches.length ? `${fmtIN(cum)} birds` : 'Unavailable'}
+        danger={cumPct !== null && cumPct > 5} />
+      
+      <Row label="Live birds" value={`${fmtIN(flock.birds)} birds`} />
+      <Row label="Egg damage today" value={!eggsToday.recorded ? 'No record'
+        : damage.todayPct === null ? 'Unavailable' : `${fmtPct(damage.todayPct, 2)} · ${fmtIN(damage.todayTrays ?? 0)} broken`} />
+      {cumPct !== null && (
+        <p className="mt-2 text-[11px] text-muted">
+          {fmtPct(cumPct, 2)} of the {fmtIN(flock.placed)} birds placed on the live batches have died; a batch past 5% is already on the attention list.
+        </p>
+      )}
+    </Surface>
+  );
+}
+
+/* ============================= 4 · EGGS ============================= */
 
 /**
- * Dashboard preview of the shared rule engine in lib/alerts — the full list
- * lives on its own Alerts page, and the open count now reads on the merged
- * Alerts/Tasks buttons at the top of the screen.
+ * The shelf in hand and the day's load off it. Sales value and money received stay on
+ * separate lines on purpose: a voucher bills a load, a payment settles it.
  */
-function AttentionLayer({ alerts }: { alerts: FarmAlert[] }) {
-  const nav = useNavigate();
-  const canVaccinate = useCan('completeVaccination');
-  const vac = useVaccinations();
-
-  const shown = alerts.slice(0, 4);
+function EggsPanel({ data, sheds }: { data: Data; sheds: Shed[] }) {
+  const money = useMoney();
+  const today = todayISO();
+  const eggsToday = useTodayEggs(data, today);
+  const stock = useGradeStock(data, sheds, today);
+  const sales = useTodaySales(data, today);
+  const others = EGG_GRADES.filter(g => g !== 'GOOD');
 
   return (
-    <div>
-      <SectionTitle right={alerts.length ? (
-        <button onClick={() => nav('/alerts')}
-          className="inline-flex items-center gap-1 font-mono text-[11px] text-brand font-semibold press hover:underline">
-          View all <ChevronRight size={12} />
-        </button>
-      ) : undefined}>
-        Attention required
-      </SectionTitle>
-      {/* §15: the vaccination tally reads on its own line, next to the rows it summarises.
-          It opens the alerts it came from — a dose is recorded on the flock that owes it. */}
-      {canVaccinate && (
-        <button onClick={() => nav('/alerts')}
-          className="mt-2 w-full flex items-center gap-2 rounded-card border border-line bg-sunk px-3 py-2 text-left press hover:bg-card">
-          <Syringe size={14} className={vac.counts.overdue ? 'text-danger shrink-0' : 'text-brand shrink-0'} />
-          <span className="flex-1 min-w-0">
-            <span className="block font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">Vaccination</span>
-            <span className={`block text-[12.5px] tnum truncate ${vac.counts.overdue ? 'text-danger font-semibold' : 'text-ink-2'}`}>
-              {countsSummaryLine(vac.counts)}
-            </span>
-          </span>
-          <ChevronRight size={14} className="text-muted shrink-0" />
-        </button>
-      )}
-      {alerts.length === 0 ? (
-        <AllClear title="No attention required" description="Every live batch is logged today, no dose is due, godown stock is above the reorder level, no trader is owed money and today's tasks are clear." />
-      ) : (
-        <GroupList>
-          {shown.map(a => <AlertRow key={a.id} alert={a} />)}
-        </GroupList>
-      )}
-    </div>
+    <Surface className="p-4 min-w-0">
+      <SectionTitle right={<Drill label="Egg stock by shed" to="/farms" />}>Eggs</SectionTitle>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 pb-1">
+        <Stat size="lg" label="Normal stock" value={fmtIN(stock.GOOD)} sub="trays in hand" />
+        <Stat size="lg" label="Sold today" value={sales.entries.length ? fmtIN(sales.trays) : 'No sale'}
+          sub={sales.entries.length ? `${sales.entries.length} ${sales.entries.length === 1 ? 'load' : 'loads'} billed` : 'nothing billed today'} />
+      </div>
+      <Row label="Collected today" value={eggsToday.recorded ? `${fmtIN(eggsToday.byGrade.GOOD)} trays` : 'No record'} />
+      <Row label="Sales value today" value={sales.entries.length ? money.m(sales.billed) : 'No record'} />
+      <Row label="Received on these loads" value={sales.entries.length ? money.m(sales.received) : 'No record'} />
+      <Row label="Still outstanding on them" value={sales.entries.length ? money.m(sales.owed) : 'No record'} danger={sales.owed > 0} />
+      <p className="mt-2 text-[11px] text-muted tnum">
+        Other grades in hand: {others.map(g => `${EGG_GRADE_LABELS[g]} ${fmtIN(stock[g])}`).join(' · ')} trays. Sales value is the
+        eggs plus the loading labour recovered on them — it is not the money received.
+      </p>
+    </Surface>
   );
 }
 
-/* ============================= 1 · EGG PRODUCTION ============================= */
+/* ============================= 5 · GODOWN ============================= */
 
-function EggProductionSection({ data }: { data: Data }) {
+const coverageTone: Record<CoverageStatus, NonNullable<HRow['tone']>> = {
+  CRITICAL: 'danger', LOW: 'warn', HEALTHY: 'normal', IDLE: 'muted',
+};
+
+/** One ingredient's shelf as the owner reads it, and which rule produced its days. */
+type Shelf = {
+  ingredient: string; stockKg: number; dailyKg: number;
+  days: number | null; basis: 'expected' | 'used' | null; tone: NonNullable<HRow['tone']>;
+};
+
+/**
+ * "What am I going to run out of?" — one row per ingredient, tightest shelf first. Days
+ * come from the batches' expected intake against the formula in force (lib/coverage);
+ * where the farm has not set an intake, the godown's own 7-day actual draw answers
+ * instead (godownPosition) and says so on the line, because a forecast the owner never
+ * entered is not a fact about the shelf. The kg reorder level stays a separate warning.
+ */
+function GodownPanel({ data, sheds }: { data: Data; sheds: Shed[] }) {
   const nav = useNavigate();
-  const settled = useSettled();
-  const { eggs, sheds } = data;
-  const win = useWindow('30D');
+  const today = todayISO();
+  const forecast = useMemo(() => feedForecast(
+    data.batches, data.feedFormulas, today,
+    id => sheds.find(s => s.id === id)?.name ?? 'Shed',
+  ), [data.batches, data.feedFormulas, sheds, today]);
 
-  const trend = useMemo(() => eggProductionTrend(eggs, win.range), [eggs, win.range]);
-  const byShed = useMemo(() => productionByShed(eggs, sheds), [eggs, sheds]);
+  const position = useMemo(() => godownPosition(data.feedStock, today), [data.feedStock, today]);
 
-  const series: VSeries[] = [
-    { id: 'all', label: 'All trays', color: CHART.brand, points: trend.points, area: true },
-    { id: 'good', label: 'Good trays', color: CHART.accent, points: trend.goodPoints, dashed: true },
-  ];
+  const shelves = useMemo<Shelf[]>(() => {
+    const balances = godownBalances(data.feedStock, today);
+    const actual = new Map(position.rows.map(r => [r.ingredient, r]));
+    return coverageRows(forecast, godownIngredients(data.feedStock), ing => balances[ing] ?? 0)
+      .map((r: IngredientCoverage): Shelf => {
+        const a = actual.get(r.ingredient);
+        return r.days !== null ? {
+          ingredient: r.ingredient, stockKg: r.stockKg, dailyKg: r.dailyKg, days: r.days,
+          basis: 'expected', tone: coverageTone[r.status],
+        } : {
+          ingredient: r.ingredient, stockKg: r.stockKg, dailyKg: a?.avg7Kg ?? r.dailyKg,
+          days: a?.daysLeft ?? null, basis: a?.daysLeft != null ? 'used' : null,
+          tone: a && a.status !== 'NORMAL' ? (a.status === 'CRITICAL' ? 'danger' : 'warn') : 'muted',
+        };
+      })
+      .sort((x, y) => (x.days === null ? (y.days === null ? 0 : 1)
+        : y.days === null ? -1 : x.days - y.days) || x.ingredient.localeCompare(y.ingredient));
+  }, [data.feedStock, forecast, position, today]);
 
-  const stats: GraphStat[] = [
-    { label: 'Today', value: trend.today === null ? 'No record' : fmtIN(trend.today), sub: 'trays', tone: trend.today === null ? 'muted' : 'ink' },
-    { label: '7-day avg', value: trend.avg7 === null ? 'Unavailable' : fmtIN(Math.round(trend.avg7)), sub: 'trays/day' },
-    ...(win.key !== '7D'
-      ? [{ label: '30-day avg', value: trend.avg30 === null ? 'Unavailable' : fmtIN(Math.round(trend.avg30)), sub: 'trays/day' } as GraphStat]
+  const tightest = shelves.filter(s => s.days !== null);
+  const expectedKg = forecast.counted > 0
+    ? forecast.totalDailyKg
+    : Number(shelves.reduce((s, r) => s + r.dailyKg, 0).toFixed(2));
+  const belowReorder = position.rows.filter(r => r.status !== 'NORMAL');
+  const negative = position.rows.filter(r => r.negative);
+
+  const bars: HRow[] = shelves.map(s => ({
+    id: s.ingredient,
+    label: s.ingredient,
+    value: s.stockKg,
+    display: `${fmtIN(s.stockKg)} kg`,
+    sub: s.days === null
+      ? s.dailyKg > 0 ? `out today · ${fmtIN(s.dailyKg)} kg/day used` : 'nothing drawn or expected'
+      : `~ ${fmtIN(s.days)} days left · ${fmtIN(s.dailyKg)} kg/day ${s.basis === 'expected' ? 'expected' : 'used, last 7 days'}`,
+    tone: s.tone,
+  }));
+
+  const warnings = [
+    ...negative.map(r => `${r.ingredient} shows ${fmtIN(r.stockKg)} kg — negative stock needs an adjustment entry.`),
+    ...(belowReorder.length
+      ? [`${belowReorder.length} ${belowReorder.length === 1 ? 'ingredient is' : 'ingredients are'} below the godown's reorder level.`]
       : []),
-    { label: 'Highest', value: trend.best ? fmtIN(trend.best.value) : 'Unavailable', sub: trend.best?.date ? fmtDateShort(trend.best.date) : undefined },
-    { label: 'Lowest', value: trend.worst ? fmtIN(trend.worst.value) : 'Unavailable', sub: trend.worst?.date ? fmtDateShort(trend.worst.date) : undefined },
-    {
-      label: `vs previous ${win.key}`,
-      value: trend.changePct === null ? 'Unavailable' : `${trend.changePct > 0 ? '+' : ''}${fmtPct(trend.changePct, 1)}`,
-      tone: trend.changePct === null ? 'muted' : trend.changePct >= 0 ? 'success' : 'danger',
-    },
+    ...(forecast.blockers.length
+      ? [`${forecast.blockers.length} ${forecast.blockers.length === 1 ? 'batch has' : 'batches have'} no intake or no formula in force, so those lines fall back to the last 7 days of actual draw.`]
+      : []),
   ];
 
-  const bars: VBar[] = byShed.map(s => ({
-    id: s.shedId,
-    label: s.shedName,
-    value: s.recorded ? s.trays : null,
-    hint: s.recorded
-      ? `Good ${s.byGrade.GOOD} · Broken ${s.byGrade.BROKEN} · Double ${s.byGrade.DOUBLE} · Small ${s.byGrade.SMALL}`
-      : 'Nothing collected here today',
-  }));
-  const anyShedToday = byShed.some(s => s.recorded && s.trays > 0);
-
   return (
-    <div className="grid gap-4 lg:grid-cols-12">
-      <GraphCard
-        className="lg:col-span-8" title="Egg production" height={260}
-        subtitle={`${win.range && fmtDateShort(win.range.from)} – ${fmtDateShort(win.range.to)} · trays collected`}
-        loading={!settled}
-        actions={win.control}
-        stats={stats}
-        warnings={trend.warnings}
-        empty={blank(trend.points) ? {
-          title: 'No egg collection in this period',
-          description: eggs.length
-            ? 'Collections exist on other days — widen the period or check the shed that has not been logged.'
-            : 'No shed has reported a collection for this company yet.',
-        } : undefined}
-      >
-        <TrendChart series={series} height={230} format={v => `${fmtIN(v)} trays`} />
-        <ChartLegend items={series.map(s => ({ label: s.label, color: s.color, dashed: s.dashed }))} />
-        <p className="mt-1.5 text-[11px] text-muted">
-          Total {trend.total === null ? 'unavailable' : `${fmtIN(trend.total)} trays`} over {win.range.days} days. A gap is a day nothing was collected — not a zero.
-        </p>
-      </GraphCard>
-
-      <GraphCard
-        className="lg:col-span-4" title="Today by shed" height={220}
-        subtitle={`${fmtDateShort(todayISO())} · tap a bar for the shed`}
-        loading={!settled}
-        empty={!anyShedToday ? {
-          title: 'No shed has reported today',
-          description: 'Once a shed logs its collection it appears here with its grade split.',
-        } : undefined}
-      >
-        <BarSeries bars={bars} height={190} format={v => `${fmtIN(v)} tr`} onPick={id => nav(`/sheds/${id}`)} color={CHART.brand} />
-        <p className="mt-2 text-[11px] text-muted">Bars are separate sheds, never lines sharing one graph. A dashed bar has no record today.</p>
-      </GraphCard>
-    </div>
+    <Surface className="p-4 min-w-0">
+      <SectionTitle right={<Drill label="Open godown" to="/feed" />}>Godown</SectionTitle>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 mb-3">
+        <Stat size="sm" label={forecast.counted > 0 ? 'Expected use' : 'Recent use'} value={`${fmtIN(expectedKg)} kg`}
+          sub={forecast.counted > 0
+            ? `every day, across ${forecast.counted} ${forecast.counted === 1 ? 'batch' : 'batches'}`
+            : 'a day, from the last 7 days of draw'} />
+        <Stat size="sm" label={`Under ${COVERAGE_CRITICAL_DAYS} days`} value={`${tightest.filter(s => (s.days ?? 0) < COVERAGE_CRITICAL_DAYS).length}`}
+          tone={tightest.some(s => (s.days ?? 0) < COVERAGE_CRITICAL_DAYS) ? 'danger' : 'success'}
+          sub={tightest.length ? 'of the shelves being eaten' : 'no shelf measured yet'} />
+        <Stat size="sm" label="Tightest shelf" value={tightest.length ? tightest[0].ingredient : 'Unavailable'}
+          sub={tightest.length ? `${fmtIN(tightest[0].days ?? 0)} days left` : 'set an intake on a batch'} />
+      </div>
+      {warnings.length > 0 && (
+        <ul className="mb-2 space-y-1">
+          {warnings.map(w => <li key={w} className="text-[11.5px] text-warn">• {w}</li>)}
+        </ul>
+      )}
+      {bars.length === 0 ? (
+        <EmptyState title="The godown ledger is empty"
+          description="No opening stock or receipt has been recorded for this company, so there is no shelf to measure." />
+      ) : (
+        <HBarList rows={bars} onPick={id => nav(`/feed?q=${encodeURIComponent(id)}`)}
+          caption="Tightest shelf first. A bar is the KG on the shelf; the days say whether they come from the expected intake or from what was actually used." />
+      )}
+    </Surface>
   );
 }
 
-/* ============================= 2 · GODOWN ============================= */
+/* ============================= 6 · FINANCE ============================= */
 
-function GodownSection({ data }: { data: Data }) {
-  const nav = useNavigate();
-  const settled = useSettled();
-  const { feedStock } = data;
-  const win = useWindow('30D');
+type MoneyRow = { label: string; value: string; danger?: boolean; success?: boolean };
 
-  const position = useMemo(() => godownPosition(feedStock), [feedStock]);
-  const ingredients = useMemo(() => godownIngredients(feedStock), [feedStock]);  const [picked, setPicked] = useState<string | null>(null);
-  const ingredient = picked && ingredients.includes(picked) ? picked : ingredients[0] ?? null;
-  const ingTrend = useMemo(
-    () => (ingredient ? ingredientStockTrend(feedStock, ingredient, win.range) : null),
-    [feedStock, ingredient, win.range],
-  );
-
-  const toneFor = (s: GodownRow['status']): HRow['tone'] =>
-    s === 'CRITICAL' ? 'danger' : s === 'LOW' ? 'warn' : 'success';
-
-  const rows: HRow[] = position.rows.map(p => ({
-    id: p.ingredient,
-    label: p.ingredient,
-    value: p.stockKg,
-    display: `${fmtIN(p.stockKg)} kg`,
-    sub: p.daysLeft === null
-      ? p.avg7Kg ? `${fmtIN(p.avg7Kg)} kg/day · runway unknown` : 'No draw in 7 days'
-      : `≈ ${fmtIN(p.daysLeft)} days left at ${fmtIN(p.avg7Kg ?? 0)} kg/day`,
-    tone: toneFor(p.status),
-  }));
-
-  const low = position.rows.filter(p => p.status !== 'NORMAL');
-  const negative = position.rows.filter(p => p.negative);
-
-  const ingSeries: VSeries[] = ingTrend ? [
-    { id: 'closing', label: 'Closing stock', color: CHART.brand, points: ingTrend.closing, area: true },
-    { id: 'out', label: 'Given to birds', color: CHART.danger, points: ingTrend.consumption, dashed: true },
-    { id: 'in', label: 'Received', color: CHART.teal, points: ingTrend.feedIn, dashed: true },
-  ] : [];
-
-  const ingStats: GraphStat[] = ingTrend ? [
-    { label: 'Current stock', value: `${fmtIN(ingTrend.current)} kg`, tone: ingTrend.current < 0 ? 'danger' : 'ink' },
-    { label: 'Avg daily use', value: ingTrend.avgDailyUse === null ? 'Unavailable' : `${fmtIN(ingTrend.avgDailyUse)} kg` },
-    { label: 'Days left', value: ingTrend.daysLeft === null ? 'Unavailable' : fmtIN(ingTrend.daysLeft) },
-    { label: 'Heaviest day', value: ingTrend.heaviest ? `${fmtIN(ingTrend.heaviest.value)} kg` : 'Unavailable', sub: ingTrend.heaviest?.date ? fmtDateShort(ingTrend.heaviest.date) : undefined },
-    { label: 'Consumed', value: `${fmtIN(ingTrend.totalConsumed)} kg`, sub: 'in period' },
-    { label: 'Received', value: `${fmtIN(ingTrend.totalReceived)} kg`, sub: 'in period' },
-  ] : [];
-
+/** One column of the money trio — what moved, what we owe, what owes us; never merged. */
+function MoneyColumn({ title, hint, rows }: { title: string; hint: string; rows: MoneyRow[] }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-12">
-      <GraphCard
-        className="lg:col-span-6" title="Godown stock position" height={300}
-        subtitle="Closing KG from the movement ledger · tap an ingredient for its history"
-        loading={!settled}
-        warnings={[
-          ...position.warnings,
-          ...negative.map(p => `${p.ingredient} shows ${fmtIN(p.stockKg)} kg — negative stock requires an adjustment entry.`),
-          ...(low.length ? [`${low.length} ingredient${low.length === 1 ? '' : 's'} below the godown's reorder level (${fmtIN(GODOWN_LOW_KG)} kg), critical under ${fmtIN(GODOWN_CRITICAL_KG)} kg.`] : []),
-        ]}
-        empty={!rows.length ? {
-          title: 'The godown ledger is empty',
-          description: 'No opening stock or receipts have been recorded for this company, so there is no position to show.',
-        } : undefined}
-      >
-        <HBarList rows={rows} onPick={id => nav(`/feed?q=${encodeURIComponent(id)}`)} />
-      </GraphCard>
-
-      <GraphCard
-        className="lg:col-span-6" title="Ingredient stock trend" height={260}
-        subtitle={ingredient ? `${fmtDateShort(win.range.from)} – ${fmtDateShort(win.range.to)} · derived from ledger rows only` : undefined}
-        loading={!settled}
-        warnings={ingTrend?.warnings}
-        actions={win.control}
-        stats={ingStats}
-        empty={!ingredient ? {
-          title: 'No ingredients on record',
-          description: 'Add an opening or receipt entry in the godown to start tracking stock.',
-        } : undefined}
-      >
-        {ingredients.length > 0 && (
-          <ChipGroup
-            className="mb-3"
-            value={ingredient ?? ''}
-            onChange={setPicked}
-            options={ingredients.slice(0, 8).map(i => ({ value: i, label: i }))}
-          />
-        )}
-        {ingTrend && (
-          <>
-            <TrendChart series={ingSeries} height={210} format={v => `${fmtIN(v)} kg`} />
-            <ChartLegend items={ingSeries.map(s => ({ label: s.label, color: s.color, dashed: s.dashed }))} />
-            <p className="mt-1.5 text-[11px] text-muted">
-              Opening {fmtIN(ingTrend.opening)} kg on {fmtDateShort(win.range.from)}; adjustments and issues out to traders are in the same ledger.
-            </p>
-          </>
-        )}
-      </GraphCard>
-    </div>
-  );
-}
-
-type GodownRow = ReturnType<typeof godownPosition>['rows'][number];
-
-/* ============================= 3 · EGG STOCK AND SALES ============================= */
-
-function EggStockSalesSection({ data }: { data: Data }) {
-  const nav = useNavigate();
-  const settled = useSettled();
-  const money = useMoney();
-  const { eggs, saleEntries, eggWastages, traderTxns, traders } = data;
-  const stockWin = useWindow('30D');
-  const salesWin = useWindow('30D');
-  const traderWin = useWindow('30D');
-  const [mode, setMode] = useState<SalesMode>('TRAYS');
-  const sales = useMemo(() => eggSalesTrend(saleEntries, salesWin.range, mode), [saleEntries, salesWin.range, mode]);
-  const stock = useMemo(() => eggStockMovement(eggs, saleEntries, eggWastages, stockWin.range), [eggs, saleEntries, eggWastages, stockWin.range]);
-  const byTrader = useMemo(() => salesByTrader(traderTxns, traders, traderWin.range), [traderTxns, traders, traderWin.range]);
-
-  const saleOf = (date: string) => saleEntries.filter(e => e.date === date);
-
-  const stockSeries: VSeries[] = [
-    { id: 'closing', label: 'Eggs in hand', color: CHART.brand, points: stock.closing, area: true },
-    { id: 'coll', label: 'Collected', color: CHART.accent, points: stock.collection, dashed: true },
-    { id: 'sold', label: 'Sold', color: CHART.danger, points: stock.sales, dashed: true },
-  ];
-
-  const salesSeries: VSeries[] = [{
-    id: 'sales',
-    label: mode === 'TRAYS' ? 'Trays sold' : mode === 'VALUE' ? 'Billed value' : 'Rate per egg',
-    color: mode === 'RATE' ? CHART.brand : CHART.accent,
-    points: sales.points,
-    area: true,
-  }];
-
-  const salesFmt = (v: number) => mode === 'TRAYS' ? `${fmtIN(v)} trays`
-    : mode === 'VALUE' ? `${money.m(v)} billed`
-    : `${money.r(v)} / egg`;
-
-  const traderRows: HRow[] = byTrader.map(t => ({
-    id: t.traderId,
-    label: t.name,
-    value: t.value,
-    display: money.canView ? fmtMoney(t.value) : '₹ •••••',
-    sub: `${fmtIN(t.trays)} trays billed${t.active ? '' : ' · trader inactive'}`,
-    tone: t.active ? 'normal' : 'muted',
-  }));
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-12">
-      <GraphCard
-        className="lg:col-span-6" title="Egg stock movement" height={250}
-        subtitle={`${fmtDateShort(stockWin.range.from)} – ${fmtDateShort(stockWin.range.to)} · trays in the egg room`}
-        loading={!settled}
-        actions={stockWin.control}
-        warnings={stock.warnings}
-        stats={[
-          { label: 'Opening', value: fmtIN(stock.opening), sub: 'trays' },
-          { label: 'Collected today', value: stock.todayCollection === null ? 'No record' : fmtIN(stock.todayCollection), sub: 'trays', tone: stock.todayCollection === null ? 'muted' : 'success' },
-          { label: 'Sold today', value: stock.todaySales === null ? 'No record' : fmtIN(stock.todaySales), sub: 'trays', tone: stock.todaySales === null ? 'muted' : 'danger' },
-          { label: 'Broken today', value: stock.todayDamage === null ? 'No record' : fmtIN(stock.todayDamage), sub: 'trays', tone: stock.todayDamage === null ? 'muted' : 'warn' },
-          { label: 'Closing now', value: fmtIN(stock.closingNow), sub: `${stock.change >= 0 ? '+' : ''}${fmtIN(stock.change)} vs opening`, tone: stock.closingNow < 0 ? 'danger' : 'ink' },
-        ]}
-        empty={blank(stock.collection) && blank(stock.sales) ? {
-          title: 'No egg movement in this period',
-          description: 'Nothing was collected and no load was billed, so there is no stock trail to draw.',
-        } : undefined}
-      >
-        <TrendChart series={stockSeries} height={200} format={v => `${fmtIN(v)} trays`} />
-        <ChartLegend items={stockSeries.map(s => ({ label: s.label, color: s.color, dashed: s.dashed }))} />
-        <p className="mt-1.5 text-[11px] text-muted">
-          Closing = opening + collected − sold. Only a final sale entry takes trays out; a shed dispatch note on its own moves nothing, so a load can never be deducted twice.
-        </p>
-      </GraphCard>
-
-      <GraphCard
-        className="lg:col-span-6" title="Egg sales" height={250}
-        subtitle={`${sales.entries} sale ${sales.entries === 1 ? 'entry' : 'entries'} billed in this period`}
-        loading={!settled}
-        warnings={sales.warnings}
-        actions={
-          <div className="flex flex-col items-end gap-1.5">
-            <GraphRange value={mode} onChange={setMode} label="Sales measure" options={[
-              { value: 'TRAYS', label: 'Trays' }, { value: 'VALUE', label: 'Value' }, { value: 'RATE', label: 'Rate' },
-            ]} />
-            {salesWin.control}
-          </div>
-        }
-        stats={[
-          { label: 'Today', value: sales.today === null ? 'No sale' : mode === 'TRAYS' ? fmtIN(sales.today) : mode === 'VALUE' ? money.m(sales.today) : money.r(sales.today), tone: sales.today === null ? 'muted' : 'ink' },
-          { label: `Period ${mode === 'TRAYS' ? 'trays' : mode === 'VALUE' ? 'billed' : 'avg rate'}`, value: sales.periodTotal === null ? 'Unavailable' : mode === 'TRAYS' ? fmtIN(sales.periodTotal) : mode === 'VALUE' ? money.m(sales.periodTotal) : money.r(sales.periodTotal) },
-          { label: 'Avg rate / egg', value: money.r(sales.avgRate) },
-        ]}
-        empty={blank(sales.points) ? {
-          title: 'No egg sale billed in this period',
-          description: 'Sales appear here once accounts records a sale entry against a trader.',
-        } : undefined}
-      >
-        <TrendChart
-          series={salesSeries} height={200} format={salesFmt}
-          zeroBase={mode !== 'RATE'}
-          onPick={date => {
-            const same = saleOf(date);
-            nav(same.length === 1 ? `/sales/entry/${same[0].id}` : '/sales');
-          }}
-          pickLabel={date => {
-            const same = saleOf(date);
-            return same.length === 1 ? 'Open this sale' : same.length ? `Open the ${same.length} sales on ${fmtDateShort(date)}` : 'Open the sales ledger';
-          }}
-        />
-        <p className="mt-2 text-[11px] text-muted">
-          {mode === 'RATE'
-            ? 'Rate is a load’s egg money divided by the eggs on it — loading labour is never inside a price — so a day with no eggs shows no point.'
-            : 'Billed value is the eggs plus the loading labour recovered on the load.'}
-        </p>
-      </GraphCard>
-
-      <GraphCard
-        className="lg:col-span-12" title="Sales by trader" height={200}
-        subtitle={`${fmtDateShort(traderWin.range.from)} – ${fmtDateShort(traderWin.range.to)} · from the trader ledger, never a typed balance`}
-        loading={!settled}
-        actions={traderWin.control}
-        empty={!byTrader.length ? {
-          title: 'No trader has bought eggs in this period',
-          description: 'A sale entry against a trader puts them on this chart.',
-        } : undefined}
-      >
-        <HBarList rows={traderRows} onPick={id => nav(`/traders/${id}`)} caption={money.canView ? 'Tap a trader to open their ledger.' : 'Values are hidden for your role.'} />
-      </GraphCard>
-    </div>
-  );
-}
-
-/* ============================= 4 · FEED ============================= */
-
-function FeedSection({ data }: { data: Data }) {
-  const nav = useNavigate();
-  const settled = useSettled();
-  const money = useMoney();
-  const { feed, feedStock, feedFormulas, sheds } = data;
-  const useWin = useWindow('30D');
-  const costWin = useWindow('30D');
-
-  const use = useMemo(() => feedConsumptionTrend(feed, useWin.range), [feed, useWin.range]);
-  const perShed = useMemo(() => feedByShed(feed, sheds, feedFormulas, useWin.range), [feed, sheds, feedFormulas, useWin.range]);
-  const cost = useMemo(() => feedCostTrend(feed, feedStock, feedFormulas, costWin.range), [feed, feedStock, feedFormulas, costWin.range]);
-
-  const bars: VBar[] = perShed.map(s => ({
-    id: s.shedId,
-    label: s.shedName,
-    value: s.tonnes > 0 ? s.tonnes : null,
-    hint: s.missingFormula
-      ? 'Formula version unavailable for part of this period'
-      : `${s.formulaName ?? 'No formula'}${s.formulaVersion ? ` v${s.formulaVersion}` : ''} · ${s.days} days`,
-  }));
-
-  const costFmt = (v: number) => `${money.m(v)} cost`;
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-12">
-      <GraphCard
-        className="lg:col-span-7" title="Feed consumption" height={240}
-        subtitle={`${fmtDateShort(useWin.range.from)} – ${fmtDateShort(useWin.range.to)} · tonnes offered to the birds`}
-        loading={!settled}
-        actions={useWin.control}
-        warnings={use.warnings}
-        stats={[
-          { label: 'Today', value: use.today === null ? 'No record' : tonnes(use.today), tone: use.today === null ? 'muted' : 'ink' },
-          { label: '7-day avg', value: use.avg7 === null ? 'Unavailable' : tonnes(use.avg7) },
-          { label: 'Period total', value: use.total === null ? 'Unavailable' : tonnes(use.total) },
-          { label: 'Heaviest day', value: use.heaviest ? tonnes(use.heaviest.value) : 'Unavailable', sub: use.heaviest?.date ? fmtDateShort(use.heaviest.date) : undefined },
-        ]}
-        empty={blank(use.points) ? {
-          title: 'No feed recorded in this period',
-          description: 'Supervisors log tonnes per shed daily; nothing has landed in this window.',
-        } : undefined}
-      >
-        <TrendChart
-          series={[{ id: 'feed', label: 'Tonnes', color: CHART.brand, points: use.points, area: true }]}
-          height={200} format={v => `${fmtIN(Number(v.toFixed(2)))} tonnes`}
-        />
-      </GraphCard>
-
-      <GraphCard
-        className="lg:col-span-5" title="Feed by shed" height={240}
-        subtitle="Tonnes in the period · the formula version that fed them"
-        loading={!settled}
-        empty={!perShed.length ? {
-          title: 'No shed was fed in this period',
-          description: 'Feed entries are recorded per shed, so an un-fed shed simply does not appear.',
-        } : undefined}
-        warnings={perShed.some(s => s.missingFormula)
-          ? ['Formula version unavailable for some days — those days still show their tonnes, only the mix is unknown.']
-          : undefined}
-      >
-        <BarSeries bars={bars} height={190} format={tonnes} onPick={id => nav(`/sheds/${id}`)} color={CHART.brand} />
-        <p className="mt-2 text-[11px] text-muted">Tap a bar for the shed. Consumption is priced against the formula in force on that date, never today's version.</p>
-      </GraphCard>
-
-      <GraphCard
-        className="lg:col-span-12" title="Feed cost" height={230}
-        subtitle="Actual quantities used, valued at the godown average in force that day"
-        loading={!settled}
-        actions={costWin.control}
-        warnings={cost.warnings}
-        stats={[
-          { label: 'Today', value: cost.today === null ? 'Unavailable' : money.m(cost.today), tone: cost.today === null ? 'muted' : 'ink' },
-          { label: '7-day avg', value: cost.avg7 === null ? 'Unavailable' : money.m(cost.avg7) },
-          { label: 'Cost / tonne', value: cost.perTonne === null ? 'Unavailable' : money.m(cost.perTonne) },
-          { label: 'Period total', value: cost.total === null ? 'Unavailable' : money.m(cost.total), sub: cost.available ? `${fmtIN(cost.tonnes)} t fed` : undefined },
-          { label: 'Quantity priced', value: cost.unpricedKg > 0 ? 'Incomplete' : 'Complete', sub: `${fmtIN(cost.pricedKg)} kg priced · ${fmtIN(cost.unpricedKg)} kg without a rate`, tone: cost.unpricedKg > 0 ? 'warn' : 'success' },
-        ]}
-        empty={!cost.available ? {
-          title: 'Rate data unavailable',
-          description: cost.tonnes > 0
-            ? `${fmtIN(cost.tonnes)} tonnes were fed, but the godown has never priced the ingredients they drew. Nothing is being shown as zero.`
-            : 'No feed was consumed in this period.',
-        } : undefined}
-      >
-        <TrendChart
-          series={[{ id: 'cost', label: 'Feed cost', color: CHART.accent, points: cost.points, area: true }]}
-          height={200} format={costFmt}
-        />
-        <p className="mt-2 text-[11px] text-muted">
-          This is what the mix cost, shown beside the money ledger rather than inside it — the P&amp;L below reads recorded finance rows only.
-        </p>
-      </GraphCard>
-    </div>
-  );
-}
-
-/* ============================= 5 · PROFIT AND LOSS ============================= */
-
-const PNL_MODES = [
-  { value: 'WEEK', label: 'Weekly' },
-  { value: 'MONTH', label: 'Monthly' },
-  { value: 'QUARTER', label: '3 Months' },
-] as const;
-
-function MoneySection({ data }: { data: Data }) {
-  const nav = useNavigate();
-  const settled = useSettled();
-  const money = useMoney();
-  const { finance } = data;
-  const [pnlMode, setPnlMode] = useState<PnlMode>('MONTH');
-  const revWin = useWindow('30D');
-
-  const pnl = useMemo(() => pnlTrend(finance, pnlMode), [finance, pnlMode]);
-  const revenue = useMemo(() => revenueTrend(finance, revWin.range), [finance, revWin.range]);
-  const breakdown = useMemo(() => revenueBreakdown(finance, revWin.range), [finance, revWin.range]);
-
-  const netPoints: Point[] = pnl.buckets.map(b => ({ date: b.to, value: b.net }));
-  const slices = breakdown.rows.map((r, i) => ({ label: r.label, value: r.value, color: SERIES_COLORS[i % SERIES_COLORS.length] }));
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-12">
-      <GraphCard
-        className="lg:col-span-7" title="Farm profit and loss" height={250}
-        subtitle="Money in against money out, from the finance ledger"
-        loading={!settled}
-        warnings={pnl.warnings}
-        actions={
-          <div className="flex flex-col items-end gap-1.5">
-            <GraphRange value={pnlMode} onChange={setPnlMode} options={PNL_MODES} label="P&L grouping" />
-            <button type="button" onClick={() => nav('/finance')} className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em] text-brand press">
-              Open ledger <ChevronRight size={12} />
-            </button>
-          </div>
-        }
-        empty={!pnl.available ? {
-          title: 'Not enough financial data to calculate P&L',
-          description: 'A period needs both money in and money out recorded before a net figure is honest. Nothing is being assumed.',
-        } : undefined}
-      >
-        <PairedBars buckets={pnl.buckets} format={v => money.m(v)} height={180} />
-        <div className="mt-4">
-          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted mb-1.5">Net result trend</p>
-          <TrendChart
-            series={[{ id: 'net', label: 'Net', color: CHART.brand, points: netPoints, area: true }]}
-            height={150} zeroBase={false} format={v => `${money.m(v)} net`}
-            footnote="A negative bucket is a loss the farm actually recorded, not a shortfall we filled in."
-          />
-        </div>
-      </GraphCard>
-
-      <div className="lg:col-span-5 grid gap-4 min-w-0">
-        <GraphCard
-          title="Revenue" height={190}
-          subtitle={`${fmtDateShort(revWin.range.from)} – ${fmtDateShort(revWin.range.to)} · money received`}
-          loading={!settled}
-          actions={revWin.control}
-          warnings={revenue.warnings}
-          stats={[
-            { label: 'Today', value: revenue.today === null ? 'No record' : money.m(revenue.today), tone: revenue.today === null ? 'muted' : 'success' },
-            { label: '7-day avg', value: revenue.avg7 === null ? 'Unavailable' : money.m(revenue.avg7) },
-            { label: 'Period total', value: revenue.total === null ? 'Unavailable' : money.m(revenue.total) },
-          ]}
-          empty={blank(revenue.points) ? {
-            title: 'No income recorded in this period',
-            description: 'Revenue here is money the finance ledger received, so an unrecorded payment shows as a gap.',
-          } : undefined}
-        >
-          <TrendChart
-            series={[{ id: 'rev', label: 'Money in', color: CHART.success, points: revenue.points, area: true }]}
-            height={160} format={v => `${money.mA(v)} in`}
-          />
-        </GraphCard>
-
-        <GraphCard
-          title="Revenue mix" height={170}
-          subtitle="Categories that actually have finance rows in the period"
-          loading={!settled}
-          empty={!breakdown.rows.length ? {
-            title: 'No income categories to split',
-            description: 'This chart only draws categories with recorded income, so it stays empty until there are some.',
-          } : undefined}
-        >
-          {breakdown.donut
-            ? <DonutChart slices={slices} format={v => money.mA(v)} centerLabel="in period" />
-            : <HBarList rows={breakdown.rows.map((r, i) => ({
-              id: r.label, label: r.label, value: r.value,
-              display: money.m(r.value),
-              sub: r.share === null ? undefined : `${fmtPct(r.share * 100, 0)} of income`,
-              tone: (i === 0 ? 'success' : 'normal') as HRow['tone'],
-            }))} caption={`${breakdown.rows.length} income categories — a bar list reads better than a donut at this many.`} />}
-        </GraphCard>
+    <div className="min-w-0">
+      <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-2">{title}</p>
+      <p className="text-[11px] text-muted mb-1">{hint}</p>
+      <div className="border-t border-line-2 pt-0.5">
+        {rows.map((r, i) => <Row key={`${r.label}:${i}`} label={r.label} value={r.value} danger={r.danger} success={r.success} />)}
       </div>
     </div>
   );
 }
 
-/* ============================= 6 · TRADERS ============================= */
+/** What the owner asks of money on this screen: what moved, and what is still owed. */
+const MONEY_RANGES = [
+  { value: '1D', label: 'Today' },
+  { value: '3D', label: '3 days' },
+  { value: '7D', label: '7 days' },
+] as const;
 
-function TraderSection({ data }: { data: Data }) {
-  const nav = useNavigate();
-  const settled = useSettled();
+type MoneyRange = typeof MONEY_RANGES[number]['value'];
+
+const MONEY_DAYS: Record<MoneyRange, number> = { '1D': 1, '3D': 3, '7D': 7 };
+
+function FinancePanel({ data }: { data: Data }) {
   const money = useMoney();
-  const { traders, traderTxns } = data;
-  const win = useWindow('30D');
+  const today = todayISO();
+  const [span, setSpan] = useState<MoneyRange>('1D');
+  const due = useReceivables(data);
+  const positions = usePurchasePositions();
 
-  const outstanding = useMemo(() => traderOutstanding(traders, traderTxns), [traders, traderTxns]);
-  const collections = useMemo(() => traderCollections(traders, traderTxns, win.range), [traders, traderTxns, win.range]);
+  const win = useMemo(() => ({ from: shiftDate(today, -(MONEY_DAYS[span] - 1)), to: today }), [today, span]);
+  /** The payment ledger itself — money that arrived and left, never accrual income or cost. */
+  const flow = useMemo(() => cashFlowOf(data.finance, win), [data.finance, win]);
+  const booked = useMemo(() => inWindow(data.finance, win).length > 0, [data.finance, win]);
 
-  const rows: HRow[] = outstanding
-    .filter(t => t.balance !== 0 || t.txns > 0)
-    .map(t => ({
-      id: t.traderId,
-      label: t.name,
-      value: t.balance,
-      display: money.m(t.balance),
-      sub: t.balance > 0
-        ? `${fmtIN(t.txns)} ledger ${t.txns === 1 ? 'row' : 'rows'} · due to collect`
-        : t.balance < 0 ? 'Money held for the trader' : 'Settled',
-      tone: t.balance > 0 ? 'danger' : t.balance < 0 ? 'warn' : 'success',
-    }));
+  const payables = useMemo(() => payableTotals(positions), [positions]);
+  const owedToSuppliers = useMemo(
+    () => payablesBySupplier(positions).filter(g => (g.outstanding ?? 0) > 0).slice(0, 2),
+    [positions],
+  );
 
-  const series: VSeries[] = [
-    { id: 'billed', label: 'Billed', color: CHART.accent, points: collections.billed, area: true },
-    { id: 'paid', label: 'Received', color: CHART.success, points: collections.received, dashed: true },
-  ];
+  const v = (n: number) => booked ? money.m(n) : 'No record';
+  const net = flow.in.total - flow.out.total;
+  const days = span === '1D' ? 'today' : `the last ${MONEY_DAYS[span]} days`;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-12">
-      <GraphCard
-        className="lg:col-span-5" title="Trader outstanding" height={230}
-        subtitle="Opening balance + billed − received, read back off the signed ledger"
-        loading={!settled}
-        empty={!rows.length ? {
-          title: 'No trader carries a balance',
-          description: 'Every trader is either settled or has no transactions yet.',
-        } : undefined}
-      >
-        <HBarList rows={rows} onPick={id => nav(`/traders/${id}`)} caption="Tap a trader for their ledger and the sale behind each row." />
-      </GraphCard>
-
-      <GraphCard
-        className="lg:col-span-7" title="Trader collections" height={230}
-        subtitle={`${fmtDateShort(win.range.from)} – ${fmtDateShort(win.range.to)} · billed against what actually arrived`}
-        loading={!settled}
-        actions={win.control}
-        warnings={collections.warnings}
-        stats={[
-          { label: 'Billed', value: collections.totalBilled === null ? 'Unavailable' : money.m(collections.totalBilled) },
-          { label: 'Received', value: collections.totalReceived === null ? 'Unavailable' : money.m(collections.totalReceived), tone: 'success' },
-          { label: 'Total outstanding', value: money.m(collections.outstanding), tone: collections.outstanding > 0 ? 'danger' : 'success' },
-        ]}
-        empty={blank(collections.billed) && blank(collections.received) ? {
-          title: 'No trader activity in this period',
-          description: 'Nothing was billed or paid, so there is no movement to plot.',
-        } : undefined}
-      >
-        <TrendChart series={series} height={190} format={v => `${money.mA(v)}`} />
-        <ChartLegend items={series.map(s => ({ label: s.label, color: s.color, dashed: s.dashed }))} />
-        <p className="mt-1.5 text-[11px] text-muted">
-          Outstanding movement is what the day added to or cleared off the dues — a gap is a day with no transaction, not a settled account.
+    <Surface className="p-4 min-w-0">
+      <SectionTitle right={(
+        <div className="flex items-center gap-3">
+          <GraphRange value={span} onChange={setSpan} options={MONEY_RANGES} label="Money period" />
+          <Drill label="Open ledger" to="/finance" />
+        </div>
+      )}>Finance</SectionTitle>
+      <p className="text-[11px] text-muted mb-3">
+        {fmtDateShort(win.from)}{win.from === win.to ? '' : ` – ${fmtDateShort(win.to)}`} · what actually
+        moved in {days}, beside what is still unpaid on either side.
+      </p>
+      <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+        <MoneyColumn title="Money movement" hint="payment ledger, cash in and out" rows={[
+          { label: 'Money received', value: v(flow.in.total), success: booked && net > 0 },
+          { label: 'Money paid', value: v(flow.out.total) },
+          { label: 'Net', value: v(net), danger: booked && net < 0, success: booked && net > 0 },
+        ]} />
+        <MoneyColumn title="Pending payments" hint="stock taken on credit, still owed" rows={[
+          { label: 'Owed to suppliers', value: money.m(payables.outstanding), danger: payables.outstanding > 0, success: payables.outstanding === 0 },
+          { label: 'Receipts unpaid', value: `${payables.unpaidPurchases}` },
+          ...owedToSuppliers.map(g => ({ label: g.supplier ?? UNSUPPLIED, value: money.m(g.outstanding ?? 0), danger: true })),
+        ]} />
+        <MoneyColumn title="Pending receivables" hint="trader ledger, all time" rows={[
+          { label: 'Trader outstanding', value: money.m(due.total), danger: due.total > 0, success: due.total === 0 },
+          { label: 'Traders with dues', value: `${due.owed.length}` },
+          ...due.owed.slice(0, 2).map(t => ({ label: t.name, value: money.m(t.balance), danger: true })),
+        ]} />
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] text-muted">
+          {!booked
+            ? `No payment row falls in ${days}, so nothing here is being shown as zero.`
+            : payables.unpriced > 0
+              ? `${payables.unpriced} receipt${payables.unpriced === 1 ? '' : 's'} carry no rate, so their value is counted in KG but kept out of the money owed.`
+              : 'The pending columns are all-time positions from the receipts and the trader ledger — they are not a period total.'}
         </p>
-      </GraphCard>
-    </div>
+        <Drill label="View all traders" to="/traders" />
+      </div>
+    </Surface>
   );
 }
 
-/* ============================= 7 · EGG DAMAGE ============================= */
+/* ============================= 7 · TRENDS ============================= */
 
-function DamageSection({ data }: { data: Data }) {
-  const nav = useNavigate();
+/** Four small charts that back up the numbers above, all on one shared period. */
+function TrendsPanel({ data }: { data: Data }) {
   const settled = useSettled();
-  const { eggs, sheds } = data;
-  const win = useWindow('30D');
-  const shedWin = useWindow('30D');
+  const today = todayISO();
+  const [key, setKey] = useState<Extract<RangeKey, '7D' | '30D'>>('30D');
+  const range = useMemo(() => rangeOf(key, today), [key, today]);
 
-  const trend = useMemo(() => eggDamageTrend(eggs, win.range), [eggs, win.range]);
-  const byShed = useMemo(() => damageByShed(eggs, sheds, shedWin.range), [eggs, sheds, shedWin.range]);
+  const prod = useMemo(() => eggProductionTrend(data.eggs, range), [data.eggs, range]);
+  const sales = useMemo(() => eggSalesTrend(data.saleEntries, range, 'TRAYS'), [data.saleEntries, range]);
+  const feedUse = useMemo(() => feedConsumptionTrend(data.feed, range), [data.feed, range]);
+  const mort = useMemo(() => mortalityTrend(data.mortality, data.batches, range), [data.mortality, data.batches, range]);
 
-  const bars: VBar[] = byShed.map(s => ({
-    id: s.shedId,
-    label: s.shedName,
-    value: s.trays,
-    hint: s.pct === null ? 'No production total to divide by' : `${fmtPct(s.pct, 2)} of its trays`,
-  }));
-
-  const series: VSeries[] = [
-    { id: 'pct', label: 'Damage %', color: CHART.danger, points: trend.points, area: true },
-    { id: 'trays', label: 'Broken trays', color: CHART.muted, points: trend.trayPoints, dashed: true },
+  const cards: {
+    title: string; series: VSeries[]; format: (v: number) => string; foot: string;
+    emptyTitle: string; emptyText: string; warnings?: string[];
+  }[] = [
+    {
+      title: 'Egg production',
+      series: [{ id: 'all', label: 'All trays', color: CHART.brand, points: prod.points, area: true }],
+      format: v => `${fmtIN(v)} trays`,
+      foot: prod.total === null ? 'Nothing collected in this period.' : `${fmtIN(prod.total)} trays over ${range.days} days.`,
+      emptyTitle: 'No collection in this period',
+      emptyText: 'Records exist on other days — widen the period or check the shed that has not logged.',
+      warnings: prod.warnings,
+    },
+    {
+      title: 'Egg sales',
+      series: [{ id: 'sales', label: 'Trays billed', color: CHART.accent, points: sales.points, area: true }],
+      format: v => `${fmtIN(v)} trays`,
+      foot: `${sales.entries} ${sales.entries === 1 ? 'load' : 'loads'} billed in this period.`,
+      emptyTitle: 'No sale billed in this period',
+      emptyText: 'A load appears here once accounts records a sale entry against a trader.',
+      warnings: sales.warnings,
+    },
+    {
+      title: 'Feed consumption',
+      series: [{ id: 'feed', label: 'Tonnes', color: CHART.brand, points: feedUse.points, area: true }],
+      format: tonnes,
+      foot: feedUse.total === null ? 'Nothing offered in this period.' : `${tonnes(feedUse.total)} offered over ${range.days} days.`,
+      emptyTitle: 'No feed recorded in this period',
+      emptyText: 'Supervisors log tonnes per shed daily; nothing landed in this window.',
+      warnings: feedUse.warnings,
+    },
+    {
+      title: 'Mortality',
+      series: [{ id: 'mort', label: 'Birds', color: CHART.danger, points: mort.points, area: true }],
+      format: v => `${fmtIN(v)} birds`,
+      foot: mort.total === null ? 'No deaths recorded in this period.' : `${fmtIN(mort.total)} birds over ${range.days} days.`,
+      emptyTitle: 'No mortality in this period',
+      emptyText: 'Either nothing was logged, or the entries carry an invalid count, date or shed link.',
+      warnings: mort.warnings,
+    },
   ];
 
   return (
-    <div className="grid gap-4 lg:grid-cols-12">
-      <GraphCard
-        className="lg:col-span-7" title="Egg damage" height={240}
-        subtitle="Broken trays as a share of the day's collection"
-        loading={!settled}
-        actions={win.control}
-        warnings={trend.warnings}
-        stats={[
-          { label: 'Today', value: trend.todayPct === null ? 'Unavailable' : fmtPct(trend.todayPct, 2), sub: trend.todayTrays === null ? 'no broken record' : `${fmtIN(trend.todayTrays)} trays`, tone: trend.todayPct !== null && trend.todayPct > 2 ? 'danger' : 'ink' },
-          { label: '7-day avg', value: trend.avg7Pct === null ? 'Unavailable' : fmtPct(trend.avg7Pct, 2) },
-          { label: 'Worst day', value: trend.worst ? fmtPct(trend.worst.value, 2) : 'Unavailable', sub: trend.worst?.date ? fmtDateShort(trend.worst.date) : undefined, tone: 'danger' },
-          { label: 'Broken in period', value: sumPoints(trend.trayPoints) === null ? 'Unavailable' : `${fmtIN(sumPoints(trend.trayPoints)!)} tr`, tone: 'warn' },
-        ]}
-        empty={!trend.available ? {
-          title: 'Damage percentage unavailable',
-          description: 'No day in this period has both a collection record and trays to divide by, so a percentage would be invented.',
-        } : undefined}
-      >
-        <TrendChart series={series} height={200} format={(v, s) => s.id === 'pct' ? `${fmtPct(v, 2)} damaged` : `${fmtIN(v)} trays`} />
-        <ChartLegend items={series.map(s => ({ label: s.label, color: s.color, dashed: s.dashed }))} />
-        <p className="mt-1.5 text-[11px] text-muted">The chart says how much broke; the farm's own records say where. No cause is implied.</p>
-      </GraphCard>
-
-      <GraphCard
-        className="lg:col-span-5" title="Damage by shed" height={240}
-        subtitle={`${fmtDateShort(shedWin.range.from)} – ${fmtDateShort(shedWin.range.to)} · broken trays`}
-        loading={!settled}
-        actions={shedWin.control}
-        empty={!byShed.some(s => s.trays > 0) ? {
-          title: 'No broken trays recorded',
-          description: 'Either nothing broke in this period, or no shed has reported yet.',
-        } : undefined}
-      >
-        <BarSeries bars={bars} height={190} format={v => `${fmtIN(v)} tr`} onPick={id => nav(`/sheds/${id}`)} color={CHART.danger} />
-        <p className="mt-2 text-[11px] text-muted">Tap a bar for the shed's own record.</p>
-      </GraphCard>
+    <div>
+      <SectionTitle right={<GraphRange value={key} onChange={setKey} options={TREND_RANGES} label="Trend period" />}>
+        Trends
+      </SectionTitle>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mt-2">
+        {cards.map(c => (
+          <GraphCard key={c.title} title={c.title}
+            subtitle={`${fmtDateShort(range.from)} – ${fmtDateShort(range.to)}`}
+            height={150} loading={!settled} warnings={c.warnings}
+            empty={blank(c.series[0].points) ? { title: c.emptyTitle, description: c.emptyText } : undefined}>
+            <TrendChart series={c.series} height={120} format={c.format} />
+            <ChartLegend items={c.series.map(s => ({ label: s.label, color: s.color, dashed: s.dashed }))} />
+            <p className="mt-1 text-[11px] text-muted">{c.foot}</p>
+          </GraphCard>
+        ))}
+      </div>
     </div>
   );
 }
 
-/* ============================= 8 · MORTALITY ============================= */
+/* ============================= 8 · RECENT ACTIVITY ============================= */
 
-type Scope = { kind: 'ALL' } | { kind: 'SHED'; id: string } | { kind: 'BATCH'; id: string };
+/** The records the farm recognises, straight off the audit trail it already writes. */
+const ACTIVITY_LABELS: Record<string, string> = {
+  EggCollection: 'Egg collection recorded',
+  EggWastage: 'Egg wastage recorded',
+  SaleEntry: 'Egg sale recorded',
+  EggSaleBooking: 'Sale booking updated',
+  SaleLog: 'Shed dispatch logged',
+  TraderTxn: 'Trader payment recorded',
+  Finance: 'Finance entry recorded',
+  CashHandover: 'Cash handed over',
+  CashCount: 'Cash counted',
+  FeedConsumption: 'Feed recorded',
+  FeedStock: 'Godown stock entry',
+  FeedFormula: 'Feed formula updated',
+  Mortality: 'Mortality recorded',
+  MedicineStock: 'Medicine usage recorded',
+  MedicineItem: 'Medicine item updated',
+  Vaccination: 'Vaccination updated',
+  Task: 'Task updated',
+  Batch: 'Batch updated',
+  Shed: 'Shed updated',
+  Trader: 'Trader updated',
+};
 
-const ALL = 'ALL';
+/** A money row the role may not read stays off the list entirely, rather than masked. */
+const MONEY_ENTITIES = new Set(['Finance', 'TraderTxn', 'SaleEntry', 'CashHandover', 'CashCount', 'Trader']);
 
-function MortalitySection({ data }: { data: Data }) {
-  const nav = useNavigate();
-  const settled = useSettled();
-  const { mortality, batches, sheds } = data;
-  const win = useWindow('30D');
-  const cumWin = useWindow('30D');
-  const [scope, setScope] = useState<string>(ALL);
+function RecentActivity({ data }: { data: Data }) {
+  const canViewFinance = useCan('viewFinance');
+  const rows = useMemo(() => data.audit
+    .filter(a => a.entity !== 'Session' && (canViewFinance || !MONEY_ENTITIES.has(a.entity)))
+    .slice(0, 6), [data.audit, canViewFinance]);
 
-  const picked: Scope = useMemo(() => {
-    if (scope.startsWith('shed:')) return { kind: 'SHED', id: scope.slice(5) };
-    if (scope.startsWith('batch:')) return { kind: 'BATCH', id: scope.slice(6) };
-    return { kind: 'ALL' };
-  }, [scope]);
-
-  const filter = useMemo(() => (picked.kind === 'SHED' ? { shedId: picked.id }
-    : picked.kind === 'BATCH' ? { batchId: picked.id } : {}), [picked]);
-
-  const trend = useMemo(() => mortalityTrend(mortality, batches, win.range, filter), [mortality, batches, win.range, filter]);
-  const cum = useMemo(() => mortalityTrend(mortality, batches, cumWin.range, filter), [mortality, batches, cumWin.range, filter]);
-
-  const options = useMemo(() => [
-    { value: ALL, label: 'All sheds' },
-    ...sheds.map(s => ({ value: `shed:${s.id}`, label: s.name })),
-    ...batches.map(b => ({ value: `batch:${b.id}`, label: b.code })),
-  ], [sheds, batches]);
-
-  const scoped = useMemo(() => {
-    if (picked.kind === 'BATCH') return batches.find(b => b.id === picked.id) ?? null;
-    if (picked.kind === 'SHED') return batches.find(b => b.shedId === picked.id && b.status === 'ACTIVE') ?? null;
-    return null;
-  }, [picked, batches]);
-
-  /** The batch mortality log is where a day's deaths are actually kept. */
-  const drill = () => {
-    const target = scoped ?? batches.find(b => b.status === 'ACTIVE') ?? batches[0];
-    nav(target ? `/batches/${target.id}/mortality` : '/batches');
-  };
+  if (!rows.length) {
+    return (
+      <div>
+        <SectionTitle>Recent activity</SectionTitle>
+        <p className="text-[12px] text-muted px-0.5">Nothing has been recorded on this company yet.</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-12">
-      <GraphCard
-        className="lg:col-span-7" title="Mortality" height={240}
-        subtitle={`${fmtDateShort(win.range.from)} – ${fmtDateShort(win.range.to)} · birds recorded dead that day`}
-        loading={!settled}
-        actions={
-          <div className="flex flex-col items-end gap-1.5">
-            {win.control}
-            <ChipGroup value={scope} onChange={setScope} options={options} />
-          </div>
-        }
-        warnings={trend.warnings}
-        stats={[
-          { label: 'Today', value: trend.today === null ? 'No record' : fmtIN(trend.today), tone: trend.today === null ? 'muted' : 'ink' },
-          { label: '7-day avg', value: trend.avg7 === null ? 'Unavailable' : fmtIN(Number(trend.avg7.toFixed(1))) },
-          { label: 'In period', value: trend.total === null ? 'Unavailable' : fmtIN(trend.total) },
-          { label: 'Birds standing', value: trend.liveBirds === null ? 'Unavailable' : fmtIN(trend.liveBirds), sub: 'on the last day' },
-          { label: 'Worst day', value: trend.worst ? fmtIN(trend.worst.value) : 'Unavailable', sub: trend.worst?.date ? fmtDateShort(trend.worst.date) : undefined, tone: 'danger' },
-        ]}
-        empty={blank(trend.points) ? {
-          title: 'No mortality recorded in this period',
-          description: 'Either nothing was logged, or the entries that exist carry an invalid count, date or shed link.',
-        } : undefined}
-      >
-        <TrendChart
-          series={[{ id: 'mort', label: 'Birds', color: CHART.danger, points: trend.points, area: true }]}
-          height={200} format={v => `${fmtIN(v)} birds`}
-          onPick={drill} pickLabel={() => `Open the ${fmtDateShort(win.range.to)} mortality log`}
-        />
-      </GraphCard>
-
-      <GraphCard
-        className="lg:col-span-5" title="Cumulative mortality" height={240}
-        subtitle="Running total of deaths against the birds placed"
-        loading={!settled}
-        actions={cumWin.control}
-        stats={[
-          { label: 'Cumulative', value: cum.cumulative.at(-1)?.value === undefined ? 'Unavailable' : fmtIN(cum.cumulative.at(-1)!.value ?? 0), sub: 'deaths to the last day' },
-          { label: 'Birds standing', value: cum.liveBirds === null ? 'Unavailable' : fmtIN(cum.liveBirds) },
-        ]}
-        empty={blank(cum.points) ? {
-          title: 'No deaths recorded in this period',
-          description: 'A flat start appears once the first entry is logged.',
-        } : undefined}
-      >
-        <TrendChart
-          series={[{ id: 'cum', label: 'Cumulative', color: CHART.brand, points: cum.cumulative }]}
-          height={200} format={v => `${fmtIN(v)} birds`}
-        />
-        <p className="mt-2 text-[11px] text-muted">Counted only from entries whose batch, date and quantity read correctly.</p>
-      </GraphCard>
+    <div>
+      <SectionTitle>Recent activity</SectionTitle>
+      <GroupList className="mt-2">
+        {rows.map(a => (
+          <ListRow key={a.id}
+            title={ACTIVITY_LABELS[a.entity] ?? `${a.entity} ${a.action === 'CREATE' ? 'recorded' : a.action === 'UPDATE' ? 'updated' : 'removed'}`}
+            subtitle={`${data.users.find(u => u.id === a.byUserId)?.name ?? 'Someone'} · ${fmtDateTime(a.at)}`} />
+        ))}
+      </GroupList>
     </div>
   );
 }
@@ -972,7 +665,7 @@ export function OwnerDashboard() {
   return (
     <Page withNav>
       <ScreenTitle
-        eyebrow={`${greeting()} · ${fmtDateShort(todayISO())}`}
+        eyebrow={`${greeting()} · ${fmtDateShort(today)}`}
         title="Farm control centre"
         subtitle={
           <span className="flex flex-wrap items-center gap-2">
@@ -989,56 +682,28 @@ export function OwnerDashboard() {
       </div>
 
       <div className="px-4 sm:px-0 mt-5 space-y-6">
-        <KpiLayer data={scoped} />
+        {/* <div>
+          <SectionTitle>Today</SectionTitle>
+          <TodayStrip data={scoped} sheds={sheds} />
+        </div> */}
 
-        <div>
-          <SectionTitle>Egg production</SectionTitle>
-          <EggProductionSection data={scoped} />
+        {/* <NeedsAttention alerts={alerts} /> */}
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <FlockPanel data={scoped} />
+          <EggsPanel data={scoped} sheds={sheds} />
         </div>
 
-        <div>
-          <SectionTitle>Godown stock</SectionTitle>
-          <GodownSection data={scoped} />
-        </div>
+        
 
-        <div>
-          <SectionTitle>Egg stock and sales</SectionTitle>
-          <EggStockSalesSection data={scoped} />
-        </div>
+            {canFinance && <FinancePanel data={scoped} />}
 
-        <div>
-          <SectionTitle>Feed</SectionTitle>
-          <FeedSection data={scoped} />
-        </div>
+        <TrendsPanel data={scoped} />
 
-        {canFinance && (
-          <div>
-            <SectionTitle>Profit and loss</SectionTitle>
-            <MoneySection data={scoped} />
-          </div>
-        )}
-
-        {canFinance && (
-          <div>
-            <SectionTitle>Traders</SectionTitle>
-            <TraderSection data={scoped} />
-          </div>
-        )}
-
-        <div>
-          <SectionTitle>Egg damage</SectionTitle>
-          <DamageSection data={scoped} />
-        </div>
-
-        <div>
-          <SectionTitle>Mortality</SectionTitle>
-          <MortalitySection data={scoped} />
-        </div>
-
-        {/* <AttentionLayer alerts={alerts} /> */}
-
+        {/* <RecentActivity data={scoped} /> */}
+        <GodownPanel data={scoped} sheds={sheds} />
         <p className="text-[11px] text-faint leading-relaxed pb-2">
-          Every graph on this page reads the same records the module screens do, filtered to {company?.name ?? 'this company'} and to the role you are signed in as. A gap means no record; a figure marked unavailable means the data to derive it is not there.
+          Every figure on this page is the same reading the module screen gives, filtered to {company?.name ?? 'this company'} and to the role you are signed in as. A gap means no record; a figure marked unavailable means the data to derive it is not there. Detailed history stays on the screen that owns it.
         </p>
       </div>
     </Page>
