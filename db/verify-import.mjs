@@ -64,8 +64,6 @@ const eggs = await as(owner, 'select coalesce(sum(balance),0)::int trays from v_
 ok('egg stock reads open trays', eggs[0].trays > 0, JSON.stringify(eggs[0]));
 const money = await as(owner, 'select count(*)::int n, coalesce(sum(balance),0)::numeric owed from v_trader_balance where company_id = $1', [comp]);
 ok('trader balances read with their receivables', money[0].n > 0, JSON.stringify(money[0]));
-const locked = await as(owner, 'select count(*)::int n from public.day_locks where company_id = $1', [comp]);
-ok('the locked days came across', locked[0].n > 0, JSON.stringify(locked[0]));
 
 console.log(`\nas ${sup?.name ?? 'a supervisor'} (${sup?.role})`);
 if (sup) {

@@ -24,7 +24,6 @@ const ok = (name, cond, extra = '') => {
 
 const uuid = n => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
 const day = new Date().toISOString().slice(0, 10);
-const lockedDay = '2026-01-05';
 
 // As the migration role (table owner, not subject to RLS): lay out two rival farms.
 async function seed() {
@@ -67,7 +66,6 @@ async function seed() {
   await q(`insert into trader_txns (id,company_id,trader_id,date,kind,amount,sale_id)
            values ('tta','ca','tra','${day}','EGG_SALE',500,'sea')`);
   await q(`insert into finance_txns (id,company_id,date,kind,amount,category) values ('fta','ca','${day}','EXPENSE',50,'Salaries')`);
-  await q(`insert into day_locks (id,company_id,batch_id,shed_id,date) values ('dl1','ca','ba','sa','${lockedDay}')`);
   await q(`insert into vaccinations (id,company_id,batch_id,shed_id,relative_day,vaccine_name,scheduled_date)
            values ('va','ca','ba','sa',1,'Newcastle','${day}')`);
 }
@@ -103,7 +101,7 @@ try {
   const [OA, LA, SA, FA, OB, MA] = [uuid(1), uuid(2), uuid(3), uuid(4), uuid(5), uuid(6)];
 
   console.log('\ncompany isolation (as A’s Owner)');
-  for (const t of ['farms', 'sheds', 'batches', 'mortality', 'egg_collections', 'feed_stock', 'traders', 'sale_entries', 'finance_txns', 'vaccinations', 'day_locks', 'company_users']) {
+  for (const t of ['farms', 'sheds', 'batches', 'mortality', 'egg_collections', 'feed_stock', 'traders', 'sale_entries', 'finance_txns', 'vaccinations', 'company_users']) {
     const leaks = await visible(OA, t, `company_id='cb'`);
     ok(`${t.padEnd(17)} reveals no Farm B row`, leaks === 0, `got ${leaks}`);
   }
@@ -134,14 +132,6 @@ try {
   const crossInsert = await as(OB, `insert into mortality (id,company_id,batch_id,shed_id,date,count) values ('xb','ca','ba','sa','${day}',1)`);
   ok('B owner cannot write into A', !!crossInsert.error);
   ok('finance role cannot log daily ops', !!(await as(FA, `insert into egg_collections (id,company_id,batch_id,shed_id,date,good_trays) values ('x','ca','ba','sa','${day}',1)`)).error);
-
-  console.log('\nthe locked day holds against a direct write');
-  const lockWrite = await as(LA, `insert into mortality (id,company_id,batch_id,shed_id,date,count) values ('mx','ca','ba','sa','${lockedDay}',1)`);
-  ok('labor refused on a locked date', !!lockWrite.error, lockWrite.error ?? '');
-  const lockEdit = await as(SA, `update mortality set count=6 where id='ma' and date='${day}'`);
-  ok('unlocked date still editable by supervisor', !lockEdit.error, lockEdit.error ?? '');
-  const ownerUnlock = await as(OA, `insert into mortality (id,company_id,batch_id,shed_id,date,count) values ('mo','ca','ba','sa','${lockedDay}',1)`);
-  ok('owner may write through a lock', !ownerUnlock.error, ownerUnlock.error ?? '');
 
   console.log('\nthe platform role');
   // Counted inside this run's own two companies: a real farm's rows land in `sheds` too, and the

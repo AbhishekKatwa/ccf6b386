@@ -113,7 +113,6 @@ begin
       ('cash_counts',          'company_id', 'key:viewFinance',      'key:viewFinance',    'false',                'false'),
 
       -- ---- CONTROL ----------------------------------------------------------------------
-      ('day_locks',            'company_id', '*',                    'key:lockDay',        'key:lockDay',          'key:unlockDay'),
       ('audit',                'company_id', 'key:manageUsers',      '*',                  'false',                'false'),
       ('receipt_counters',     'company_id', 'false',                'false',              'false',                'false')
     ) as t(rel, col, s, i, u, d)
@@ -296,92 +295,6 @@ create policy company_insert on public.ingredients
   );
 drop policy if exists company_delete on public.ingredients;
 create policy company_delete on public.ingredients for delete to authenticated using (app.is_master_admin());
-
--- ============================= THE DAY-LOCK RULE =============================
-/*
- * src/store/app.ts refuses every daily-ops write whose (shed, date) sits in a locked day, and
- * only the Owner may write through a lock. As a trigger rather than a policy because it must
- * read another table per row, must fire on DELETE too, and must see both ends of an UPDATE:
- * moving a record OUT of a locked day is exactly as much a rewrite of a closed day as editing
- * it in place.
- */
-create or replace function app.guard_day_lock() returns trigger
-language plpgsql security definer set search_path = app, public as $$
-declare
-  row_ jsonb;
-  shed text;
-  on_day date;
-  comp text;
-begin
-  row_ := case when tg_op = 'DELETE' then to_jsonb(old) else to_jsonb(new) end;
-  shed   := row_->>'shed_id';
-  on_day := nullif(row_->>'date', '')::date;
-  comp   := row_->>'company_id';
-
-  if shed is null or on_day is null then
-    return case when tg_op = 'DELETE' then old else new end;
-  end if;
-
-  if exists (select 1 from public.day_locks l where l.shed_id = shed and l.date = on_day)
-     and not app.role_can(comp, 'unlockDay') then
-    raise exception 'Day is locked for that shed — only the Owner can unlock it'
-      using errcode = '42501';
-  end if;
-
-  -- The row's previous date, when this is an UPDATE away from it.
-  if tg_op = 'UPDATE' then
-    if exists (select 1 from public.day_locks l
-                where l.shed_id = old.shed_id and l.date = old.date
-                  and (old.shed_id, old.date) is distinct from (new.shed_id, new.date))
-       and not app.role_can(old.company_id, 'unlockDay') then
-      raise exception 'Day is locked for that shed — only the Owner can move a record off it'
-        using errcode = '42501';
-    end if;
-  end if;
-
-  return case when tg_op = 'DELETE' then old else new end;
-end $$;
-
-do $$
-declare t text;
-begin
-  foreach t in array array[
-      'mortality','egg_collections','feed_consumption','feed_round_logs','sale_logs','tasks'
-    ]
-  loop
-    execute format('drop trigger if exists day_lock_guard on public.%I', t);
-    execute format($f$create trigger day_lock_guard before insert or update or delete on public.%1$I
-                      for each row execute function app.guard_day_lock()$f$, t);
-  end loop;
-end $$;
-
-/*
- * A voucher spans sheds, so its lock test is per line (src/store/app.ts:1758). It runs on the
- * line rather than the header because on INSERT the header's lines do not exist yet, and the
- * 004 function writes header-then-lines inside one transaction.
- */
-create or replace function app.guard_sale_line_lock() returns trigger
-language plpgsql security definer set search_path = app, public as $$
-declare
-  line_  jsonb := case when tg_op = 'DELETE' then to_jsonb(old) else to_jsonb(new) end;
-  entry  text  := line_->>'sale_entry_id';
-  shed   text  := line_->>'shed_id';
-  se     public.sale_entries%rowtype;
-begin
-  select * into se from public.sale_entries where id = entry;
-  if se.id is null or shed is null then
-    return case when tg_op = 'DELETE' then old else new end;
-  end if;
-  if exists (select 1 from public.day_locks l where l.shed_id = shed and l.date = se.date)
-     and not app.role_can(se.company_id, 'unlockDay') then
-    raise exception 'Day is locked for one of the sheds on this voucher' using errcode = '42501';
-  end if;
-  return case when tg_op = 'DELETE' then old else new end;
-end $$;
-
-drop trigger if exists day_lock_guard on public.sale_entry_lines;
-create trigger day_lock_guard before insert or update or delete on public.sale_entry_lines
-  for each row execute function app.guard_sale_line_lock();
 
 -- ============================= WHAT THIS FILE DOES NOT DO =============================
 /*

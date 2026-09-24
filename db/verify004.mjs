@@ -42,8 +42,6 @@ const shift = (s, n) => {
 };
 const D = {
   coll: shift(today, -30),
-  lockSale: shift(today, -4),
-  lockMed: shift(today, -2),
   sale: shift(today, -25),
   feedIn: shift(today, -20),
   feedOut: shift(today, -19),
@@ -139,8 +137,6 @@ await must(`insert into egg_collections (id,company_id,batch_id,shed_id,date,goo
              ('ec1','ca','ba','sa',$1,100,20,10,5),
              ('ec2','ca','ba2','sa2',$1,50,0,0,0)`, [D.coll]);
 await must(`insert into traders (id,company_id,name,opening_balance) values ('tra','ca','A trader',0), ('trb','cb','B trader',0)`);
-await must(`insert into day_locks (id,company_id,batch_id,shed_id,date) values
-             ('dl1','ca','ba','sa',$1), ('dl2','ca','ba2','sa2',$2)`, [D.lockSale, D.lockMed]);
 await must(`insert into medicine_items (id,company_id,name,category,unit,low_stock_threshold)
              values ('mi','ca','Newcastle vaccine','VACCINE','dose',0)`);
 await must(`insert into feed_formulas (id,company_id,shed_id,name,family_id,version,effective_from,status)
@@ -256,7 +252,6 @@ let voucher = null;
   ok('a grade sold without a rate is named', has((await fn('save_sale_entry', { ...draft, rates: { good: 6 } })).error, 'Set a per-egg rate for the broken trays'));
   ok('an agreed figure of nothing is not a sale', has((await fn('save_sale_entry', { ...draft, pricing: 'AGREED', agreedAmount: 0 })).error, 'Enter the amount collected for this sale'));
   ok('money cannot be negative', has((await fn('save_sale_entry', { ...draft, cash: -1, cashHandledById: FA })).error, 'Amounts cannot be negative'));
-  ok('a locked day is refused by name', has((await fn('save_sale_entry', { ...draft, date: D.lockSale, lines: [{ shedId: 'sa', byGrade: { good: 5 } }] })).error, 'A-shed is locked for this date — the Owner must unlock it first'));
   ok('trays the shed does not have are refused', has((await fn('save_sale_entry', { ...draft, lines: [{ shedId: 'sa', byGrade: { good: 500 } }] })).error, 'A-shed has only 100 good trays left in stock'));
 
   // ---- the write, kept for the rest of the run ----
@@ -343,7 +338,6 @@ head('the medicine shelf keeps the godown’s averages (receive / issue / adjust
   ok('a batch must live in the shed it is dosed in', has((await fn('medicine_issue', { medicineId: 'mi', date: D.medUse, qty: 1, shedId: 'sa', batchId: 'ba2', reason: 'x', usedBy: 'Ravi' })).error, 'A2 is not in A-shed'));
   ok('who used it is part of the record', has((await fn('medicine_issue', { medicineId: 'mi', date: D.medUse, qty: 1, shedId: 'sa', reason: 'x', usedBy: ' ' })).error, 'Enter who used it'));
   ok('a purpose is part of the record', has((await fn('medicine_issue', { medicineId: 'mi', date: D.medUse, qty: 1, shedId: 'sa', usedBy: 'Ravi' })).error, 'Say what it was used for'));
-  ok('a locked day stops a draw too', has((await fn('medicine_issue', { medicineId: 'mi', date: D.lockMed, qty: 1, shedId: 'sa2', batchId: 'ba2', reason: 'x', usedBy: 'Ravi' })).error, 'Day is locked — contact owner'));
 
   const adj = await fn('adjust_medicine', { medicineId: 'mi', date: D.medAdj, qty: -5, reason: 'broken vial' });
   ok('a counted correction is signed and needs a reason', adj.r?.ok === true
@@ -527,7 +521,6 @@ head('who the function reads as (definer where a wrong answer is possible, invok
   ok('…yet still gets the true average, because the read must not depend on their policies',
      eq((await step(`select average from app.valuation_at('ca','godown','Soybean',$1)`, [D.soy3])).rows?.[0]?.average, 50)
      && eq(N((await fn('godown_kg', 'ca', 'Maize')).r), 550));
-  ok('a locked day is refused by a plain write too', has((await step(`insert into mortality (id,company_id,batch_id,shed_id,date,count) values ('mx','ca','ba','sa',$1,1)`, [D.lockSale])).error, 'Day is locked'));
   as(FA);
   ok('an invoker write still needs the caller’s own key', !!(await fn('add_feed_stock', { kind: 'FEED_IN', date: D.feedIn, ingredient: 'Wheat', qtyKg: 10, ratePerKg: 5, supplier: 'x' })).error);
   ok('and it wrote nothing', (await step(`select count(*)::int n from feed_stock where ingredient='Wheat'`)).rows?.[0]?.n === 0);

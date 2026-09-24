@@ -24,10 +24,11 @@ not reused.
 | file | what it is |
 | --- | --- |
 | `000_helpers.sql` | `app.uid() / current_company() / member_of() / role_in() / role_can()`, and `app.role_permissions` — the role matrix as data |
-| `001_schema.sql` | 33 tables: TEXT ids for business rows, uuid only for people, `numeric` for money and kg, TEXT + CHECK instead of enums |
+| `001_schema.sql` | the tables: TEXT ids for business rows, uuid only for people, `numeric` for money and kg, TEXT + CHECK instead of enums |
 | `002_derived_views.sql` | the 16 read models: stock, valuation, trader balance, sale positions, vaccination state |
-| `003_auth_rls.sql` | one company-scoped policy set per table, plus `app.guard_day_lock()` |
+| `003_auth_rls.sql` | one company-scoped policy set per table |
 | `004_functions.sql` | the write path: RPCs that do exactly what the store's actions do, and refuse in the same words |
+| `005_drop_day_lock.sql` | the cleanup for a database already at 000–004: the day-lock concept is gone from the app, so its table, guards and audit verbs come out |
 
 ## The rule behind 004
 
@@ -64,11 +65,12 @@ every screen into a join. So the grant is checked inside the RPCs, exactly as th
 | `finance` `traders` `traderTxns` `tasks` | same-name tables |
 | `vaccinations` `vaccinationTemplates` | `vaccinations` + `vaccination_templates(_items)` |
 | `ingredientCatalog` | `ingredients` (global, no company) |
-| `dayLocks` `audit` `supportMessages` `cashHandovers` `cashCounts` | same-name tables |
+| `audit` `supportMessages` `cashHandovers` `cashCounts` | same-name tables |
 | `session` | nothing — that is Supabase Auth's business |
 
 Deliberately **not** carried across, each for a reason rather than by omission:
 
+- `dayLocks` — the concept was removed from the app (persist v19 drops it from old saves); `005_drop_day_lock.sql` removes it here.
 - `synced` — was a sync placeholder for a backend that never existed.
 - `traders.outstandingAmount` — a stored cache the derived `v_trader_balance` replaced.
 - `saleEntries.credit` — derived from eggs + labour − cash − PhonePe − advance.
@@ -94,10 +96,10 @@ Person ids are the interesting part: the app's are text (`u_owner`) and the sche
 each one is hashed to a stable uuid and remembered in `profiles.legacy_id`. Re-importing the same
 dump lands on the same people.
 
-Writes are issued as each company's Owner, because `guard_day_lock()` asks the caller whether they
-may write on a locked day and an import that re-states a company's own history has to answer as
-someone who can. A company with no Owner stays anonymous and the lock refusal that follows is the
-honest result, not a bypass to code around.
+Writes are issued as each company's Owner because 003's policies admit the widest set of rows to
+that role, and an import that re-states a company's own history has to be allowed to write all of
+them. A company with no Owner stays anonymous and the policy refusal that follows is the honest
+result, not a bypass to code around.
 
 ## Proving it
 
@@ -105,8 +107,8 @@ Each layer has a harness that seeds what it needs, checks, and rolls the whole r
 
 ```
 node --env-file=.env db/verify002.mjs      # the derived views against hand-computed numbers
-node --env-file=.env db/verify003.mjs      # 37 RLS assertions, one per role per table family
-node --env-file=.env db/verify004.mjs      # 136 assertions: every RPC vs the store's own action
+node --env-file=.env db/verify003.mjs      # 33 RLS assertions, one per role per table family
+node --env-file=.env db/verify004.mjs      # 133 assertions: every RPC vs the store's own action
 node --env-file=.env db/verify-import.mjs  # the real imported farm, read back role by role
 ```
 

@@ -654,26 +654,13 @@ create table if not exists public.cash_counts (
 
 -- ============================= CONTROL =============================
 
-create table if not exists public.day_locks (
-  id         text primary key,
-  company_id text not null references public.companies (id) on delete cascade,
-  batch_id   text not null references public.batches (id) on delete cascade,
-  shed_id    text not null references public.sheds (id) on delete cascade,
-  date       date not null,
-  locked_by  uuid references public.profiles (id) on delete set null,
-  locked_at  timestamptz not null default now(),
-  reason     text,
-  unique (company_id, shed_id, date)
-);
-create index if not exists day_locks_company_idx on public.day_locks (company_id, date);
-
 /** Who did what. Values stay jsonb: the app logs a field and its before/after, not a schema. */
 create table if not exists public.audit (
   id         text primary key,
   company_id text references public.companies (id) on delete cascade,
   entity     text not null,
   entity_id  text not null,
-  action     text not null check (action in ('CREATE','UPDATE','DELETE','LOCK','UNLOCK')),
+  action     text not null check (action in ('CREATE','UPDATE','DELETE')),
   field      text,
   old_value  jsonb,
   new_value  jsonb,

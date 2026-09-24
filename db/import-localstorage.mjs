@@ -112,11 +112,10 @@ function value(table, col, raw) {
 const written = new Map();
 
 /*
- * guard_day_lock() asks the caller whether they may write on a locked day, and an import that
- * re-states a company's own history has to answer as someone who can. So every write is issued as
- * that company's Owner — RLS is not involved (the migration role owns the tables), only this one
- * identity test is. A company in the dump with no Owner is left anonymous, and the lock refusal
- * that follows is the honest answer rather than a bypass.
+ * An import that re-states a company's own history writes as that company's Owner, the role whose
+ * grants cover every table the dump touches — RLS is not involved (the migration role owns the
+ * tables), only this one identity test is. A company in the dump with no Owner is left anonymous,
+ * and the refusal that follows is the honest answer rather than a bypass.
  */
 const owners = new Map((await c.query(`
   select cu.company_id, (array_agg(cu.user_id order by cu.user_id))[1] owner
@@ -202,7 +201,7 @@ const expect = {
   medicineItems: 'medicine_items', medicineStock: 'medicine_stock', feedFormulas: 'feed_formulas',
   finance: 'finance_txns', traders: 'traders', traderTxns: 'trader_txns', tasks: 'tasks',
   vaccinations: 'vaccinations', vaccinationTemplates: 'vaccination_templates',
-  supportMessages: 'support_messages', dayLocks: 'day_locks', cashHandovers: 'cash_handovers',
+  supportMessages: 'support_messages', cashHandovers: 'cash_handovers',
   cashCounts: 'cash_counts', audit: 'audit',
 };
 
@@ -270,9 +269,10 @@ for (const x of state.vaccinationTemplates ?? []) {
 }
 for (const x of state.vaccinations ?? []) await put('vaccinations', x);
 for (const x of state.tasks ?? []) await put('tasks', x);
-for (const x of state.dayLocks ?? []) await put('day_locks', x);
 for (const x of state.supportMessages ?? []) await put('support_messages', x);
-for (const x of state.audit ?? []) await put('audit', x);
+// A dump taken before the day lock was removed still carries its trail; the table no longer has
+// the verbs for it, and the app's own v19 migration drops the same rows.
+for (const x of (state.audit ?? []).filter(a => !['LOCK', 'UNLOCK'].includes(a.action) && a.entity !== 'DayLock')) await put('audit', x);
 
 /*
  * Receipt numbers continue from the highest one already on the books, never from 001 — the same

@@ -66,15 +66,6 @@ as $$
   select round(coalesce(p_value, 0), 2)
 $$;
 
-/** isLocked(shedId, date) (src/store/app.ts). */
-create or replace function app.is_locked(p_shed_id text, p_day date) returns boolean
-language sql stable security definer set search_path = app, public
-as $$
-  select p_day is not null and exists (
-    select 1 from public.day_locks l where l.shed_id = p_shed_id and l.date = p_day
-  )
-$$;
-
 /** batchOfShedOn() (src/lib/calc.ts): the batch that held this shed on that day. */
 create or replace function app.batch_of_shed_on(p_shed_id text, p_day date) returns text
 language sql stable security definer set search_path = app, public
@@ -460,17 +451,14 @@ begin
     end if;
   end if;
 
-  -- Per shed: same company, the day still open, and the grade actually in the pool. The
-  -- voucher being edited is excluded so its own trays are not counted against it twice.
+  -- Per shed: same company and the grade actually in the pool. The voucher being edited is
+  -- excluded so its own trays are not counted against it twice.
   for v_line in select * from jsonb_array_elements(v_lines)
   loop
     select s.name into v_name from public.sheds s
      where s.id = v_line ->> 'shedId' and s.company_id = v_comp;
     if v_name is null then
       raise exception 'A shed on this entry does not belong to this company';
-    end if;
-    if app.is_locked(v_line ->> 'shedId', (p ->> 'date')::date) then
-      raise exception '% is locked for this date — the Owner must unlock it first', v_name;
     end if;
     -- The first grade asked in the client's own order (good, broken, double, small).
     select g.grade, b.balance into v_grade, v_have
@@ -635,7 +623,7 @@ end
 $$;
 
 /**
- * deleteSaleEntry() (src/store/app.ts): the Owner alone, and never across a locked day.
+ * deleteSaleEntry() (src/store/app.ts): the Owner alone.
  * The voucher's own ledger rows carry its ref_id, so removing the header removes exactly its
  * money — a later receipt against the load moves to `sale_id` and is kept, as the client does.
  */
@@ -645,7 +633,6 @@ as $$
 declare
   v_comp text := coalesce(app.current_company(), (select x.company_id from public.sale_entries x where x.id = p_id));
   v_entry public.sale_entries;
-  v_locked boolean;
 begin
   if app.uid() is null then raise exception 'You are not signed in'; end if;
   if not app.role_can(v_comp, 'delete') then
@@ -653,14 +640,6 @@ begin
   end if;
   select * into v_entry from public.sale_entries where id = p_id and company_id = v_comp;
   if v_entry.id is null then raise exception 'Sale entry not found'; end if;
-
-  -- A voucher spans sheds, so the lock test is per line, not per header.
-  select exists (
-    select 1 from public.sale_entry_lines l
-    join public.day_locks d on d.shed_id = l.shed_id and d.date = v_entry.date
-    where l.sale_entry_id = p_id
-  ) into v_locked;
-  if v_locked then raise exception 'Day is locked — the Owner must unlock it first'; end if;
 
   insert into public.audit (id, company_id, entity, entity_id, action, field, old_value, by_user_id, at)
   values (app.id('au'), v_comp, 'SaleEntry', p_id, 'DELETE', 'amount',
@@ -838,7 +817,6 @@ begin
       raise exception '% is not in %', v_batch.code, v_shed.name;
     end if;
   end if;
-  if app.is_locked(v_shed.id, v_day) then raise exception 'Day is locked — contact owner'; end if;
 
   select k.kg, k.average into v_stock, v_avg
    from app.valuation_at(v_comp, 'medicine', v_item.id, v_day) k;
@@ -956,7 +934,6 @@ begin
     raise exception 'A vaccination cannot be given on a future date';
   end if;
   if v_by = '' then raise exception 'Enter who administered it'; end if;
-  if app.is_locked(v.shed_id, v_date) then raise exception 'Day is locked — contact owner'; end if;
 
   -- A dose is deducted once, so reopening the record cannot take a second lot off the shelf.
   if nullif(p->>'medicineId', '') is not null
@@ -1358,7 +1335,7 @@ $$;
 -- functions carry their own checks, so nothing here widens what a caller may already do.
 grant execute on function
   app.id(text), app.num(text), app.person(text), app.clock(text), app.r2(numeric),
-  app.is_locked(text, date), app.batch_of_shed_on(text, date),
+  app.batch_of_shed_on(text, date),
   app.valuation_at(text, text, text, date), app.average_at(text, text, text, date),
   app.godown_kg(text, text), app.egg_balance(text, text, date, text),
   app.can_on_batch(text, text, text), app.next_receipt_no(text, text, date, integer),

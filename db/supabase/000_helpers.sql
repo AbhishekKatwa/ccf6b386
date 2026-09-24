@@ -122,7 +122,6 @@ insert into app.role_permissions (role, key) values
   -- Everything in their own company.
   ('OWNER','create'), ('OWNER','createDailyOps'), ('OWNER','update'), ('OWNER','delete'),
   ('OWNER','viewFinance'), ('OWNER','viewRates'),
-  ('OWNER','lockDay'), ('OWNER','unlockDay'),
   ('OWNER','manageUsers'),
   ('OWNER','manageTraders'), ('OWNER','manageFormulas'), ('OWNER','acknowledgeSales'),
   ('OWNER','createSaleEntries'), ('OWNER','closeBatch'), ('OWNER','exportReports'),
@@ -130,7 +129,7 @@ insert into app.role_permissions (role, key) values
 
   -- Daily operations: feed, mortality, tasks, egg stock, shed dispatch logs. Not reports.
   ('FARM_SUPERVISOR','create'), ('FARM_SUPERVISOR','createDailyOps'), ('FARM_SUPERVISOR','update'),
-  ('FARM_SUPERVISOR','lockDay'), ('FARM_SUPERVISOR','manageFormulas'), ('FARM_SUPERVISOR','completeVaccination'),
+  ('FARM_SUPERVISOR','manageFormulas'), ('FARM_SUPERVISOR','completeVaccination'),
 
   -- Money and traders; formulas and flock work are read-only or absent.
   ('FINANCIAL_SUPERVISOR','update'), ('FINANCIAL_SUPERVISOR','viewFinance'), ('FINANCIAL_SUPERVISOR','viewRates'),
