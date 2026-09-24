@@ -1,4 +1,4 @@
-import { daysBetween, fmtDate, shiftDate } from '@/lib/format';
+import { ageDaysLabel, daysBetween, fmtDate, shiftDate } from '@/lib/format';
 import type {
   Batch, BirdType, Shed, VaccinationDraft, VaccinationItem, VaccinationState, VaccinationTemplate,
 } from '@/types';
@@ -217,5 +217,5 @@ export function templatesForBird(templates: VaccinationTemplate[], birdType: Bir
 }
 
 export function fmtScheduled(item: VaccinationItem): string {
-  return `${fmtDate(item.scheduledDate)} · Day ${item.relativeDay}`;
+  return `${fmtDate(item.scheduledDate)} · ${ageDaysLabel(item.relativeDay)}`;
 }

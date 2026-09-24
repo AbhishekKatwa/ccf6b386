@@ -1,5 +1,5 @@
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ChevronRight, Egg, HandCoins, Link2Off, Lock, PenLine, ReceiptText, TrendingDown } from 'lucide-react';
+import { ChevronRight, Egg, HandCoins, Link2Off, PenLine, ReceiptText, TrendingDown } from 'lucide-react';
 import clsx from 'clsx';
 import { latestFirst } from '@/lib/order';
 import { useCan, useCompanyData } from '@/store/app';
@@ -45,7 +45,6 @@ export function SaleEntryDetailScreen() {
   const billed = loadBilled(entry.amount, entry.laborCharge);
   /** The plan this voucher sold, if the planner raised it. The booking stays a plan record. */
   const booking = data.eggSaleBookings.find(b => b.saleEntryId === entry.id);
-  const locked = entry.lines.some(l => data.dayLocks.some(d => d.shedId === l.shedId && d.date === entry.date));
   /** Everything that arrived for this load: the money on the voucher plus later receipts. */
   const paid = salePaid(entry, data.traderTxns);
   const due = saleOutstanding(entry, data.traderTxns);
@@ -230,14 +229,9 @@ export function SaleEntryDetailScreen() {
 
         {/* The voucher is edited by the same form that raised it, so no second editor exists. */}
         <div className="flex flex-wrap gap-2">
-          {canEdit && !locked && (
+          {canEdit && (
             <Button variant="outline" icon={<PenLine size={14} />}
               onClick={() => nav(`/sales?edit=${encodeURIComponent(entry.id)}`)}>Edit sale</Button>
-          )}
-          {canEdit && locked && (
-            <p className="text-[12px] text-muted flex items-center gap-1.5">
-              <Lock size={12} className="shrink-0" /> This day is locked, so the voucher stands as saved.
-            </p>
           )}
           <button type="button" onClick={() => nav('/sales?tab=entries')}
             className="flex items-center gap-1 text-[13px] font-semibold text-brand press ml-auto">

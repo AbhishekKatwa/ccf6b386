@@ -5,7 +5,7 @@ import { useApp, useCompanyData, useCurrentUser } from '@/store/app';
 import { Badge, Card, Row, SectionTitle } from '@/components/ui/Card';
 import { Button, Field, SelectField, TextArea, Toggle } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
-import { daysBetween, fmtDate, fmtMoney, todayISO } from '@/lib/format';
+import { ageDaysLabel, daysBetween, fmtDate, fmtMoney, todayISO } from '@/lib/format';
 import { fmtScheduled, vaccinationDayLabel, type VaccinationPosition } from '@/lib/vaccination';
 import { medicineBasis } from '@/lib/medicines';
 import { useMedicineValuation } from '@/hooks/useMedicineValuation';
@@ -306,7 +306,7 @@ export function VaccinationDetailSheet({ p, canManage, canComplete, onComplete, 
       </div>
       <Card>
         <Row label="Scheduled" value={fmtDate(p.item.scheduledDate)} />
-        <Row label="Flock day" value={`Day ${p.item.relativeDay}`} />
+        <Row label="Flock day" value={ageDaysLabel(p.item.relativeDay)} />
         <Row label="Route" value={p.item.route ?? '—'} mono={false} />
         <Row label="Planned dose" value={p.item.dose ?? '—'} mono={false} />
         <Row label="Remind" value={p.item.reminderDaysBefore === 0 ? 'On the day' : `${p.item.reminderDaysBefore} days before`} mono={false} />

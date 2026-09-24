@@ -19,13 +19,13 @@ import {
   Wallet, Layers, CalendarRange, Banknote, Boxes, Users, ScrollText, Receipt, Store,
   BadgeIndianRupee, History, Percent, LineChart, ShoppingCart, Package, Egg,
   Wheat, Archive, AlertTriangle, SlidersHorizontal, Skull, ClipboardList, FlaskConical,
-  ShieldCheck, ListChecks, BookOpen, Scale, LayoutGrid, HandCoins, GitCompareArrows,
+  ShieldCheck, BookOpen, Scale, LayoutGrid, HandCoins, GitCompareArrows,
   Printer, Contact, TrendingUp, TrendingDown, Gauge, ArrowLeftRight, Landmark,
   ClipboardCheck, CircleDollarSign, type LucideIcon,
 } from 'lucide-react';
 import { PAYMENT_METHOD_LABEL, type CashCount, type CashHandover, type PaymentMethod, type PaymentSplit } from '@/types';
 import type {
-  AuditEntry, Batch, DayLock, EggCollection, FeedConsumption, FeedFormula,
+  AuditEntry, Batch, EggCollection, FeedConsumption, FeedFormula,
   FeedStockEntry, FinanceTxn, MedicineItem, MedicineStockEntry, MortalityEntry, SaleEntry, SaleLog,
   Shed, Trader, TraderTxn, User,
 } from '@/types';
@@ -190,7 +190,6 @@ export type ReportSource = {
   saleLogs: SaleLog[];
   traders: Trader[];
   traderTxns: TraderTxn[];
-  dayLocks: DayLock[];
   audit: AuditEntry[];
   users: User[];
   cashHandovers: CashHandover[];
@@ -1813,7 +1812,7 @@ const KIND_LABEL: Record<FinanceTxn['kind'], string> = {
 };
 
 const ACTION_LABEL: Record<AuditEntry['action'], string> = {
-  CREATE: 'Created', UPDATE: 'Updated', DELETE: 'Deleted', LOCK: 'Locked day', UNLOCK: 'Unlocked day',
+  CREATE: 'Created', UPDATE: 'Updated', DELETE: 'Deleted',
 };
 
 const shortId = (id: string) => (id && id.length > 12 ? `${id.slice(0, 7)}…${id.slice(-3)}` : id || DASH);
@@ -1827,7 +1826,7 @@ function showValue(v: unknown): string | null {
 }
 
 /** Audit fields whose value is a user id rather than a figure. */
-const PERSON_FIELD = new Set(['handledById', 'authorizedById', 'createdBy', 'closedById', 'lockedBy', 'byUserId']);
+const PERSON_FIELD = new Set(['handledById', 'authorizedById', 'createdBy', 'closedById', 'byUserId']);
 
 const scopeOfTxn = (ctx: ReportCtx, t: FinanceTxn) => {
   const batchShed = new Map(ctx.src.batches.map(b => [b.id, b.shedId]));
@@ -1946,36 +1945,6 @@ const auditLog: ReportDef['build'] = ctx => {
       'The trail records changes and is never edited. A report only reads it.',
       'A correction to an amount, a counterparty or the way money moved carries the reason it was given; a blank under Why is a change nobody explained.',
     ],
-    warnings: [],
-    links: [],
-  });
-};
-
-const dayLockRegister: ReportDef['build'] = ctx => {
-  const rows = latestFirst(ctx.src.dayLocks.filter(l => inRange(l.date, ctx.range)
-    && (!ctx.p.shedId || l.shedId === ctx.p.shedId) && (!ctx.p.batchId || l.batchId === ctx.p.batchId)));
-  const lockedKeys = new Set(rows.map(l => `${l.date}|${l.shedId}`));
-  const openCollections = ctx.src.eggs.filter(e => inRange(e.date, ctx.range)
-    && !lockedKeys.has(`${e.date}|${e.shedId}`)
-    && (!ctx.p.shedId || e.shedId === ctx.p.shedId)).length;
-  return result({
-    summary: [
-      metric('Shed-days locked', ctx.num(lockedKeys.size), plural(rows.length, 'lock row', 'lock rows')),
-      metric('Sheds covered', ctx.num(new Set(rows.map(r => r.shedId)).size)),
-      metric('People locking', ctx.num(new Set(rows.map(r => r.lockedBy)).size)),
-      metric('Open collection rows', ctx.num(openCollections), 'recorded on days still editable'),
-    ],
-    tables: [{
-      title: 'Lock register',
-      caption: 'A locked day is frozen for the shed it names: its records stand as reported and show an edit trail.',
-      columns: [col('Date'), col('Shed'), col('Batch'), col('Locked by'), col('Locked at'), col('Reason')],
-      emptyText: 'No day is locked in this period.',
-      rows: rows.map(l => row(l.id, [
-        ctx.date(l.date), ctx.shedName(l.shedId), ctx.batchCode(l.batchId),
-        ctx.userName(l.lockedBy), fmtDateTime(l.lockedAt), plainRemarks(l.reason) ?? DASH,
-      ], `/batches/${l.batchId}`)),
-    }],
-    notes: ['Locks are per shed and batch, so one shed freezing its day does not stop another from recording.'],
     warnings: [],
     links: [],
   });
@@ -2259,14 +2228,13 @@ const cashReconciliation: ReportDef['build'] = ctx => {
     tables: [{
       title: 'Daily cash closing',
       caption: 'One line per day cash moved or was counted: what the drawer should hold, what someone actually counted, and the difference between them.',
-      columns: [col('Date'), rcol('Opening'), rcol('Cash in'), rcol('Cash out'), rcol('Expected'), rcol('Counted'), rcol('Difference'), col('Counted by'), col('Day locked')],
+      columns: [col('Date'), rcol('Opening'), rcol('Cash in'), rcol('Cash out'), rcol('Expected'), rcol('Counted'), rcol('Difference'), col('Counted by')],
       emptyText: 'No cash moved and no day was counted in this period.',
       rows: [...table].reverse().map(t => row(t.date, [
         ctx.date(t.date), ctx.money(t.opening), ctx.money(t.in), ctx.money(t.out), ctx.money(t.expected),
         t.count ? ctx.money(t.count.physicalCash) : null,
         t.count ? ctx.money(t.count.difference) : null,
         t.count ? ctx.userName(t.count.closedById) : DASH,
-        ctx.src.dayLocks.some(l => l.date === t.date) ? 'Locked' : 'Open',
       ], undefined, t.count && t.count.difference !== 0 ? 'danger' : undefined)),
     }, {
       title: 'Who is holding the cash',
@@ -2286,7 +2254,7 @@ const cashReconciliation: ReportDef['build'] = ctx => {
     }],
     notes: [
       'A difference is left standing on the record. The cash balance is never adjusted to match a count, because the count and the ledger cannot both be right until someone books what explains the gap.',
-      'Counting a day that is locked takes the Owner\'s unlock, and re-counting an already counted day writes its own audit entry.',
+      'Re-counting an already counted day writes its own audit entry.',
       'Custody is read from the same rows as the totals, so the custodian column always adds back to the cash in hand.',
     ],
     warnings: [
@@ -2296,7 +2264,6 @@ const cashReconciliation: ReportDef['build'] = ctx => {
     links: [
       { label: 'Open Finance', href: '/finance' },
       { label: 'Cash movements', href: '/reports/cash_movement' },
-      { label: 'Day Lock Register', href: '/reports/day_lock_register' },
       { label: 'Audit Trail', href: '/reports/audit_log' },
     ],
   });
@@ -2385,7 +2352,6 @@ export const REPORTS: ReportDef[] = [
   { id: 'cash_reconciliation', title: 'Daily Cash Reconciliation', desc: 'Expected cash, counted cash and who is holding it', icon: ClipboardCheck, section: 'control', financeOnly: true, params: [], build: cashReconciliation },
   { id: 'unmapped_money', title: 'Unmapped Money', desc: 'Cash the ledger has not placed yet', icon: HandCoins, section: 'control', financeOnly: true, params: [], build: unmappedMoney },
   { id: 'audit_log', title: 'Audit Trail', desc: 'What changed, from what to what, and who did it', icon: ShieldCheck, section: 'control', params: [], build: auditLog },
-  { id: 'day_lock_register', title: 'Day Lock Register', desc: 'Which shed-days are frozen, by whom and why', icon: ListChecks, section: 'control', params: ['shed', 'batch'], build: dayLockRegister },
 ];
 
 export const REPORT_BY_ID = new Map(REPORTS.map(r => [r.id, r]));

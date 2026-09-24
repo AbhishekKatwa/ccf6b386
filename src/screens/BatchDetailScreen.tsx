@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  ArchiveX, ChevronRight, Egg, FlaskConical, Package, Pill, Skull, Truck, Users, Wallet, Wheat,
+  ArchiveX, ChevronRight, Egg, FlaskConical, Package, Pill, Plus, Skull, Truck, Users, Wallet, Wheat,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useApp, useCan, useCompanyData, useCurrentUser } from '@/store/app';
@@ -20,6 +20,8 @@ import { countsSummaryLine } from '@/lib/vaccination';
 import { VaccinationBatchSection } from '@/components/vaccination/VaccinationBatchSection';
 import { FeedGivenDialog } from '@/components/godown/FeedGivenDialog';
 import { MedicineUsageSheet } from '@/components/medicine/MedicineSheets';
+import { SaleEntryDialog } from '@/screens/SalesScreen';
+import { BatchMoneyDialog, type MoneyKind } from '@/components/finance/BatchMoneyDialog';
 import { usageExpenseOf } from '@/lib/medicines';
 import { useMedicineValuation } from '@/hooks/useMedicineValuation';
 import { MedicineLedgerSurface, type MedicineRefs } from '@/components/medicine/MedicineLedger';
@@ -52,7 +54,8 @@ export function BatchDetailScreen() {
   const canUpdate = useCan('update');
   const canManageFormula = useCan('manageFormulas');
   const canFeed = useCan('createDailyOps');
-  const canBook = useCan('create');
+  const canCreate = useCan('create');
+  const canSellEntry = useCan('createSaleEntries');
   const user = useCurrentUser();
   const { priceOf } = useGodownPrices();
   const vac = useVaccinationSchedule(batchId);
@@ -68,6 +71,9 @@ export function BatchDetailScreen() {
   const [medicineOpen, setMedicineOpen] = useState(false);
   const [feedOpen, setFeedOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [saleOpen, setSaleOpen] = useState(false);
+  /** Which money entry the P&L tab is being asked for — the batch is already known here. */
+  const [moneyKind, setMoneyKind] = useState<MoneyKind | null>(null);
 
   const canSeeMedicine = !!user && MEDICINE_ROLES.includes(user.role);
   const canSeeFormula = !!user && FORMULA_VIEW_ROLES.includes(user.role);
@@ -121,7 +127,7 @@ export function BatchDetailScreen() {
 
   /** NORMAL eggs only — small, broken and double are their own pools and never join this figure. */
   const normalToday = m.todaysEggs.byGrade.GOOD;
-  const normalStock = eggStockByGrade(batch.shedId, data.eggs, data.saleEntries, m.today).GOOD.balance;
+  const normalStock = eggStockByGrade(batch.shedId, data.eggs, data.saleEntries, data.eggWastages, m.today).GOOD.balance;
   const todaysFeed = data.feed
     .filter(f => f.shedId === batch.shedId && f.date === m.today)
     .reduce((s, f) => s + f.tonnes, 0);
@@ -319,7 +325,8 @@ export function BatchDetailScreen() {
                 <Row label="Egg sales" value={fmtMoney(money.eggSales)} success={money.eggSales > 0} />
                 <Row label="Extra income" value={fmtMoney(money.otherIncome)} success={money.otherIncome > 0} />
                 <p className="mt-2 text-[11.5px] text-muted leading-relaxed">
-                  Money booked against {batch.code} in the finance ledger.
+                  Money booked against {batch.code} in the finance ledger.{' '}
+                  <LedgerLink onClick={() => nav(`/finance?batch=${batch.id}&dir=in`)}>View income rows</LedgerLink>
                 </p>
               </Card>
               <Card>
@@ -330,7 +337,8 @@ export function BatchDetailScreen() {
                 <p className="mt-2 text-[11.5px] text-muted leading-relaxed">
                   Feed and medicine are what the godown and the store gave this flock, at the rate in
                   force on the day. Purchase vouchers and the payments that settle them stay out —
-                  they are inventory, not this batch's expense.
+                  they are inventory, not this batch's expense.{' '}
+                  <LedgerLink onClick={() => nav(`/finance?batch=${batch.id}&dir=out`)}>View expense rows</LedgerLink>
                 </p>
               </Card>
             </div>
@@ -345,13 +353,20 @@ export function BatchDetailScreen() {
               </div>
             )}
 
-            <Card>
-              <SectionHead icon={<Wallet size={14} />} title="Ledger behind this result" />
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => nav(`/finance?batch=${batch.id}&dir=in`)}>Income rows</Button>
-                <Button size="sm" variant="outline" onClick={() => nav(`/finance?batch=${batch.id}&dir=out`)}>Expense rows</Button>
-              </div>
-            </Card>
+            {canCreate && (
+              <Card>
+                <SectionHead icon={<Plus size={14} />} title="Record against this flock" />
+                <p className="mt-1 text-[11.5px] text-muted leading-relaxed">
+                  Money this shed earned or spent that no other module wrote — a wage paid at month end, the
+                  electricity bill, manure sold. Each entry lands on {batch.code} in the finance ledger, with how
+                  it was paid and whose hands held the cash.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => setMoneyKind('INCOME')}>Add income</Button>
+                  <Button size="sm" variant="outline" onClick={() => setMoneyKind('EXPENSE')}>Add expense</Button>
+                </div>
+              </Card>
+            )}
           </div>
         )}
 
@@ -376,7 +391,7 @@ export function BatchDetailScreen() {
             <OpTile icon={<Truck size={17} />} tone="brand" title={isLayer ? 'Egg sale' : 'Sales'}
               figure={`${fmtIN(m.sales.trays)} trays dispatched`}
               hint={`${fmtIN(m.sales.count)} sale ${m.sales.count === 1 ? 'entry' : 'entries'} from this shed so far`}
-              actionLabel="Sale entry" onAction={() => nav('/sales')} />
+              actionLabel="Sale entry" onAction={() => { if (canSellEntry) setSaleOpen(true); else nav('/sales'); }} />
             <OpTile icon={<Skull size={17} />} tone="danger" title="Mortality"
               figure={`${fmtIN(mortalityToday(data.mortality, batch.id, m.today))} birds today`}
               hint={`${fmtIN(m.cumMort)} cumulative · ${fmtPct(m.mortPct, 2)} of the flock`}
@@ -509,7 +524,7 @@ export function BatchDetailScreen() {
                   </div>
                 )}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Button size="sm" variant="outline" onClick={() => { if (canBook) setUsageOpen(true); else nav('/medicines'); }}>Record medicine usage</Button>
+                  <Button size="sm" variant="outline" onClick={() => { if (canCreate) setUsageOpen(true); else nav('/medicines'); }}>Record medicine usage</Button>
                   {canFinance && (
                     <span className="font-mono text-[11px] text-muted tnum">
                       {fmtMoney(medicineExpense)} charged to this flock
@@ -575,14 +590,29 @@ export function BatchDetailScreen() {
         </p>
       </Dialog>
 
-      {/* The same two sheets the module screens use, opened on this flock. */}
+      {/* The same sheets the module screens use, opened on this flock. */}
       {feedOpen && <FeedGivenDialog onClose={() => setFeedOpen(false)} presetBatchId={batch.id} />}
       {usageOpen && <MedicineUsageSheet presetBatchId={batch.id} onClose={() => setUsageOpen(false)} />}
+      {saleOpen && <SaleEntryDialog open onClose={() => setSaleOpen(false)} presetShedId={batch.shedId} />}
+      {moneyKind && (
+        <BatchMoneyDialog kind={moneyKind} batchId={batch.id} onClose={() => setMoneyKind(null)}
+          subtitle={`${batch.code}${shed ? ` · ${shed.name}` : ''}`} />
+      )}
     </Page>
   );
 }
 
 /* ============================= local pieces ============================= */
+
+/** A quiet jump to the ledger rows behind a figure — the reading stays here, the rows are one tap away. */
+function LedgerLink({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" onClick={onClick}
+      className="font-mono text-[10.5px] font-semibold uppercase tracking-[0.1em] text-brand press hover:underline">
+      {children}
+    </button>
+  );
+}
 
 function SectionHead({ icon, title, right }: { icon: ReactNode; title: string; right?: ReactNode }) {
   return (
@@ -665,7 +695,7 @@ const WINDOW = 30;
 
 /** This flock's own 30 days, drawn from the records the modules already write. */
 function BatchTrends({ batchId, shedId, isLayer, today }: { batchId: string; shedId: string; isLayer: boolean; today: string }) {
-  const { eggs, saleEntries, mortality, feed } = useCompanyData();
+  const { eggs, saleEntries, eggWastages: wastages, mortality, feed } = useCompanyData();
 
   const days = useMemo(() => {
     const out: string[] = [];
@@ -692,15 +722,16 @@ function BatchTrends({ batchId, shedId, isLayer, today }: { batchId: string; she
       grade ? (l.byGrade[grade] || 0) : Object.values(l.byGrade).reduce((s, n) => s + n, 0);
 
     // Normal stock runs forward: what was in hand before the window, plus each day's movement.
-    const opening = eggStockByGrade(shedId, eggs, saleEntries, shiftDate(days[0], -1)).GOOD.balance;
+    const opening = eggStockByGrade(shedId, eggs, saleEntries, wastages, shiftDate(days[0], -1)).GOOD.balance;
     const collected = per(shedEggs, e => e.date, e => e.goodTrays);
     const dispatched = per(
       shedEntries.flatMap(e => e.lines.filter(l => l.shedId === shedId).map(l => ({ date: e.date, trays: lineTrays(l, 'GOOD') }))),
       r => r.date, r => r.trays,
     );
+    const wasted = per(wastages.filter(w => w.shedId === shedId).map(w => ({ date: w.date, trays: w.byGrade.GOOD || 0 })), r => r.date, r => r.trays);
     let running = opening;
     const stock = days.map((d, i) => {
-      running += (collected[i].value ?? 0) - (dispatched[i].value ?? 0);
+      running += (collected[i].value ?? 0) - (dispatched[i].value ?? 0) - (wasted[i].value ?? 0);
       return { date: d, value: running };
     });
 
@@ -712,7 +743,7 @@ function BatchTrends({ batchId, shedId, isLayer, today }: { batchId: string; she
       stock,
       feed: per(shedFeed, f => f.date, f => f.tonnes),
     };
-  }, [eggs, saleEntries, mortality, feed, shedId, batchId, days]);
+  }, [eggs, saleEntries, wastages, mortality, feed, shedId, batchId, days]);
 
   return (
     <div className="grid gap-4 sm:grid-cols-2">

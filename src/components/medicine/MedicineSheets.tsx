@@ -266,7 +266,6 @@ export function MedicineUsageSheet({ medicineId, presetBatchId, onClose }: {
 }) {
   const useMedicine = useApp(s => s.useMedicine);
   const pushToast = useApp(s => s.pushToast);
-  const isLocked = useApp(s => s.isLocked);
   const user = useCurrentUser();
   const { users } = useCompanyData();
   const sheds = useVisibleSheds();
@@ -297,8 +296,7 @@ export function MedicineUsageSheet({ medicineId, presetBatchId, onClose }: {
       : !(qty > 0) ? 'Quantity must be greater than 0'
         : !f.usedBy.trim() ? 'Enter who used it'
           : qty > basis.stock ? `Only ${unitQty(basis.stock, item.unit)} of ${item.name} in stock`
-            : f.date > today ? 'A usage cannot be booked on a future date'
-              : shed && isLocked(shed.id, f.date) ? 'Day is locked — contact owner' : null;
+            : f.date > today ? 'A usage cannot be booked on a future date' : null;
 
   function submit() {
     const r = useMedicine({

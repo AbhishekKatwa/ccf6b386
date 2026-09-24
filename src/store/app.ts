@@ -2,11 +2,12 @@ import { useMemo } from 'react';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type {
-  AuditEntry, Batch, BatchAssignment, BatchClosing, CashCount, CashHandover, Company, DayLock,
+  AuditEntry, Batch, BatchAssignment, BatchClosing, CashCount, CashHandover, Company,
   EggCollection, EggGradeCounts, Farm, FarmTask, FeedConsumption,
   EggSaleBooking, EggSaleBookingDraft,
   FeedFormula, FeedFormulaItem, FeedRoundLog, FeedStockEntry, FinanceTxn, FormulaInput, EggGrade,
   MortalityEntry, NewBatchInput, OpeningEntry, PaymentMethod, PermissionKey, PaymentSplit, PermissionSet, Role,
+  EggWastage, EggWastageDraft,
   SaleEntry, SaleEntryDraft, SaleEntryLine, SaleLog, Session, Shed, SupportMessage, Trader, TraderTxn, User,
   BirdType, VaccinationDraft, VaccinationItem, VaccinationStatus, VaccinationTemplate, VaccinationTemplateItem,
   MedicineItem, MedicineItemDraft, MedicineReceiptDraft, MedicineStockEntry, MedicineUsageDraft, MedicineAdjustmentDraft,
@@ -24,9 +25,9 @@ import {
 import { daysBetween, fmtIN, fmtMoney, nowISO, todayISO, uid } from '@/lib/format';
 import { nextPurchaseRef, purchasePosition } from '@/lib/purchasing';
 import { asLedgerRow, medicineBasis, nextMedicineRef } from '@/lib/medicines';
-import { bookingError, plannerWindow } from '@/lib/planner';
+import { bookingError, PLANNER_HORIZON, plannerWindow } from '@/lib/planner';
 import {
-  seedAssignments, seedAudit, seedBatches, seedCompanies, seedDayLocks,
+  seedAssignments, seedAudit, seedBatches, seedCompanies,
   seedEggs, seedFarms, seedFeed, seedFeedFormulas,
   seedFeedRounds, seedFeedStock, seedFinance, seedMedicineItems, seedMedicineStock, seedMortality, seedSaleEntries, seedSaleLogs, seedSheds, seedTasks,
   seedTraderTxns, seedTraders, seedUsers, seedVaccinations, seedVaccinationTemplates,
@@ -101,6 +102,8 @@ interface AppState {
   saleEntries: SaleEntry[];
   /** Promised trays for the days ahead — a plan, never a ledger row. */
   eggSaleBookings: EggSaleBooking[];
+  /** Trays thrown away, per grade. A stock event with no money in it. */
+  eggWastages: EggWastage[];
   feedStock: FeedStockEntry[];
   /** The medicine & vaccine catalogue. Stock rows point at these ids, never at a typed name. */
   medicineItems: MedicineItem[];
@@ -118,7 +121,6 @@ interface AppState {
   ingredientCatalog: string[];
   /** Support messages from any user, platform-wide — read by the Master Admin panel. */
   supportMessages: SupportMessage[];
-  dayLocks: DayLock[];
   /** Cash passed between people inside a company. Moves possession, never money. */
   cashHandovers: CashHandover[];
   /** Physical cash counts, kept beside — never folded into — the ledger's own position. */
@@ -216,6 +218,11 @@ interface AppState {
    * marked sold by a form that failed. */
   fulfillEggSalePlannerBooking: (id: string, saleEntryId: string) => Result;
 
+  /* egg wastage — trays thrown away. It takes stock out and books nothing: no finance row,
+   * no trader ledger row, no expense. What it costs is stated as lost sale value, as a read. */
+  addEggWastage: (draft: EggWastageDraft) => Result & { id?: string };
+  updateEggWastage: (id: string, patch: Partial<EggWastageDraft>) => Result;
+
   /* godown ledger */
   addFeedStock: (e: Omit<FeedStockEntry, 'id' | 'companyId' | 'createdAt' | 'createdBy' | 'synced'>, opts?: { allowNegative?: boolean }) => Result;
 
@@ -292,11 +299,6 @@ interface AppState {
   updateTask: (id: string, patch: Partial<FarmTask>) => void;
   deleteTask: (id: string) => void;
 
-  /* day lock */
-  lockDay: (batchId: string, shedId: string, date: string, reason?: string) => Result;
-  unlockDay: (batchId: string, shedId: string, date: string) => Result;
-  isLocked: (shedId: string, date: string) => boolean;
-
   syncPending: () => void;
   resetDemo: () => void;
 }
@@ -353,7 +355,7 @@ function auditChanges(
  */
 function plannerScope(state: AppState, companyId: string) {
   return {
-    window: plannerWindow(),
+    window: plannerWindow(todayISO(), PLANNER_HORIZON),
     shedIds: state.sheds.filter(s => s.companyId === companyId).map(s => s.id),
     traderIds: state.traders.filter(t => t.companyId === companyId).map(t => t.id),
   };
@@ -473,12 +475,13 @@ function baseSeed() {
     saleLogs: seedSaleLogs, saleEntries: seedSaleEntries, feedStock: seedFeedStock,
     medicineItems: seedMedicineItems, medicineStock: seedMedicineStock,
     eggSaleBookings: [] as EggSaleBooking[],
+    eggWastages: [] as EggWastage[],
     feedFormulas: seedFeedFormulas, finance: seedFinance,
     traders: ensureWalkInTraders(seedTraders, seedCompanies),
     traderTxns: seedTraderTxns, tasks: seedTasks, ingredientCatalog: [...FEED_INGREDIENTS],
     vaccinations: seedVaccinations, vaccinationTemplates: seedVaccinationTemplates,
     supportMessages: [] as SupportMessage[],
-    dayLocks: seedDayLocks, audit: seedAudit,
+    audit: seedAudit,
     cashHandovers: [] as CashHandover[], cashCounts: [] as CashCount[],
   };
 }
@@ -543,14 +546,20 @@ function rebalanceTraders(traders: Trader[], txns: TraderTxn[]): Trader[] {
 }
 
 /** Drop sheds with nothing sold and clamp trays to whole trays. */
-function normalizeLines(lines: SaleEntryLine[]): SaleEntryLine[] {
-  return lines
+function normalizeLines(lines: SaleEntryLine[]): SaleEntryLine[] {  return lines
     .map(l => {
       const byGrade = { ...EMPTY_GRADE_COUNTS };
       for (const g of EGG_GRADES) byGrade[g] = Math.max(0, Math.floor(numOf(l.byGrade?.[g])));
       return { shedId: l.shedId, byGrade };
     })
     .filter(l => l.shedId && gradeTotal(l.byGrade) > 0);
+}
+
+/** Whole trays per grade, never negative, never left unstated. */
+function normalizeWasteGrades(byGrade: EggGradeCounts): EggGradeCounts {
+  const out = { ...EMPTY_GRADE_COUNTS };
+  for (const g of EGG_GRADES) out[g] = Math.max(0, Math.floor(numOf(byGrade?.[g])));
+  return out;
 }
 
 const money = (n: number) => Number(n.toFixed(2));
@@ -576,15 +585,17 @@ function paymentChannels(cash: number, online: number, advance: number): Pick<Fi
 }
 
 /**
- * Finance rows for a voucher, one pair per shed line so each batch is credited with
- * the trays that left it: money collected as income, that shed's loading labour as an
- * expense. What stays with the trader is not finance yet — it sits on their ledger.
+ * Finance rows for a voucher, one per shed line so each batch is credited with the trays
+ * that left it: only the money that actually changed hands. What stays with the trader is
+ * not finance yet — it sits on their ledger. The loading labour recovered on a load arrives
+ * inside that money and is income to the shed; the wage is the farm's own Finance expense,
+ * booked on the day it is paid.
  */
 function financeRows(entry: SaleEntry, batches: Batch[], counterparty?: string): FinanceTxn[] {
   const total = entryTrays(entry);
   const received = loadPaid(entry.cash, entry.phonepe, entry.advance);
   const rows: FinanceTxn[] = [];
-  let seen = { received: 0, cash: 0, phonepe: 0, labour: 0 };
+  let seen = { received: 0, cash: 0, phonepe: 0 };
   entry.lines.forEach((line, i) => {
     const last = i === entry.lines.length - 1;
     const share = total > 0 ? entryTrays({ ...entry, lines: [line] }) / total : 0;
@@ -592,8 +603,7 @@ function financeRows(entry: SaleEntry, batches: Batch[], counterparty?: string):
     const cash = part(entry.cash, seen.cash);
     const phonepe = part(entry.phonepe, seen.phonepe);
     const paid = part(received, seen.received);
-    const labour = part(entry.laborCharge, seen.labour);
-    seen = { received: seen.received + paid, cash: seen.cash + cash, phonepe: seen.phonepe + phonepe, labour: seen.labour + labour };
+    seen = { received: seen.received + paid, cash: seen.cash + cash, phonepe: seen.phonepe + phonepe };
     const base = {
       companyId: entry.companyId, batchId: batchOfShedOn(batches, line.shedId, entry.date)?.id,
       date: entry.date, counterparty, refId: entry.id,
@@ -604,10 +614,6 @@ function financeRows(entry: SaleEntry, batches: Batch[], counterparty?: string):
       id: uid('fx'), kind: 'INCOME', amount: paid, category: 'Egg Sale',
       // Who physically took the cash is a fact about the money, not about who typed the voucher in.
       handledById: entry.cashHandledById, time: entry.cashTime, reference: entry.cashReference,
-    });
-    if (labour > 0) rows.push({
-      ...base, id: uid('fx'), kind: 'EXPENSE', amount: labour, category: 'Labour',
-      remarks: 'Loading labour for this sale',
     });
   });
   return rows;
@@ -700,10 +706,25 @@ function migrateSaved(saved: unknown, fromVersion = 0): AppState {
         ? { ...t, rate: money(t.rate / EGGS_PER_TRAY) } : t);
     }
   }
+  // v18 takes the loading labour back out of the day of the sale. A voucher's recovered
+  // labour is part of the money the shed took in, so the expense row the old model wrote
+  // beside it is dropped — a wage the farm pays is entered in Finance on its own date.
+  // Only rows a voucher owns are touched; a labour payment typed by the farm stays.
+  if (fromVersion < 18) {
+    const vouchers = new Set(merged.saleEntries.map(e => e.id));
+    merged.finance = merged.finance.filter(f => !(
+      f.kind === 'EXPENSE' && f.category === 'Labour' && f.refId !== undefined && vouchers.has(f.refId)
+    ));
+  }
   // Read every balance back off its ledger, which also heals a save whose stored
   // totals had drifted away from the rows under them.
   merged.traders = rebalanceTraders(ensureWalkInTraders(merged.traders, merged.companies), merged.traderTxns);
   delete (merged as unknown as Record<string, unknown>).eggSales;
+  // The day-lock concept is gone; drop any locked-day rows an older save still carries,
+  // along with the trail rows that only recorded a lock or an unlock.
+  delete (merged as unknown as Record<string, unknown>).dayLocks;
+  const lockVerbs = new Set(['LOCK', 'UNLOCK']);
+  merged.audit = merged.audit.filter(a => !lockVerbs.has(a.action) && a.entity !== 'DayLock');
   merged.feedRounds = merged.feedRounds.filter(
     r => FEED_ROUNDS.includes(r.round) && (r.status === 'GIVEN' || r.status === 'SKIPPED'),
   );
@@ -821,16 +842,6 @@ export const useApp = create<AppState>()(persist(
       return null;
     }
 
-    /**
-     * A money row mapped to a shed whose day is locked belongs to the Owner alone: the
-     * lock is what makes a closed day's cash figures final.
-     */
-    const financeLockError = (t: { batchId?: string; date: string }): string | null => {
-      const shedId = get().batches.find(b => b.id === t.batchId)?.shedId;
-      return shedId && get().isLocked(shedId, t.date)
-        ? 'Day is locked — the Owner must unlock it first' : null;
-    };
-
     /** A product inside the active company. Stock from another farm is never reachable here. */
     const medicineItemOf = (id: string | undefined): MedicineItem | null => {
       const companyId = cid();
@@ -869,7 +880,6 @@ export const useApp = create<AppState>()(persist(
         ? get().batches.find(b => b.id === draft.batchId && b.companyId === companyId) : null;
       if (draft.batchId && !batch) return { ok: false, error: 'Batch does not belong to this company' };
       if (batch && batch.shedId !== shed.id) return { ok: false, error: `${batch.code} is not in ${shed.name}` };
-      if (get().isLocked(shed.id, draft.date)) return { ok: false, error: 'Day is locked — contact owner' };
 
       const { avg, stock } = medicineBasis(
         get().medicineStock.filter(m => m.companyId === companyId), item.id, draft.date,
@@ -918,12 +928,35 @@ export const useApp = create<AppState>()(persist(
       for (const line of draft.lines) {
         const shed = s.sheds.find(x => x.id === line.shedId && x.companyId === companyId);
         if (!shed) return 'A shed on this entry does not belong to this company';
-        if (s.isLocked(shed.id, draft.date)) return `${shed.name} is locked for this date — the Owner must unlock it first`;
-        const stock = eggStockByGrade(shed.id, s.eggs, s.saleEntries.filter(x => x.id !== ignoreId));
+        const stock = eggStockByGrade(shed.id, s.eggs, s.saleEntries.filter(x => x.id !== ignoreId), s.eggWastages);
         for (const g of EGG_GRADES) {
           if (line.byGrade[g] > stock[g].balance) {
             return `${shed.name} has only ${stock[g].balance} ${EGG_GRADE_LABELS[g].toLowerCase()} trays left in stock`;
           }
+        }
+      }
+      return null;
+    }
+
+    /**
+     * Wastage is the one way out of a grade's stock that carries no money, so it is held to
+     * the same physical limit as a sale: a shed cannot throw away trays it does not hold.
+     * `ignoreId` keeps the record being edited out of its own stock check.
+     */
+    function wastageError(draft: EggWastageDraft, companyId: string, ignoreId?: string): string | null {
+      const s = get();
+      if (!draft.date) return 'Select the date';
+      if (!draft.reason?.trim()) return 'Say why these eggs went out';
+      const batch = s.batches.find(b => b.id === draft.batchId && b.companyId === companyId);
+      if (!batch) return 'Batch does not belong to this company';
+      if (batch.shedId !== draft.shedId) return 'This flock is not in that shed';
+      const trays = normalizeWasteGrades(draft.byGrade);
+      if (gradeTotal(trays) <= 0) return 'Enter at least one tray to discard';
+      const stock = eggStockByGrade(draft.shedId, s.eggs, s.saleEntries,
+        s.eggWastages.filter(w => w.id !== ignoreId), draft.date);
+      for (const g of EGG_GRADES) {
+        if (trays[g] > stock[g].balance) {
+          return `${EGG_GRADE_LABELS[g]} has only ${stock[g].balance} trays left in that shed`;
         }
       }
       return null;
@@ -1152,16 +1185,13 @@ export const useApp = create<AppState>()(persist(
         if (input.initialBirds <= 0) return { ok: false, error: 'Place at least one bird' };
         // Shed capacity is a planning figure, not a ceiling: a real placement can exceed it.
         // Opening money is booked into the Finance ledger as part of this one decision, so it
-        // answers to the finance permission, the accountability questions and the day lock —
+        // answers to the finance permission and the accountability questions —
         // and a rejected line stops the placement rather than half-booking a flock.
         if (opening?.length) {
           if (!can('viewFinance')) return { ok: false, error: 'Only roles that record finance can add opening entries' };
           for (const entry of opening) {
             const invalid = openingEntryError(entry);
             if (invalid) return { ok: false, error: invalid };
-            if (get().isLocked(shed.id, entry.date)) {
-              return { ok: false, error: `${entry.date} is locked for ${shed.name} — the Owner must unlock it first` };
-            }
           }
         }
         // The plan is part of placing the flock: a half-filled line stops the placement rather
@@ -1370,7 +1400,6 @@ export const useApp = create<AppState>()(persist(
         if (!date) return { ok: false, error: 'Choose the date it was given' };
         if (date > todayISO()) return { ok: false, error: 'A vaccination cannot be given on a future date' };
         if (!by) return { ok: false, error: 'Enter who administered it' };
-        if (get().isLocked(item.shedId, date)) return { ok: false, error: 'Day is locked — contact owner' };
 
         const companyId = cid();
         // A dose is deducted once. If this vaccination already stands behind a usage, editing
@@ -1525,7 +1554,6 @@ export const useApp = create<AppState>()(persist(
         const batch = get().batches.find(b => b.id === m.batchId && b.companyId === companyId);
         if (!batch) return { ok: false, error: 'Batch does not belong to this company' };
         if (batch.status !== 'ACTIVE') return { ok: false, error: 'This shed has no active batch' };
-        if (get().isLocked(m.shedId, m.date)) return { ok: false, error: 'Day is locked — contact owner' };
         if (m.count <= 0) return { ok: false, error: 'Count must be greater than 0' };
         const entry: MortalityEntry = {
           ...m, companyId, id: uid('mort'), createdBy: get().session?.userId ?? 'system',
@@ -1538,7 +1566,6 @@ export const useApp = create<AppState>()(persist(
         const denied = editGuard(); if (denied) return denied;
         const existing = get().mortality.find(m => m.id === id);
         if (!existing) return { ok: false, error: 'Entry not found' };
-        if (get().isLocked(existing.shedId, existing.date)) return { ok: false, error: 'Day is locked — only Owner can edit after unlock' };
         set(s => ({
           mortality: s.mortality.map(m => m.id === id ? { ...m, ...patch, updatedBy: s.session?.userId ?? 'system', updatedAt: nowISO() } : m),
           audit: audit(s, 'Mortality', id, 'UPDATE', 'count', existing.count, patch.count ?? existing.count),
@@ -1552,7 +1579,6 @@ export const useApp = create<AppState>()(persist(
         const batch = get().batches.find(b => b.id === e.batchId && b.companyId === companyId);
         if (!batch) return { ok: false, error: 'Batch does not belong to this company' };
         if (batch.status !== 'ACTIVE') return { ok: false, error: 'This shed has no active batch' };
-        if (get().isLocked(e.shedId, e.date)) return { ok: false, error: 'Day is locked — contact owner' };
         if (e.goodTrays < 0 || e.brokenTrays < 0 || e.doubleTrays < 0 || e.smallTrays < 0) {
           return { ok: false, error: 'Negative trays not allowed' };
         }
@@ -1570,7 +1596,6 @@ export const useApp = create<AppState>()(persist(
         const denied = editGuard(); if (denied) return denied;
         const existing = get().eggs.find(e => e.id === id);
         if (!existing) return { ok: false, error: 'Entry not found' };
-        if (get().isLocked(existing.shedId, existing.date)) return { ok: false, error: 'Day is locked — only Owner can edit after unlock' };
         const next = { ...existing, ...patch };
         const trays = [next.goodTrays, next.brokenTrays, next.doubleTrays, next.smallTrays];
         if (trays.some(v => v < 0)) return { ok: false, error: 'Negative trays not allowed' };
@@ -1583,6 +1608,43 @@ export const useApp = create<AppState>()(persist(
         }));
         return { ok: true };
       },
+
+      /* ============================== EGG WASTAGE ============================== */
+
+      addEggWastage: (draft) => {
+        const companyId = cid();
+        if (!companyId) return { ok: false, error: 'No company selected' };
+        const denied = dailyOpsGuard(); if (denied) return denied;
+        const problem = wastageError(draft, companyId);
+        if (problem) return { ok: false, error: problem };
+        const entry: EggWastage = {
+          ...draft, byGrade: normalizeWasteGrades(draft.byGrade), reason: draft.reason.trim(),
+          companyId, id: uid('ew'),
+          createdBy: get().session?.userId ?? 'system', createdAt: nowISO(), synced: get().online,
+        };
+        set(s => ({ eggWastages: [...s.eggWastages, entry], audit: audit(s, 'EggWastage', entry.id, 'CREATE') }));
+        return { ok: true, id: entry.id };
+      },
+      updateEggWastage: (id, patch) => {
+        const denied = editGuard(); if (denied) return denied;
+        const existing = get().eggWastages.find(w => w.id === id);
+        if (!existing) return { ok: false, error: 'Entry not found' };
+        const next: EggWastage = {
+          ...existing, ...patch,
+          byGrade: normalizeWasteGrades({ ...existing.byGrade, ...(patch.byGrade ?? {}) }),
+        };
+        const problem = wastageError(next, existing.companyId, id);
+        if (problem) return { ok: false, error: problem };
+        const before = gradeTotal(existing.byGrade);
+        const after = gradeTotal(next.byGrade);
+        set(s => ({
+          eggWastages: s.eggWastages.map(w => w.id === id
+            ? { ...w, ...patch, byGrade: next.byGrade, updatedBy: s.session?.userId ?? 'system', updatedAt: nowISO() }
+            : w),
+          audit: audit(s, 'EggWastage', id, 'UPDATE', 'totalTrays', before, after),
+        }));
+        return { ok: true };
+      },
       addFeedConsumption: (f, opts) => {
         const companyId = cid();
         if (!companyId) return { ok: false, error: 'No company selected' };
@@ -1590,7 +1652,6 @@ export const useApp = create<AppState>()(persist(
         const batch = get().batches.find(b => b.id === f.batchId && b.companyId === companyId);
         if (!batch) return { ok: false, error: 'Batch does not belong to this company' };
         if (batch.status !== 'ACTIVE') return { ok: false, error: 'This shed has no active batch' };
-        if (get().isLocked(f.shedId, f.date)) return { ok: false, error: 'Day is locked — contact owner' };
         if (f.tonnes <= 0) return { ok: false, error: 'Tonnes must be greater than 0' };
         const id = uid('fc');
         const { rows, deduction, snapshot } = consumptionLedger(id, f.shedId, f.tonnes, f.date, companyId);
@@ -1614,7 +1675,6 @@ export const useApp = create<AppState>()(persist(
         const companyId = cid();
         const existing = get().feed.find(f => f.id === id);
         if (!existing || !companyId) return { ok: false, error: 'Entry not found' };
-        if (get().isLocked(existing.shedId, existing.date)) return { ok: false, error: 'Day is locked — only Owner can edit after unlock' };
         // Reverse this consumption's prior ledger deductions, then apply the new ones.
         const priorLedger = get().feedStock.filter(e => e.remarks === `ref:${id}`);
         const reversed: FeedStockEntry[] = priorLedger.map(e => ({
@@ -1649,7 +1709,6 @@ export const useApp = create<AppState>()(persist(
         const batch = get().batches.find(b => b.id === r.batchId && b.companyId === companyId);
         if (!batch) return { ok: false, error: 'Batch does not belong to this company' };
         if (batch.status !== 'ACTIVE') return { ok: false, error: 'This shed has no active batch' };
-        if (get().isLocked(r.shedId, r.date)) return { ok: false, error: 'Day is locked — contact owner' };
         const at = r.status === 'GIVEN' ? r.at : '';
         if (r.status === 'GIVEN' && !CLOCK_TIME.test(at)) return { ok: false, error: 'Enter the time feed was given' };
         const by = get().session?.userId ?? 'system';
@@ -1676,7 +1735,6 @@ export const useApp = create<AppState>()(persist(
         const denied = editGuard(); if (denied) return denied;
         const existing = get().feedRounds.find(x => x.id === id);
         if (!existing) return { ok: false, error: 'Entry not found' };
-        if (get().isLocked(existing.shedId, existing.date)) return { ok: false, error: 'Day is locked — only Owner can edit after unlock' };
         const status = patch.status ?? existing.status;
         const at = status === 'GIVEN' ? (patch.at ?? existing.at) : '';
         if (status === 'GIVEN' && !CLOCK_TIME.test(at)) return { ok: false, error: 'Enter the time feed was given' };
@@ -1698,10 +1756,9 @@ export const useApp = create<AppState>()(persist(
         const batch = get().batches.find(b => b.id === l.batchId && b.companyId === companyId);
         if (!batch) return { ok: false, error: 'Batch does not belong to this company' };
         if (batch.status !== 'ACTIVE') return { ok: false, error: 'This shed has no active batch' };
-        if (get().isLocked(l.shedId, l.date)) return { ok: false, error: 'Day is locked — contact owner' };
         if (l.trays <= 0) return { ok: false, error: 'Trays must be greater than 0' };
         // A shed never dispatches more of a grade than it still holds.
-        const available = eggStockByGrade(l.shedId, get().eggs, get().saleEntries)[l.grade].balance;
+        const available = eggStockByGrade(l.shedId, get().eggs, get().saleEntries, get().eggWastages)[l.grade].balance;
         if (l.trays > available) {
           return { ok: false, error: `Only ${available} ${EGG_GRADE_LABELS[l.grade].toLowerCase()} trays in stock for this shed` };
         }
@@ -1790,9 +1847,6 @@ export const useApp = create<AppState>()(persist(
         if (!can('delete')) return { ok: false, error: 'Only the Owner can delete a sale entry' };
         const entry = get().saleEntries.find(e => e.id === id && e.companyId === cid());
         if (!entry) return { ok: false, error: 'Sale entry not found' };
-        if (entry.lines.some(l => get().isLocked(l.shedId, entry.date))) {
-          return { ok: false, error: 'Day is locked — the Owner must unlock it first' };
-        }
         set(s => {
           const traderTxns = replaceLedger(s.traderTxns, id, []);
           return {
@@ -2264,8 +2318,6 @@ export const useApp = create<AppState>()(persist(
         if (t.amount === 0) return { ok: false, error: 'Amount cannot be zero' };
         const problem = accountabilityError(t);
         if (problem) return { ok: false, error: problem };
-        const locked = financeLockError(t);
-        if (locked) return { ok: false, error: locked };
         const entry: FinanceTxn = {
           ...t, companyId, id: uid('fx'), createdBy: get().session?.userId ?? 'system',
           createdAt: nowISO(), synced: get().online,
@@ -2284,8 +2336,6 @@ export const useApp = create<AppState>()(persist(
         const next: FinanceTxn = { ...prev, ...patch, id: prev.id, companyId: prev.companyId };
         const problem = accountabilityError(next);
         if (problem) return { ok: false, error: problem };
-        const locked = financeLockError(next);
-        if (locked) return { ok: false, error: locked };
         const changes = protectedChanges(prev, next, PROTECTED_FINANCE);
         if (changes.length && !reason?.trim()) return { ok: false, error: 'Give the reason for this correction' };
         set(s => ({
@@ -2452,9 +2502,6 @@ export const useApp = create<AppState>()(persist(
         if (!can('viewFinance')) return { ok: false, error: 'You cannot close off the cash for the day' };
         if (!date) return { ok: false, error: 'Enter the date being counted' };
         if (!Number.isFinite(physicalCash) || physicalCash < 0) return { ok: false, error: 'Enter the cash counted, or 0' };
-        if (get().dayLocks.some(l => l.date === date) && !can('unlockDay')) {
-          return { ok: false, error: 'That day is locked — only the Owner may re-close its cash' };
-        }
         // Expected is read off the ledger, never typed: the count only says what was in hand.
         const expected = cashPositionOf(get().finance.filter(t => t.companyId === companyId), date);
         const difference = money(physicalCash - expected);
@@ -2570,29 +2617,6 @@ export const useApp = create<AppState>()(persist(
         audit: audit(s, 'Task', id, 'DELETE'),
       })),
 
-      /* ============================= DAY LOCK ============================= */
-
-      lockDay: (batchId, shedId, date, reason) => {
-        if (!can('lockDay')) return { ok: false, error: 'You do not have permission to lock a day' };
-        const companyId = cid();
-        if (!companyId) return { ok: false, error: 'No company selected' };
-        if (get().dayLocks.some(l => l.shedId === shedId && l.date === date)) return { ok: false, error: 'Already locked' };
-        set(s => ({
-          dayLocks: [...s.dayLocks, { id: uid('dl'), companyId, batchId, shedId, date, lockedBy: s.session?.userId ?? 'system', lockedAt: nowISO(), reason }],
-          audit: audit(s, 'DayLock', `${shedId}:${date}`, 'LOCK', date, false, true),
-        }));
-        return { ok: true };
-      },
-      unlockDay: (batchId, shedId, date) => {
-        if (!can('unlockDay')) return { ok: false, error: 'Only the Owner can unlock a day' };
-        set(s => ({
-          dayLocks: s.dayLocks.filter(l => !(l.shedId === shedId && l.date === date)),
-          audit: audit(s, 'DayLock', `${shedId}:${date}`, 'UNLOCK', date, true, false),
-        }));
-        return { ok: true };
-      },
-      isLocked: (shedId, date) => get().dayLocks.some(l => l.shedId === shedId && l.date === date),
-
       syncPending: () => set(s => ({
         mortality: s.mortality.map(m => ({ ...m, synced: true })),
         feed: s.feed.map(f => ({ ...f, synced: true })),
@@ -2634,7 +2658,14 @@ export const useApp = create<AppState>()(persist(
     // owns are rebuilt from that voucher. Billed and received amounts are untouched.
     // v16: every company gains its walk-in account, the trader a gate sale is booked against
     // when there is no regular buyer. Nothing existing is rewritten.
-    version: 16,
+    // v17: egg wastage is a ledger of its own — trays that leave a grade with no money on
+    // them. It arrives as one new slice; nothing already saved is rewritten.
+    // v18: the loading labour a voucher recovers is money the shed took in, so the expense
+    // row the old model wrote beside it is removed from existing saves. The wage itself is
+    // the farm's own entry in Finance, dated the day the labour is paid.
+    // v19: the day-lock concept is removed. Any locked-day rows an older save still holds
+    // are dropped; no other data is affected and nothing is re-seeded.
+    version: 19,
     storage: createJSONStorage(() => localStorage),
     migrate: migrateSaved,
     partialize: (s) => {
@@ -2683,6 +2714,7 @@ export function useCompanyData() {
   const saleLogs = useApp(s => s.saleLogs);
   const saleEntries = useApp(s => s.saleEntries);
   const eggSaleBookings = useApp(s => s.eggSaleBookings);
+  const eggWastages = useApp(s => s.eggWastages);
   const feedStock = useApp(s => s.feedStock);
   const medicineItems = useApp(s => s.medicineItems);
   const medicineStock = useApp(s => s.medicineStock);
@@ -2693,7 +2725,6 @@ export function useCompanyData() {
   const tasks = useApp(s => s.tasks);
   const vaccinations = useApp(s => s.vaccinations);
   const vaccinationTemplates = useApp(s => s.vaccinationTemplates);
-  const dayLocks = useApp(s => s.dayLocks);
   const users = useApp(s => s.users);
   const assignments = useApp(s => s.assignments);
   const audit = useApp(s => s.audit);
@@ -2716,6 +2747,7 @@ export function useCompanyData() {
       saleLogs: inCo(saleLogs),
       saleEntries: inCo(saleEntries),
       eggSaleBookings: inCo(eggSaleBookings),
+      eggWastages: inCo(eggWastages),
       feedStock: inCo(feedStock),
       medicineItems: inCo(medicineItems),
       medicineStock: inCo(medicineStock),
@@ -2726,7 +2758,6 @@ export function useCompanyData() {
       tasks: inCo(tasks),
       vaccinations: inCo(vaccinations),
       vaccinationTemplates: inCo(vaccinationTemplates),
-      dayLocks: inCo(dayLocks),
       assignments: inCo(assignments),
       cashHandovers: inCo(cashHandovers),
       cashCounts: inCo(cashCounts),
@@ -2735,9 +2766,9 @@ export function useCompanyData() {
     };
   }, [
     companyId, companies, farms, sheds, batches, mortality, eggs, feed, saleLogs,
-    saleEntries, eggSaleBookings, feedStock, medicineItems, medicineStock, feedFormulas,
+    saleEntries, eggSaleBookings, eggWastages, feedStock, medicineItems, medicineStock, feedFormulas,
     finance, traders, traderTxns, tasks,
-    dayLocks, assignments, audit, users, cashHandovers, cashCounts,
+    assignments, audit, users, cashHandovers, cashCounts,
     vaccinations, vaccinationTemplates,
   ]);
 }

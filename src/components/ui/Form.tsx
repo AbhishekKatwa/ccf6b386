@@ -82,13 +82,13 @@ export function Field({ label, hint, error, prefix, suffix, className, ...rest }
     <label className="block">
       <Label>{label}</Label>
       <div className={clsx(
-        'flex items-center gap-2 bg-card border rounded-[11px] px-3 transition-all',
+        'flex flex-wrap items-center gap-x-2 gap-y-1 bg-card border rounded-[11px] px-3 transition-all',
         error ? 'border-danger focus-within:shadow-[0_0_0_3px_rgb(179_38_30/0.10)]' : 'border-line focus-within:border-brand focus-within:shadow-[0_0_0_3px_rgb(22_74_53/0.10)]',
       )}>
         {prefix && <span className="text-muted text-[13px] shrink-0">{prefix}</span>}
         <input
           {...rest}
-          className={clsx('flex-1 min-w-0 py-2.5 text-[14px] bg-transparent outline-none text-ink tnum placeholder:text-muted-2 placeholder:font-sans', className)}
+          className={clsx('flex-1 min-w-[3.5rem] py-2.5 text-[14px] bg-transparent outline-none text-ink tnum placeholder:text-muted-2 placeholder:font-sans', className)}
         />
         {suffix && <span className="text-muted text-[13px] shrink-0">{suffix}</span>}
       </div>

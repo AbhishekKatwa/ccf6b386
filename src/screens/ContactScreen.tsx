@@ -8,7 +8,6 @@ import { useApp, useCurrentUser } from '@/store/app';
 const FAQS = [
   { q: 'How is production percentage calculated?', a: 'Production % = (Total eggs collected ÷ Live birds) × 100. Live birds = Initial birds − cumulative mortality up to that date.' },
   { q: 'How is FCR calculated?', a: 'FCR = Total feed consumed (kg) ÷ Total live bird weight (kg). Lower FCR indicates better feed efficiency. Target: <1.8 excellent, 1.8–2.2 good, >2.2 needs attention.' },
-  { q: 'What does "day lock" mean?', a: 'Once a farm day is locked, historical entries for that date cannot be edited by normal users. Only the OWNER can unlock a locked day. This protects audited data.' },
   { q: 'Why can\'t I see financial data?', a: 'Operational roles (Farm Manager, Supervisor, Employee) do not see purchase rates, selling rates, revenue, profit or margins by default. The OWNER must explicitly grant finance permission.' },
   { q: 'Does the app work offline?', a: 'Yes. All entries are cached locally and queued for sync. Unsynced records show a "Pending sync" badge. Tap Profile → Sync to push when back online.' },
   { q: 'How is tray pricing calculated?', a: 'Egg sale amount = Trays × Eggs per tray (30) × Rate per egg. This is the standard Amrut Poultry workflow.' },

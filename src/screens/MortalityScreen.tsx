@@ -1,12 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Skull, Plus, Lock, Pencil } from 'lucide-react';
+import { Skull, Plus, Pencil } from 'lucide-react';
 import { useApp, useCan, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, EmptyState, StatStrip, StatCell, Stat, GroupList, Badge } from '@/components/ui/Card';
 import { Button, Field, TextArea } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
-import { DayLockPanel } from '@/components/ui/DayLockPanel';
 import { BatchClosedNotice } from '@/components/ui/BatchClosedNotice';
 import { BarChart, CHART } from '@/components/ui/Charts';
 import { fmtIN, fmtPct, fmtDate, fmtDateShort, todayISO } from '@/lib/format';
@@ -17,22 +16,18 @@ import type { MortalityEntry } from '@/types';
 export function MortalityScreen() {
   const { batchId } = useParams();
   const data = useCompanyData();
-  const { batches, mortality, dayLocks } = data;
+  const { batches, mortality } = data;
   const addMortality = useApp(s => s.addMortality);
   const updateMortality = useApp(s => s.updateMortality);
-  const lockDay = useApp(s => s.lockDay);
   const pushToast = useApp(s => s.pushToast);
   const canCreate = useCan('createDailyOps');
   const canUpdate = useCan('update');
-  const canLock = useCan('lockDay');
   const m = useBatchMetrics(batchId);
   const batch = batches.find(b => b.id === batchId);
 
   const [open, setOpen] = useState(false);
-  const [lockOpen, setLockOpen] = useState(false);
   const [editing, setEditing] = useState<MortalityEntry | null>(null);
   const [form, setForm] = useState({ date: todayISO(), count: '', remarks: '' });
-  const [lockForm, setLockForm] = useState({ date: todayISO(), reason: '' });
   const [editForm, setEditForm] = useState({ count: '', remarks: '' });
 
   const list = useMemo(
@@ -53,9 +48,8 @@ export function MortalityScreen() {
 
   if (!batch || !m) return <Page><Header title="Mortality" /><div className="px-4 sm:px-0"><EmptyState title="Batch not found" /></div></Page>;
 
-  const isLocked = (d: string) => dayLocks.some(l => l.shedId === batch.shedId && l.date === d);
   const isActive = batch.status === 'ACTIVE';
-  const canEdit = (e: MortalityEntry) => canUpdate && isActive && !isLocked(e.date);
+  const canEdit = (e: MortalityEntry) => canUpdate && isActive;
 
   function submit() {
     const c = parseInt(form.count, 10);
@@ -65,13 +59,6 @@ export function MortalityScreen() {
     if (!r.ok) return pushToast('error', r.error ?? 'Failed');
     pushToast('success', 'Mortality recorded');
     setOpen(false); setForm({ date: todayISO(), count: '', remarks: '' });
-  }
-
-  function submitLock() {
-    const r = lockDay(batch!.id, batch!.shedId, lockForm.date, lockForm.reason || undefined);
-    if (!r.ok) return pushToast('error', r.error ?? 'Failed');
-    pushToast('success', `Day ${lockForm.date} locked`);
-    setLockOpen(false);
   }
 
   function openEdit(e: MortalityEntry) {
@@ -91,7 +78,7 @@ export function MortalityScreen() {
 
   return (
     <Page withNav>
-      <Header title="Mortality" subtitle={`${batch.code} · ${m.age.label} · ${m.age.dayLabel}`} />
+      <Header title="Mortality" subtitle={`${batch.code} · ${m.age.dayLabel}`} />
       <div className="px-4 sm:px-0 mt-3 space-y-4">
         <Card padded={false} className="overflow-hidden">
           <StatStrip>
@@ -107,11 +94,9 @@ export function MortalityScreen() {
         </Card>
 
         {!isActive && <BatchClosedNotice code={batch.code} />}
-        {isActive && <DayLockPanel batchId={batch.id} shedId={batch.shedId} />}
 
         <div className="flex gap-2">
           {canCreate && isActive && <Button block variant="primary" icon={<Plus size={15} />} onClick={() => setOpen(true)}>Add entry</Button>}
-          {canLock && isActive && <Button block variant="outline" icon={<Lock size={15} />} onClick={() => setLockOpen(true)}>Lock day</Button>}
         </div>
 
         {list.length === 0 ? (
@@ -128,7 +113,6 @@ export function MortalityScreen() {
                 <div className="text-right shrink-0">
                   <p className="font-display text-[18px] font-semibold text-danger tnum leading-none">{fmtIN(e.count)}</p>
                   <div className="flex items-center justify-end gap-1 mt-1">
-                    {isLocked(e.date) && <Badge tone="warn"><Lock size={9} /> Locked</Badge>}
                     {!e.synced && <Badge tone="accent">Pending</Badge>}
                   </div>
                 </div>
@@ -147,8 +131,7 @@ export function MortalityScreen() {
       <Dialog open={open} onClose={() => setOpen(false)} title="Add mortality entry" subtitle={batch.code}
         footer={<div className="flex gap-2"><Button variant="outline" block onClick={() => setOpen(false)}>Cancel</Button><Button variant="danger" block onClick={submit}>Save entry</Button></div>}>
         <div className="space-y-3">
-          <Field label="Date" type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-            error={isLocked(form.date) ? 'This day is locked' : undefined} />
+          <Field label="Date" type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
           <Field label="Number of birds" type="number" inputMode="numeric" value={form.count} onChange={e => setForm(f => ({ ...f, count: e.target.value }))} placeholder="e.g. 6" className="font-mono" />
           <TextArea label="Remarks (optional)" rows={2} value={form.remarks} onChange={e => setForm(f => ({ ...f, remarks: e.target.value }))} placeholder="Cause, symptoms…" />
         </div>
@@ -160,15 +143,6 @@ export function MortalityScreen() {
           <p className="text-[12px] text-muted leading-relaxed">Edits are recorded in the audit log with the previous value.</p>
           <Field label="Number of birds" type="number" inputMode="numeric" value={editForm.count} onChange={e => setEditForm(f => ({ ...f, count: e.target.value }))} className="font-mono" />
           <TextArea label="Remarks" rows={2} value={editForm.remarks} onChange={e => setEditForm(f => ({ ...f, remarks: e.target.value }))} />
-        </div>
-      </Dialog>
-
-      <Dialog open={lockOpen} onClose={() => setLockOpen(false)} title="Lock farm day"
-        footer={<div className="flex gap-2"><Button variant="outline" block onClick={() => setLockOpen(false)}>Cancel</Button><Button block onClick={submitLock}>Lock day</Button></div>}>
-        <div className="space-y-3">
-          <p className="text-[13px] text-muted leading-relaxed">Once locked, historical entries for this date cannot be edited by normal users. Only the OWNER can unlock a day.</p>
-          <Field label="Date" type="date" value={lockForm.date} onChange={e => setLockForm(f => ({ ...f, date: e.target.value }))} />
-          <TextArea label="Reason (optional)" rows={2} value={lockForm.reason} onChange={e => setLockForm(f => ({ ...f, reason: e.target.value }))} placeholder="e.g. Month-end close" />
         </div>
       </Dialog>
     </Page>

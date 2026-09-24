@@ -19,7 +19,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, PermissionSet> = {
   OWNER: {
     create: true, createDailyOps: true, update: true, delete: true,
     viewFinance: true, viewRates: true,
-    lockDay: true, unlockDay: true,
     manageUsers: true, manageCompanies: false,
     manageTraders: true, manageFormulas: true, acknowledgeSales: true,
     createSaleEntries: true,
@@ -32,7 +31,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, PermissionSet> = {
   FARM_SUPERVISOR: {
     create: true, createDailyOps: true, update: true, delete: false,
     viewFinance: false, viewRates: false,
-    lockDay: true, unlockDay: false,
     manageUsers: false, manageCompanies: false,
     manageTraders: false, manageFormulas: true, acknowledgeSales: false,
     createSaleEntries: false,
@@ -46,7 +44,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, PermissionSet> = {
   FINANCIAL_SUPERVISOR: {
     create: false, createDailyOps: false, update: true, delete: false,
     viewFinance: true, viewRates: true,
-    lockDay: false, unlockDay: false,
     manageUsers: false, manageCompanies: false,
     manageTraders: true, manageFormulas: false, acknowledgeSales: true,
     createSaleEntries: true,
@@ -59,7 +56,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, PermissionSet> = {
   FARM_MANAGER: {
     create: true, createDailyOps: false, update: false, delete: false,
     viewFinance: false, viewRates: false,
-    lockDay: false, unlockDay: false,
     manageUsers: false, manageCompanies: false,
     manageTraders: false, manageFormulas: false, acknowledgeSales: false,
     createSaleEntries: false,
@@ -71,7 +67,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, PermissionSet> = {
   FARM_LABOR: {
     create: true, createDailyOps: true, update: false, delete: false,
     viewFinance: false, viewRates: false,
-    lockDay: false, unlockDay: false,
     manageUsers: false, manageCompanies: false,
     manageTraders: false, manageFormulas: false, acknowledgeSales: false,
     createSaleEntries: false,

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Phone, MapPin, Wallet, MoreHorizontal, TrendingUp, TrendingDown, Egg, ChevronRight,
-  Link2Off, Info, Lock, FileText,
+  Link2Off, Info, FileText,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useApp, useCan, useCompanyData } from '@/store/app';
@@ -123,7 +123,6 @@ export function TraderDetailScreen() {
 
   /** The sale voucher that booked a ledger row, when it still exists in this company. */
   const saleOf = (t: TraderTxn): SaleEntry | undefined => (t.refId ? data.saleEntries.find(e => e.id === t.refId) : undefined);
-  const isLocked = (entry: SaleEntry) => entry.lines.some(l => data.dayLocks.some(d => d.shedId === l.shedId && d.date === entry.date));
   const userName = (id: string) => data.users.find(u => u.id === id)?.name ?? (id === 'system' ? 'System' : id);
   /** The sheds the load left, and the batch that was laying in each of them that day. */
   const shedsOf = (entry: SaleEntry) => entry.lines.map(l => data.sheds.find(s => s.id === l.shedId)?.name).filter(Boolean) as string[];
@@ -484,11 +483,6 @@ export function TraderDetailScreen() {
                 <p className="pt-2.5 text-[11px] text-muted leading-snug">
                   This row was written by a sale voucher, so its amount and payment details are corrected on that
                   voucher — not here.
-                </p>
-              )}
-              {detailSale && isLocked(detailSale) && (
-                <p className="flex items-center gap-1.5 pt-2.5 text-[11px] text-warn">
-                  <Lock size={12} className="shrink-0" /> The day this was booked on is locked, so it can no longer be edited.
                 </p>
               )}
             </Card>

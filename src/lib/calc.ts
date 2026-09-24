@@ -1,7 +1,7 @@
 import type {
   Batch, Company, EggCollection, EggGrade, EggGradeCounts, FeedConsumption,
   FeedStockEntry, GradeRates, MortalityEntry, PaymentStatus, SaleEntry,
-  SaleEntryLine, SalePricing, FeedFormula, Trader, TraderTxn, TraderTxnKind,
+  SaleEntryLine, SalePricing, FeedFormula, Trader, TraderTxn, TraderTxnKind, EggWastage,
 } from '@/types';
 import { EGG_GRADES, EGGS_PER_TRAY, EMPTY_GRADE_COUNTS } from '@/types';
 import { daysBetween, nowISO, todayISO } from './format';
@@ -62,7 +62,17 @@ export function eggTotalsRange(shedId: string, eggs: EggCollection[], from: stri
   return { byGrade, total: gradeTotal(byGrade) };
 }
 
-export type GradeStock = { collected: number; dispatched: number; balance: number };
+export type GradeStock = { collected: number; dispatched: number; wasted: number; balance: number };
+
+/** Trays discarded per grade across any set of wastage records, optionally for one shed only. */
+export function wasteTraysByGrade(wastages: EggWastage[], shedId?: string): EggGradeCounts {
+  const out = { ...EMPTY_GRADE_COUNTS };
+  for (const w of wastages) {
+    if (shedId && w.shedId !== shedId) continue;
+    for (const g of EGG_GRADES) out[g] += w.byGrade?.[g] || 0;
+  }
+  return out;
+}
 
 /** Trays per grade across a set of sale-entry lines, optionally for one shed only. */
 export function linesByGrade(lines: SaleEntryLine[], shedId?: string): EggGradeCounts {
@@ -86,21 +96,26 @@ export function entryTrays(entry: SaleEntry): number {
 
 /**
  * Physical egg stock per grade for a shed in TRAYS, as of a date:
- *   collected − sold in a final sale entry.
- * A shed dispatch log does not move stock; only the accounts entry does, so a
- * load that leaves the shed but is not yet billed still counts as unsold.
+ *   collected − sold in a final sale entry − thrown away as wastage.
+ * A shed dispatch log does not move stock; only the accounts entry and a recorded
+ * wastage do, so a load that leaves the shed but is not yet billed still counts as unsold.
  */
 export function eggStockByGrade(
   shedId: string,
   eggs: EggCollection[],
   entries: SaleEntry[],
+  wastages: EggWastage[],
   asOf = todayISO(),
 ): Record<EggGrade, GradeStock> {
   const collected = eggGradeTotals(eggs.filter(e => e.shedId === shedId && e.date <= asOf));
   const sold = entryTraysByGrade(entries.filter(e => e.date <= asOf), shedId);
+  const wasted = wasteTraysByGrade(wastages.filter(w => w.date <= asOf), shedId);
   const out = {} as Record<EggGrade, GradeStock>;
   for (const g of EGG_GRADES) {
-    out[g] = { collected: collected[g], dispatched: sold[g], balance: collected[g] - sold[g] };
+    out[g] = {
+      collected: collected[g], dispatched: sold[g], wasted: wasted[g],
+      balance: collected[g] - sold[g] - wasted[g],
+    };
   }
   return out;
 }
@@ -110,21 +125,69 @@ export function eggStockTrays(
   shedId: string,
   eggs: EggCollection[],
   entries: SaleEntry[],
+  wastages: EggWastage[],
   asOf = todayISO(),
 ): GradeStock {
-  const byGrade = eggStockByGrade(shedId, eggs, entries, asOf);
+  const byGrade = eggStockByGrade(shedId, eggs, entries, wastages, asOf);
   return EGG_GRADES.reduce<GradeStock>(
     (acc, g) => ({
       collected: acc.collected + byGrade[g].collected,
       dispatched: acc.dispatched + byGrade[g].dispatched,
+      wasted: acc.wasted + byGrade[g].wasted,
       balance: acc.balance + byGrade[g].balance,
     }),
-    { collected: 0, dispatched: 0, balance: 0 },
+    { collected: 0, dispatched: 0, wasted: 0, balance: 0 },
   );
 }
 
-const round2 = (n: number) => Number(n.toFixed(2));
+/**
+ * The last price each grade settled at, in ₹ per egg. Only a voucher priced by rate proves
+ * a price for one grade — an agreed figure for a mixed load says nothing about any single
+ * pool, so it is never read back as one.
+ */
+export function lastGradeRates(entries: SaleEntry[]): GradeRates {
+  const out: GradeRates = {};
+  for (const e of [...entries].sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))) {
+    if (e.pricing !== 'RATE') continue;
+    for (const g of EGG_GRADES) {
+      const rate = e.rates?.[g];
+      if (rate && rate > 0) out[g] = rate;
+    }
+  }
+  return out;
+}
 
+export type WastageSummary = {
+  byGrade: EggGradeCounts;
+  trays: number;
+  eggs: number;
+  /** What those trays would have fetched at the last rate each grade sold at. */
+  value: number;
+  /** Grades thrown away with no rate on record anywhere — counted, never priced. */
+  unpriced: EggGrade[];
+};
+
+/**
+ * What the farm has thrown away, in trays per grade and in the sale value it gave up.
+ * That value is a lost-turnover memo, never a cost: no money moved, and the feed behind
+ * the egg was already expensed the day the shed drew it.
+ */
+export function summarizeWastage(wastages: EggWastage[], entries: SaleEntry[]): WastageSummary {
+  const rates = lastGradeRates(entries);
+  const byGrade = wasteTraysByGrade(wastages);
+  const unpriced: EggGrade[] = [];
+  let value = 0;
+  for (const g of EGG_GRADES) {
+    if (!byGrade[g]) continue;
+    const rate = rates[g];
+    if (rate) value += byGrade[g] * EGGS_PER_TRAY * rate;
+    else unpriced.push(g);
+  }
+  const trays = gradeTotal(byGrade);
+  return { byGrade, trays, eggs: trays * EGGS_PER_TRAY, value: round2(value), unpriced };
+}
+
+const round2 = (n: number) => Number(n.toFixed(2));
 /**
  * Money for a sale entry in progress: trays × eggs-per-tray × the per-egg rate the
  * trader quoted, or the single figure accounts agreed with them for the whole load.

@@ -82,13 +82,13 @@ function useSettled(): boolean {
 
 /** The six questions the owner asks, answered before any chart is read. */
 function KpiLayer({ data }: { data: Data }) {
-  const { eggs, saleEntries, feedStock, traders, traderTxns, batches, mortality } = data;
+  const { eggs, saleEntries, eggWastages, feedStock, traders, traderTxns, batches, mortality } = data;
   const money = useMoney();
   const today = todayISO();
   const week = useMemo(() => rangeOf('7D', today), [today]);
 
   const prod = useMemo(() => eggProductionTrend(eggs, week), [eggs, week]);
-  const stock = useMemo(() => eggStockMovement(eggs, saleEntries, week), [eggs, saleEntries, week]);
+  const stock = useMemo(() => eggStockMovement(eggs, saleEntries, eggWastages, week), [eggs, saleEntries, eggWastages, week]);
   const godown = useMemo(() => godownPosition(feedStock), [feedStock]);
   const due = useMemo(() => traderOutstanding(traders, traderTxns), [traders, traderTxns]);
 
@@ -375,13 +375,13 @@ function EggStockSalesSection({ data }: { data: Data }) {
   const nav = useNavigate();
   const settled = useSettled();
   const money = useMoney();
-  const { eggs, saleEntries, traderTxns, traders } = data;
+  const { eggs, saleEntries, eggWastages, traderTxns, traders } = data;
   const stockWin = useWindow('30D');
   const salesWin = useWindow('30D');
   const traderWin = useWindow('30D');
   const [mode, setMode] = useState<SalesMode>('TRAYS');
   const sales = useMemo(() => eggSalesTrend(saleEntries, salesWin.range, mode), [saleEntries, salesWin.range, mode]);
-  const stock = useMemo(() => eggStockMovement(eggs, saleEntries, stockWin.range), [eggs, saleEntries, stockWin.range]);
+  const stock = useMemo(() => eggStockMovement(eggs, saleEntries, eggWastages, stockWin.range), [eggs, saleEntries, eggWastages, stockWin.range]);
   const byTrader = useMemo(() => salesByTrader(traderTxns, traders, traderWin.range), [traderTxns, traders, traderWin.range]);
 
   const saleOf = (date: string) => saleEntries.filter(e => e.date === date);

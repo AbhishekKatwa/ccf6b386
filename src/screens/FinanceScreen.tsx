@@ -1625,7 +1625,7 @@ export function FinanceScreen() {
             placeholder="What explains the difference, if there is one" />
           <p className="text-[11.5px] text-muted leading-relaxed">
             The balance is never adjusted to match a count. A difference stands on record until the entry that explains it is booked,
-            and re-counting a locked day takes the Owner&rsquo;s unlock.
+            and re-counting a day already counted writes its own audit entry.
           </p>
         </div>
       </Dialog>

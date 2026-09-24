@@ -1,6 +1,6 @@
-import { eggStockTrays, eggSummary } from '@/lib/calc';
+import { eggStockTrays, eggSummary, gradeTotal } from '@/lib/calc';
 import { shiftDate, todayISO } from '@/lib/format';
-import type { EggCollection, EggSaleBooking, SaleEntry } from '@/types';
+import type { EggCollection, EggSaleBooking, EggWastage, SaleEntry } from '@/types';
 
 /**
  * The Egg Sale Planner's arithmetic. Everything here is a FORECAST: no function in
@@ -9,8 +9,11 @@ import type { EggCollection, EggSaleBooking, SaleEntry } from '@/types';
  * set of them.
  */
 
-/** Today plus the next four days. */
+/** Today plus the next four days — the board a planner opens on. */
 export const PLANNER_DAYS = 5;
+
+/** How far ahead a booking may be promised. The board shows a slice of this. */
+export const PLANNER_HORIZON = 14;
 
 /** The rolling board. It slides forward on its own; records that leave it are kept. */
 export function plannerWindow(today = todayISO(), days = PLANNER_DAYS): string[] {
@@ -49,6 +52,8 @@ export type ShedDayPlan = {
   /** Trays the shed should hold for dispatch that day. Null means nothing supports the figure. */
   available: number | null;
   booked: number;
+  /** Trays already written off as wastage on this date, so the forecast does not offer them. */
+  wasted: number;
   remaining: number | null;
   /** Trays promised past the projection, or 0. */
   shortage: number;
@@ -66,24 +71,28 @@ export function shedDayPlans(input: {
   shedId: string;
   eggs: EggCollection[];
   entries: SaleEntry[];
+  wastages: EggWastage[];
   bookings: EggSaleBooking[];
   dates: string[];
   today?: string;
 }): ShedDayPlan[] {
-  const { shedId, eggs, entries, bookings, dates } = input;
+  const { shedId, eggs, entries, wastages, bookings, dates } = input;
   const today = input.today ?? todayISO();
   const own = bookings.filter(b => b.shedId === shedId && counts(b));
+  const shedWaste = wastages.filter(w => w.shedId === shedId);
 
   // The evening before the board opens is the only figure here that is not a forecast.
-  let carry = eggStockTrays(shedId, eggs, entries, shiftDate(today, -1)).balance;
+  let carry = eggStockTrays(shedId, eggs, entries, wastages, shiftDate(today, -1)).balance;
 
   return dates.map(date => {
     const prod = projectedProduction(shedId, eggs, date, today);
     const available = prod.trays === null ? null : carry + prod.trays;
     const booked = own.filter(b => b.date === date).reduce((s, b) => s + b.plannedTrays, 0);
-    const remaining = available === null ? null : available - booked;
+    // A wastage dated inside the window is already a record, so it leaves the forecast too.
+    const thrown = shedWaste.filter(w => w.date === date).reduce((s, w) => s + gradeTotal(w.byGrade), 0);
+    const remaining = available === null ? null : available - booked - thrown;
     const plan: ShedDayPlan = {
-      date, opening: carry, production: prod.trays, available, booked,
+      date, opening: carry, production: prod.trays, available, booked, wasted: thrown,
       remaining, shortage: remaining !== null && remaining < 0 ? -remaining : 0,
       recorded: prod.recorded, bookings: own.filter(b => b.date === date),
     };
@@ -125,7 +134,7 @@ export function bookingError(
   if (!ctx.traderIds.includes(traderId)) return 'That trader does not belong to this company';
   if (!Number.isFinite(plannedTrays) || plannedTrays <= 0) return 'Planned trays must be greater than 0';
   if (!ctx.window.includes(date) && date !== ctx.existing?.date) {
-    return 'A booking can only be planned for today or the next four days';
+    return `A booking can only be planned for today or the next ${ctx.window.length - 1} days`;
   }
   return null;
 }

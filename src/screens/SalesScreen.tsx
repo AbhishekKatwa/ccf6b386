@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Receipt, Plus, CheckCheck, Handshake, Egg, Lock, PenLine, Truck, Trash2, CalendarRange,
+  Receipt, Plus, CheckCheck, Handshake, Egg, PenLine, Truck, Trash2, CalendarRange,
   SlidersHorizontal, RotateCcw,
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -464,6 +464,12 @@ function FilterControls({ flt, set, data, onClear }: {
   );
 }
 
+/** The only sheds a voucher may draw from: those with at least one tray still on hand. */
+function shedsWithEggStock(data: ReturnType<typeof useCompanyData>) {
+  return data.sheds.filter(sh =>
+    EGG_GRADES.some(g => eggStockByGrade(sh.id, data.eggs, data.saleEntries, data.eggWastages)[g].balance > 0));
+}
+
 export function SalesScreen() {
   const data = useCompanyData();
   const canCreate = useCan('create');
@@ -494,8 +500,7 @@ export function SalesScreen() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const shedsWithStock = data.sheds.filter(sh =>
-    EGG_GRADES.some(g => eggStockByGrade(sh.id, data.eggs, data.saleEntries)[g].balance > 0));
+  const shedsWithStock = shedsWithEggStock(data);
 
   const activeSheds = data.sheds.filter(sh => data.batches.some(b => b.shedId === sh.id && b.status === 'ACTIVE'));
   const [logForm, setLogForm] = useState({
@@ -520,7 +525,6 @@ export function SalesScreen() {
   const shedName = (id: string) => data.sheds.find(s => s.id === id)?.name ?? '—';
   const traderName = (id: string) => data.traders.find(t => t.id === id)?.name ?? '—';
   const batchCode = (id: string) => data.batches.find(b => b.id === id)?.code ?? '—';
-  const isLocked = (entry: SaleEntry) => entry.lines.some(l => data.dayLocks.some(d => d.shedId === l.shedId && d.date === entry.date));
 
   /**
    * One pass over the ledger feeds the KPIs, every chart and the list, so a filter can never
@@ -615,6 +619,30 @@ export function SalesScreen() {
     setParams({}, { replace: true });
   }, [params, setParams, data.saleEntries, canEntry]);
 
+  /**
+   * Arriving from the egg screen with a grade in hand: that shed's tray grid is
+   * already open, and a damaged or rejected grade opens priced as one agreed
+   * figure — which is how such a load actually settles at the gate.
+   */
+  useEffect(() => {
+    const grade = params.get('sell') as EggGrade | null;
+    if (!grade) return;
+    if (EGG_GRADES.includes(grade) && canEntry) {
+      const shedId = params.get('shed') ?? '';
+      const base = formFromEntry(undefined, walkInId);
+      setEditing(null);
+      setForm({
+        ...base,
+        pricing: grade === 'GOOD' ? base.pricing : 'AGREED',
+        trays: shedId ? { [shedId]: emptyTrays() } : base.trays,
+      });
+      setError(null);
+      setEntryOpen(true);
+    }
+    setParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params, setParams, canEntry]);
+
   function removeEntry() {
     const id = deleteTarget;
     setDeleteTarget(null);
@@ -625,7 +653,7 @@ export function SalesScreen() {
   }
 
   const stockBalance = logForm.shedId
-    ? eggStockByGrade(logForm.shedId, data.eggs, data.saleEntries)[logForm.grade].balance : 0;
+    ? eggStockByGrade(logForm.shedId, data.eggs, data.saleEntries, data.eggWastages)[logForm.grade].balance : 0;
 
   const hasLoads = scope.views.length > 0;
   const loadWord = scope.views.length === 1 ? 'load' : 'loads';
@@ -741,7 +769,6 @@ export function SalesScreen() {
             <GroupList>
               {scope.views.map(v => {
                 const entry = v.entry;
-                const locked = isLocked(entry);
                 return (
                   <ListRow key={entry.id}
                     onClick={() => nav(`/sales/entry/${entry.id}`)}
@@ -760,14 +787,12 @@ export function SalesScreen() {
                             )}
                           </>
                         ) : <StatusBadge status={v.pos.status} />}
-                        {locked
-                          ? <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted mt-1"><Lock size={11} /> Locked</span>
-                          : canEntry
-                            ? <span className="block mt-1" onClick={e => e.stopPropagation()}>
-                              <button type="button" onClick={() => openEntry(entry)}
-                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand press"><PenLine size={11} /> Edit</button>
-                            </span>
-                            : null}
+                        {canEntry
+                          ? <span className="block mt-1" onClick={e => e.stopPropagation()}>
+                            <button type="button" onClick={() => openEntry(entry)}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand press"><PenLine size={11} /> Edit</button>
+                          </span>
+                          : null}
                       </div>
                     }
                   />
@@ -957,6 +982,48 @@ function MoneyLine({ label, value, tone = 'ink', strong, sign }: {
   );
 }
 
+/**
+ * The same voucher raised where the work is: a batch or shed screen opens this instead of
+ * sending the user to the sales list first. Only the shed it was opened from is loaded in;
+ * every other part of the form, and every ledger row it writes, is the sales screen's own.
+ */
+export function SaleEntryDialog({ open, onClose, presetShedId }: {
+  open: boolean; onClose: () => void; presetShedId?: string;
+}) {
+  const data = useCompanyData();
+  const canFinance = useCan('viewFinance');
+  const addSaleEntry = useApp(s => s.addSaleEntry);
+  const walkInId = data.traders.find(isWalkInTrader)?.id ?? '';
+  const [form, setForm] = useState<EntryForm>(() => formFromEntry(undefined, walkInId));
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const base = formFromEntry(undefined, walkInId);
+    setForm({ ...base, trays: presetShedId ? { [presetShedId]: emptyTrays() } : base.trays });
+    setError(null);
+  }, [open, walkInId, presetShedId]);
+
+  const sheds = useMemo(() => {
+    const ids = new Set([...shedsWithEggStock(data).map(s => s.id), ...Object.keys(form.trays)]);
+    return data.sheds.filter(s => ids.has(s.id));
+  }, [data, form.trays]);
+
+  function submit(draft: SaleEntryDraft) {
+    setError(null);
+    const r = addSaleEntry(draft);
+    if (!r.ok) { setError(r.error ?? 'Failed to save the sale entry'); return; }
+    onClose();
+  }
+
+  return (
+    <SaleEntrySheet open={open} onClose={onClose} form={form} setForm={setForm}
+      error={error} setError={setError} editing={null} sheds={sheds}
+      eggs={data.eggs} entries={data.saleEntries} canFinance={canFinance}
+      canDelete={false} onDelete={() => {}} onSubmit={submit} />
+  );
+}
+
 function SaleEntrySheet({ open, onClose, form, setForm, error, setError, editing, sheds, eggs, entries, canFinance, canDelete, onDelete, onSubmit }: {
   open: boolean; onClose: () => void; form: EntryForm; setForm: Dispatch<SetStateAction<EntryForm>>;
   error: string | null; setError: (v: string | null) => void;
@@ -1022,7 +1089,7 @@ function SaleEntrySheet({ open, onClose, form, setForm, error, setError, editing
 
   const opened = sheds.filter(s => form.trays[s.id]);
   const rest = sheds.filter(s => !form.trays[s.id]);
-  const stockOf = (shedId: string) => eggStockByGrade(shedId, eggs, entries.filter(e => e.id !== editing?.id));
+  const stockOf = (shedId: string) => eggStockByGrade(shedId, eggs, entries.filter(e => e.id !== editing?.id), data.eggWastages);
 
   function save() {
     setError(null);
@@ -1167,7 +1234,7 @@ function SaleEntrySheet({ open, onClose, form, setForm, error, setError, editing
             soldGrades.length === 0 ? (
               <p className="text-[12px] text-muted">Enter the trays sold above — only the grades that left need a rate.</p>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {soldGrades.map(g => (
                   <Field key={g} label={`${GRADE_WORD[g]} ₹/egg`} type="text" inputMode="decimal" prefix="₹"
                     suffix={`per egg · ${fmtIN(byGrade[g])} trays`} value={form.rates[g]}
@@ -1194,6 +1261,9 @@ function SaleEntrySheet({ open, onClose, form, setForm, error, setError, editing
                   className="w-20 rounded-[8px] border border-line bg-card px-2 py-1 text-right font-mono text-[13px] tnum text-ink" />
               </span>
             </div>
+            <p className="text-[11px] leading-relaxed text-muted-2">
+              Collected with the load, so it comes in as this shed's income. The wage itself is the expense, entered in Finance on the day it is paid.
+            </p>
             <div className="pt-1 mt-1 border-t border-line-2">
               <MoneyLine label={`Eggs + labour billed to ${trader?.name ?? 'the trader'}`} value={billed} tone="ink" strong />
             </div>

@@ -26,7 +26,7 @@ export function ShedDetailScreen() {
   const { shedId } = useParams();
   const nav = useNavigate();
   const data = useCompanyData();
-  const { sheds, farms, batches, eggs, saleEntries, feedRounds } = data;
+  const { sheds, farms, batches, eggs, saleEntries, eggWastages, feedRounds } = data;
   const shed = sheds.find(x => x.id === shedId);
   const farm = farms.find(f => f.id === shed?.farmId);
   const live = batches.find(b => b.shedId === shedId && b.status === 'ACTIVE');
@@ -99,13 +99,13 @@ export function ShedDetailScreen() {
               <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-1">Current batch · {live.code}</p>
               <Row label="Bird type" value={live.birdType} mono={false} />
               <Row label="Breed" value={live.breed} mono={false} />
-              <Row label="Age" value={`${m.age.label} · ${m.age.dayLabel}`} />
+              <Row label="Age" value={m.age.dayLabel} />
               <Row label="Live birds" value={fmtIN(m.live)} success />
               <Row label="Cumulative mortality" value={`${fmtIN(m.cumMort)} (${fmtPct(m.mortPct, 2)})`} danger />
               {live.birdType === 'LAYER' && (
                 <>
                   <Row label="Today's eggs" value={`${fmtIN(m.todaysEggs.total)} trays`} />
-                  <Row label="Egg stock" value={`${fmtIN(eggStockTrays(shed!.id, eggs, saleEntries).balance)} trays`} />
+                  <Row label="Egg stock" value={`${fmtIN(eggStockTrays(shed!.id, eggs, saleEntries, eggWastages).balance)} trays`} />
                 </>
               )}
               <Row label="Feed (30d)" value={`${fmtIN(m.feed30.tonnes, 2)} t · ${fmtIN(m.feed30.kg)} kg`} />

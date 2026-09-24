@@ -28,7 +28,7 @@ export function FarmsScreen() {
   const addShed = useApp(s => s.addShed);
   const pushToast = useApp(s => s.pushToast);
 
-  const { farms: allFarms, batches: allBatches, mortality, eggs, saleEntries } = useCompanyData();
+  const { farms: allFarms, batches: allBatches, mortality, eggs, saleEntries, eggWastages } = useCompanyData();
   const sheds = useVisibleSheds();
   const shedsById = new Set(sheds.map(s => s.id));
   const batches = allBatches.filter(b => shedsById.has(b.shedId));
@@ -138,7 +138,7 @@ export function FarmsScreen() {
                   /** Normal eggs only: small, broken and double are separate pools. */
                   const normalToday = eggs.filter(e => e.shedId === sh.id && e.date === today)
                     .reduce((s, e) => s + e.goodTrays, 0);
-                  const normalStock = eggStockByGrade(sh.id, eggs, saleEntries, today).GOOD.balance;
+                  const normalStock = eggStockByGrade(sh.id, eggs, saleEntries, eggWastages, today).GOOD.balance;
                   return (
                     <ListRow
                       key={sh.id}

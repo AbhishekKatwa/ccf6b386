@@ -37,8 +37,6 @@ export type PermissionKey =
   | 'delete'
   | 'viewFinance'
   | 'viewRates'
-  | 'lockDay'
-  | 'unlockDay'
   | 'manageUsers'
   | 'manageCompanies'
   | 'manageTraders'
@@ -55,7 +53,6 @@ export type PermissionSet = Record<PermissionKey, boolean>;
 export const NO_PERMISSIONS: PermissionSet = {
   create: false, createDailyOps: false, update: false, delete: false,
   viewFinance: false, viewRates: false,
-  lockDay: false, unlockDay: false,
   manageUsers: false, manageCompanies: false,
   manageTraders: false, manageFormulas: false, acknowledgeSales: false,
   createSaleEntries: false,
@@ -302,8 +299,46 @@ export interface EggCollection {
   synced: boolean;
 }
 
-export type SaleLogStatus = 'PENDING' | 'ACKNOWLEDGED';
+/**
+ * Eggs thrown away: a stock event with no money in it. Recorded per grade because each
+ * pool is a different loss — a broken tray leaving is not the same fact as a small one.
+ * It never enters the P&L: the feed that laid the egg was already expensed when the shed
+ * drew it, so the only honest figure beside it is the sale value it cost the farm.
+ */
+export interface EggWastage {
+  id: string;
+  companyId: string;
+  batchId: string;
+  shedId: string;
+  date: string;
+  /** Trays discarded from each of the four sellable pools. */
+  byGrade: EggGradeCounts;
+  /** Why they went out — one of the farm's own reasons, or a free-text note. */
+  reason: string;
+  remarks?: string;
+  workerName?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedBy?: string;
+  updatedAt?: string;
+  synced: boolean;
+}
 
+/** What the wastage form supplies. Identity, company and audit belong to the store. */
+export type EggWastageDraft = Omit<EggWastage,
+  'id' | 'companyId' | 'createdBy' | 'createdAt' | 'updatedBy' | 'updatedAt' | 'synced'>;
+
+/** The reasons the farm discards by. Anything else is typed as a note. */
+export const EGG_WASTAGE_REASONS = [
+  'Cracked in handling',
+  'Rotten / spoiled',
+  'Grade rejected by trader',
+  'Heat damage',
+  'Transport damage',
+  'Other',
+] as const;
+
+export type SaleLogStatus = 'PENDING' | 'ACKNOWLEDGED';
 /**
  * Shed dispatch note: what left the shed with the vehicle, written by the
  * Farm Manager/Labor/Supervisor. It does NOT change stock — the trader's stock
@@ -345,7 +380,7 @@ export interface SaleEntryLine {
 /**
  * The final sale of the day's eggs, made by accounts against a trader once the
  * vehicle is weighed out. This — not the shed dispatch log — is where stock
- * drops and money is booked. Editable until the day is locked (§6).
+ * drops and money is booked.
  */
 export interface SaleEntry {
   id: string;
@@ -373,7 +408,7 @@ export interface SaleEntry {
   cashReference?: string;
   /** What this load leaves on the trader: eggs + labour − cash − PhonePe − advance. Derived by the store. */
   credit: number;
-  /** Loading/casual labour for this dispatch, recovered from the trader on the same load and booked as an expense. */
+  /** Loading/casual labour for this dispatch, recovered from the trader on the same load. It arrives as part of that load's income; the wage is a separate Finance expense the farm books when it pays. */
   laborCharge: number;
   remarks?: string;
   createdBy: string;
@@ -895,7 +930,7 @@ export interface TraderTxn extends PaymentAccountability {
   synced: boolean;
 }
 
-/* ============================= TASKS, LOCKS, AUDIT ============================= */
+/* ============================= TASKS, AUDIT ============================= */
 
 export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
@@ -919,23 +954,12 @@ export interface FarmTask {
   synced: boolean;
 }
 
-export interface DayLock {
-  id: string;
-  companyId: string;
-  batchId: string;
-  shedId: string;
-  date: string;
-  lockedBy: string;
-  lockedAt: string;
-  reason?: string;
-}
-
 export interface AuditEntry {
   id: string;
   companyId?: string;
   entity: string;
   entityId: string;
-  action: 'CREATE' | 'UPDATE' | 'DELETE' | 'LOCK' | 'UNLOCK';
+  action: 'CREATE' | 'UPDATE' | 'DELETE';
   field?: string;
   oldValue?: unknown;
   newValue?: unknown;

@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Egg, Skull, Wheat, AlertTriangle, ClipboardList, Handshake, ChevronRight, Syringe,
-  Activity, Layers, Lock, PlusCircle, CheckCircle2, Trash2, Pencil, Package,
+  Activity, Layers, PlusCircle, Trash2, Pencil, Package,
   TriangleAlert, Flame, Sun, Moon,
 } from 'lucide-react';
 import { useApp, useCurrentUser, useCan, useCompanyData } from '@/store/app';
@@ -29,10 +29,10 @@ type Attention = {
   title: string; detail: string; actionLabel: string; to: string;
 };
 
-const VERB: Record<string, string> = { CREATE: 'added', UPDATE: 'updated', DELETE: 'removed', LOCK: 'locked', UNLOCK: 'unlocked' };
+const VERB: Record<string, string> = { CREATE: 'added', UPDATE: 'updated', DELETE: 'removed' };
 const ENTITY: Record<string, string> = {
   Mortality: 'mortality', Feed: 'feed', EggCollection: 'egg collection', SaleEntry: 'sale entry',
-  Finance: 'transaction', Task: 'task', Batch: 'batch', DayLock: 'a day', Session: 'session',
+  Finance: 'transaction', Task: 'task', Batch: 'batch', Session: 'session',
   Assignment: 'access', Trader: 'trader', Farm: 'farm', FeedStock: 'feed stock', TraderTxn: 'trader txn',
   SaleLog: 'dispatch log', FeedConsumption: 'feed',
   Vaccination: 'vaccination', VaccinationTemplate: 'vaccination template',
@@ -314,8 +314,8 @@ function ManagerHome() {
                     const who = users.find(u => u.id === a.byUserId)?.name.split(' ')[0] ?? 'System';
                     const verb = VERB[a.action] ?? a.action.toLowerCase();
                     const entity = ENTITY[a.entity] ?? a.entity.toLowerCase();
-                    const Icon = a.action === 'DELETE' ? Trash2 : a.action === 'UPDATE' ? Pencil : a.action === 'LOCK' ? Lock : a.action === 'UNLOCK' ? CheckCircle2 : PlusCircle;
-                    const tone = a.action === 'DELETE' ? 'text-danger' : a.action === 'LOCK' ? 'text-warn' : a.action === 'UNLOCK' ? 'text-success' : 'text-brand';
+                    const Icon = a.action === 'DELETE' ? Trash2 : a.action === 'UPDATE' ? Pencil : PlusCircle;
+                    const tone = a.action === 'DELETE' ? 'text-danger' : 'text-brand';
                     return (
                       <li key={a.id} className="relative flex gap-3 pb-3.5 last:pb-0">
                         {i < recent.length - 1 && <span className="absolute left-[11px] top-6 bottom-0 w-px bg-line-2" aria-hidden />}

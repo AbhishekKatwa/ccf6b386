@@ -9,12 +9,12 @@
  */
 import { endOfMonth, format, isValid, parseISO, startOfMonth, subMonths } from 'date-fns';
 import type {
-  Batch, EggCollection, FeedConsumption, FeedFormula, FeedStockEntry,
+  Batch, EggCollection, EggWastage, FeedConsumption, FeedFormula, FeedStockEntry,
   FinanceTxn, MortalityEntry, SaleEntry, Shed, Trader, TraderTxn,
 } from '@/types';
 import { EGG_GRADES, EGGS_PER_TRAY } from '@/types';
 import {
-  consumptionDeduction, entryTrays, formulaForDate, GODOWN_CRITICAL_KG, GODOWN_LOW_KG,
+  consumptionDeduction, entryTrays, formulaForDate, GODOWN_CRITICAL_KG, GODOWN_LOW_KG, gradeTotal,
   godownBalances, liveBirdsOn, loadBilled, ratePerEgg, stockStatus, traderBalance,
 } from './calc';
 import { valueGodown } from './valuation';
@@ -187,23 +187,25 @@ export type StockMovement = {
 };
 
 /**
- * Trays in the sheds' egg rooms, day by day: collected − sold in a final sale entry.
- * A shed dispatch note is deliberately absent — stock only leaves when accounts bills
- * the load, so a dispatch and its sale can never deduct the same tray twice.
+ * Trays in the sheds' egg rooms, day by day: collected − sold in a final sale entry
+ * − written off as wastage. A shed dispatch note is deliberately absent — stock only
+ * leaves when accounts bills the load, so a dispatch and its sale can never deduct the
+ * same tray twice.
  */
-export function eggStockMovement(eggs: EggCollection[], entries: SaleEntry[], range: Range): StockMovement {
+export function eggStockMovement(eggs: EggCollection[], entries: SaleEntry[], wastages: EggWastage[], range: Range): StockMovement {
   let badSales = 0, badCollections = 0;
   const soldByDay = sumBy(entries, e => e.date, e => fin(entryTrays(e)), () => { badSales++; });
   const collByDay = sumBy(eggs, e => e.date, e => fin(traysOf(e)), () => { badCollections++; });
+  const wasteByDay = sumBy(wastages, w => w.date, w => fin(gradeTotal(w.byGrade)), () => undefined);
   const dmgByDay = sumBy(eggs, e => e.date, e => fin(e.brokenTrays), () => undefined);
   const days = dayKeys(range.from, range.to);
   const before = (date: string, map: Map<string, number>) =>
     Array.from(map.entries()).filter(([d]) => d < date).reduce((s, [, v]) => s + v, 0);
-  const opening = before(range.from, collByDay) - before(range.from, soldByDay);
+  const opening = before(range.from, collByDay) - before(range.from, soldByDay) - before(range.from, wasteByDay);
   let run = opening;
   const closing: Point[] = [];
   for (const date of days) {
-    run += (collByDay.get(date) ?? 0) - (soldByDay.get(date) ?? 0);
+    run += (collByDay.get(date) ?? 0) - (soldByDay.get(date) ?? 0) - (wasteByDay.get(date) ?? 0);
     closing.push({ date, value: run });
   }
   const damagedTotal = Array.from(dmgByDay.values()).reduce((s, v) => s + v, 0);

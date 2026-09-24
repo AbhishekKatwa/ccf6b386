@@ -1,5 +1,5 @@
 import type {
-  AuditEntry, Batch, BatchAssignment, Company, DayLock,
+  AuditEntry, Batch, BatchAssignment, Company,
   EggCollection, Farm, FarmTask, FeedConsumption, FeedFormula,
   FeedRound, FeedRoundLog, FeedStockEntry, FinanceTxn, MedicineItem, MedicineStockEntry, MortalityEntry, SaleEntry, SaleLog, Session, Shed, Trader,
   TraderTxn, User, VaccinationItem, VaccinationTemplate,
@@ -611,16 +611,13 @@ seedFeedStock.push(...consumptionEntries);
 /* ============================= FINANCE ============================= */
 
 export const seedFinance: FinanceTxn[] = [
-  // A voucher's own rows carry the split as numbers, exactly as `financeRows` writes them.
+  // A voucher's own rows carry the split as numbers, exactly as `financeRows` writes them —
+  // the loading labour it recovers is inside that income, and is never an expense of the day.
   // Rows nobody classified stay unclassified: the finance view reports them as "Not recorded".
   { id: 'fx_1', companyId: 'c_amrut', batchId: 'b_gld1', date: dBack(2), kind: 'INCOME', amount: 31200, category: 'Egg Sale', counterparty: 'Rajesh Traders', refId: 'se_1', split: { cash: 26200, online: 5000 }, createdBy: 'u_finsup', createdAt: dBackISO(2), synced: true },
-  { id: 'fx_2', companyId: 'c_amrut', batchId: 'b_gld1', date: dBack(2), kind: 'EXPENSE', amount: 1200, category: 'Labour', counterparty: 'Rajesh Traders', refId: 'se_1', remarks: 'Loading labour for this sale', createdBy: 'u_finsup', createdAt: dBackISO(2), synced: true },
   { id: 'fx_3', companyId: 'c_amrut', batchId: 'b_gld1', date: dBack(1), kind: 'INCOME', amount: 10800, category: 'Egg Sale', counterparty: 'Meena Agencies', refId: 'se_2', paymentMethod: 'CASH', split: { cash: 10800 }, createdBy: 'u_finsup', createdAt: dBackISO(1), synced: true },
-  { id: 'fx_5', companyId: 'c_amrut', batchId: 'b_gld1', date: dBack(1), kind: 'EXPENSE', amount: 800, category: 'Labour', counterparty: 'Meena Agencies', refId: 'se_2', remarks: 'Loading labour for this sale', createdBy: 'u_finsup', createdAt: dBackISO(1), synced: true },
   { id: 'fx_10', companyId: 'c_amrut', batchId: 'b_gld1', date: dBack(4), kind: 'INCOME', amount: 10440, category: 'Egg Sale', counterparty: 'Suresh Wholesale', refId: 'se_3', split: { cash: 7200, online: 3240 }, createdBy: 'u_finsup', createdAt: dBackISO(4), synced: true },
   { id: 'fx_11', companyId: 'c_amrut', batchId: 'b_gld2', date: dBack(4), kind: 'INCOME', amount: 6960, category: 'Egg Sale', counterparty: 'Suresh Wholesale', refId: 'se_3', split: { cash: 4800, online: 2160 }, createdBy: 'u_finsup', createdAt: dBackISO(4), synced: true },
-  { id: 'fx_12', companyId: 'c_amrut', batchId: 'b_gld1', date: dBack(4), kind: 'EXPENSE', amount: 360, category: 'Labour', counterparty: 'Suresh Wholesale', refId: 'se_3', remarks: 'Loading labour for this sale', createdBy: 'u_finsup', createdAt: dBackISO(4), synced: true },
-  { id: 'fx_13', companyId: 'c_amrut', batchId: 'b_gld2', date: dBack(4), kind: 'EXPENSE', amount: 240, category: 'Labour', counterparty: 'Suresh Wholesale', refId: 'se_3', remarks: 'Loading labour for this sale', createdBy: 'u_finsup', createdAt: dBackISO(4), synced: true },
   { id: 'fx_4', companyId: 'c_amrut', date: dBack(5), kind: 'EXPENSE', amount: 1250000, category: 'Feed Purchase', counterparty: 'Anand Feeds', purchaseId: 'fs_in_1', godown: true, createdBy: 'u_finsup', createdAt: dBackISO(5), synced: true },
   { id: 'fx_6', companyId: 'c_amrut', batchId: 'b_gld1', date: dBack(10), kind: 'EXPENSE', amount: 42000, category: 'Labour', createdBy: 'u_finsup', createdAt: dBackISO(10), synced: true },
   { id: 'fx_7', companyId: 'c_amrut', batchId: 'b_gld1', date: dBack(12), kind: 'EXPENSE', amount: 28000, category: 'Medicine', createdBy: 'u_finsup', createdAt: dBackISO(12), synced: true },
@@ -640,15 +637,10 @@ export const seedTasks: FarmTask[] = [
   { id: 'tk_6', companyId: 'c_sunrise', title: 'Feed stock reconciliation', date: dBack(0), time: '18:00', assignedUserId: 'u_fsup2', farmId: 'f_sun', shedId: 's_sun1', priority: 'LOW', status: 'PENDING', createdBy: 'u_owner2', createdAt: dBackISO(0), updatedAt: dBackISO(0), synced: true },
 ];
 
-/* ============================= DAY LOCKS / AUDIT ============================= */
-
-export const seedDayLocks: DayLock[] = [
-  { id: 'dl_1', companyId: 'c_amrut', batchId: 'b_gld1', shedId: 's_g1', date: dBack(7), lockedBy: 'u_owner', lockedAt: dBackISO(7), reason: 'Week close' },
-];
+/* ============================= AUDIT ============================= */
 
 export const seedAudit: AuditEntry[] = [
   { id: 'au_1', companyId: 'c_amrut', entity: 'Batch', entityId: 'b_gld1', action: 'CREATE', byUserId: 'u_owner', at: dBackISO(210) },
-  { id: 'au_2', companyId: 'c_amrut', entity: 'DayLock', entityId: 'b_gld1', action: 'LOCK', field: dBack(7), oldValue: false, newValue: true, byUserId: 'u_owner', at: dBackISO(7) },
 ];
 
 export const seedSession: Session | null = null;

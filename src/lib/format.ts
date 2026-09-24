@@ -70,11 +70,21 @@ export function daysBetween(fromISO: string, toISO: string): number {
   return differenceInDays(b, a);
 }
 
+/**
+ * A flock age in days with its completed weeks beside it. Broilers are bought and sold by
+ * day, vaccinations and lay onset are read by week, so a figure that says only one of them
+ * always costs somebody a mental division. Below a week there is no completed week to
+ * report, so the bracket stays out rather than reading "(0 wk)".
+ */
+export function ageDaysLabel(days: number): string {
+  const d = Math.max(0, days);
+  const w = Math.floor(d / 7);
+  return `Day ${d}${w ? ` (${w} wk)` : ''}`;
+}
+
 export function ageLabel(placementISO: string, asOfISO = todayISO()) {
   const days = Math.max(0, daysBetween(placementISO, asOfISO));
-  const w = Math.floor(days / 7);
-  const d = days % 7;
-  return { days, weeks: w, dayOfWeek: d, label: `W${w} D${d}`, dayLabel: `Day ${days}` };
+  return { days, weeks: Math.floor(days / 7), dayOfWeek: days % 7, dayLabel: ageDaysLabel(days) };
 }
 
 export function greeting(d = new Date()): string {

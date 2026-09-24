@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import {
   Egg, Skull, Package, Wheat, Clock, Check, ChevronRight, Minus, Plus, Syringe,
-  LogOut, ClipboardList, History, Sun, Sunset, Moon, Lock, AlertTriangle, Layers,
+  LogOut, ClipboardList, History, Sun, Sunset, Moon, AlertTriangle, Layers,
 } from 'lucide-react';
 import { useApp, useCompanyData, useCurrentUser } from '@/store/app';
 import { SyncPill } from '@/components/layout/AppShell';
@@ -51,7 +51,6 @@ function useLaborDay() {
   }, [data.assignments, data.batches, user?.id]);
 
   const shed = data.sheds.find(s => s.id === batch?.shedId);
-  const locked = !!batch && data.dayLocks.some(l => l.shedId === batch.shedId && l.date === today);
 
   /** Everyone mapped to this shed — the labor form prefills the signer-in name but allows switching. */
   const staffNames = useMemo(() => {
@@ -79,11 +78,11 @@ function useLaborDay() {
       given: logs.reduce((s, l) => s + l.trays, 0),
       mort: data.mortality.filter(m => m.batchId === batch.id && m.date === today).reduce((s, m) => s + m.count, 0),
       rounds: data.feedRounds.filter(r => r.shedId === batch.shedId && r.date === today),
-      stock: eggStockByGrade(batch.shedId, data.eggs, data.saleEntries, today),
+      stock: eggStockByGrade(batch.shedId, data.eggs, data.saleEntries, data.eggWastages, today),
     };
   }, [batch, data, today]);
 
-  return { user, data, today, batch, shed, locked, staffNames, todays };
+  return { user, data, today, batch, shed, staffNames, todays };
 }
 
 type LaborDay = ReturnType<typeof useLaborDay>;
@@ -480,15 +479,6 @@ export function LaborHomeScreen() {
           <Avatar name={user.name} size={40} />
         </div>
       </header>
-
-      {day.locked && (
-        <div className="px-4 sm:px-0 mt-1">
-          <div className="flex items-center gap-2.5 rounded-[14px] bg-warn-soft px-4 py-3">
-            <Lock size={16} className="text-warn shrink-0" />
-            <p className="text-[12.5px] text-warn font-medium">{fmtDate(day.today)} is locked by the owner — entries are on hold.</p>
-          </div>
-        </div>
-      )}
 
       <section className="px-4 sm:px-0 mt-4">
         <SectionTitle right={
