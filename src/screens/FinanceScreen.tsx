@@ -14,6 +14,8 @@ import { Dialog } from '@/components/ui/Dialog';
 import { LedgerDayHeader } from '@/components/godown/StockLedger';
 import { GraphCard, GraphRange } from '@/components/charts/GraphCard';
 import { axisNum, BarSeries, DonutChart, HBarList, PairedBars, SERIES_COLORS, type HRow } from '@/components/charts/DataViz';
+import { medicineStockBoard } from '@/lib/medicines';
+import { unitQty } from '@/components/medicine/medicineMeta';
 import {
   AccountabilityDetail, EMPTY_PAYMENT, PaymentChips, PaymentFields, paymentDraftOf, paymentPatch,
   UnclassifiedNote, type PaymentDraft,
@@ -33,8 +35,7 @@ import {
   carriesChannel, cashFlowOf, cashPositionOf, custodyOf, isClassified, methodSummary, reconcileCash,
   type ChannelKey,
 } from '@/lib/cashflow';
-import { useMedicineValuation } from '@/hooks/useMedicineValuation';
-import { MEDICINE_ROLES } from '@/lib/permissions';
+import { GODOWN_ROLES, MEDICINE_ROLES } from '@/lib/permissions';
 import type { FinanceTxn, TxnKind } from '@/types';
 
 const KINDS: TxnKind[] = ['INCOME', 'EXPENSE', 'PURCHASE', 'SALE', 'PAYMENT_IN', 'PAYMENT_OUT'];
@@ -134,6 +135,48 @@ function Band({ label, note, right }: { label: string; note: string; right?: Rea
   );
 }
 
+/** One line of a store: what stands there, in its own unit, and what it is worth. */
+type StockLine = { key: string; label: string; qty: string; rate: string };
+
+/**
+ * A store of stock, drawn to the same measure as every other store — value, what stands on it,
+ * and the way in. No store gets a smaller type scale than another.
+ */
+function StorePanel({ icon, name, value, count, lines, more, unpriced, cta, onOpen }: {
+  icon: React.ReactNode; name: string; value: string; count: string;
+  lines: StockLine[]; more: number; unpriced?: string | null; cta: string; onOpen?: () => void;
+}) {
+  return (
+    <section className="min-w-0 px-4 py-3.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.16em] text-accent-ink inline-flex items-center gap-1.5 min-w-0">
+            {icon}<span className="truncate">{name}</span>
+          </p>
+          <p className="font-display text-[22px] leading-8 font-semibold text-ink tnum tracking-tight mt-1.5 truncate">{value}</p>
+          <p className="font-mono text-[10.5px] text-muted mt-0.5 tnum">{count}</p>
+        </div>
+        {onOpen && <Button size="sm" variant="outline" className="shrink-0" onClick={onOpen}>{cta}</Button>}
+      </div>
+      {lines.length === 0 ? (
+        <p className="mt-3 text-[12px] text-muted">Nothing stands here right now.</p>
+      ) : (
+        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5">
+          {lines.map(r => (
+            <div key={r.key} className="min-w-0">
+              <p className="text-[12.5px] font-semibold text-ink truncate">{r.label}</p>
+              <p className="font-mono text-[11px] text-ink-2 tnum mt-0.5">{r.qty}</p>
+              <p className="font-mono text-[10px] text-muted tnum">{r.rate}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {more > 0 && <p className="mt-2.5 font-mono text-[10px] text-muted">{more} more on the shelf</p>}
+      {unpriced && <p className="mt-2.5 font-mono text-[10px] text-warn">{unpriced}</p>}
+    </section>
+  );
+}
+
 /** A stat block used inside the summary and godown panels. */
 function Stat({ label, value, foot, tone }: { label: string; value: string; foot?: React.ReactNode; tone?: 'ink' | 'brand' | 'danger' | 'success' | 'warn' | 'accent' }) {
   const toneText = {
@@ -170,6 +213,8 @@ export function FinanceScreen() {
   const [params, setParams] = useSearchParams();
   const [period, setPeriod] = useState<PeriodKey>('ALL');
   const [tab, setTab] = useState<FinTab>('overview');
+  /** Which of the two summary figures the build card is currently tracing. */
+  const [build, setBuild] = useState<'expense' | 'income'>('expense');
   const [filter, setFilter] = useState<'all' | TxnKind>('all');
   const [channel, setChannel] = useState<ChannelKey | 'all'>('all');
   const [direction, setDirection] = useState<'all' | 'in' | 'out'>('all');
@@ -233,10 +278,11 @@ export function FinanceScreen() {
   const shortages = useMemo(() => shortageRows(feedStock, dataRange), [feedStock, dataRange]);
 
   /** The medicine store as an asset on the same basis as the godown: quantities stay per item. */
-  const { valuation: medValuation } = useMedicineValuation();
-  const medTotals = useMemo(() => medValuation.totals(todayISO()), [medValuation]);
+  const medBoard = useMemo(() => medicineStockBoard(medicineItems, medicineStock, todayISO()), [medicineItems, medicineStock]);
+  const medTotals = medBoard.totals;
   const role = users.find(u => u.id === sessionUser)?.role;
   const canOpenStore = !!role && MEDICINE_ROLES.includes(role);
+  const canOpenGodown = !!role && GODOWN_ROLES.includes(role);
 
   /* ---- payment layer: the very same ledger money, re-classified by how it moved ---- */
 
@@ -363,6 +409,21 @@ export function FinanceScreen() {
   }, [acct, feedCost.rows]);
 
   const revBreak = useMemo(() => revenueBreakdown(acct.periodTxns, dataRange), [acct.periodTxns, dataRange]);
+
+  /**
+   * Income traced the way expense is: the ledger books only money that physically arrived, so a
+   * load paid on the spot and a bill settled weeks later are two different lines of one total.
+   */
+  const incomeBuild = useMemo(() => {
+    const billed = acct.periodTxns.filter(t => t.kind === 'INCOME' || t.kind === 'SALE');
+    const collected = acct.periodTxns.filter(t => t.kind === 'PAYMENT_IN');
+    const sum = (rows: FinanceTxn[]) => Number(rows.reduce((s, t) => s + t.amount, 0).toFixed(2));
+    return {
+      rows: revBreak.rows,
+      billed: sum(billed), billedCount: billed.length,
+      collected: sum(collected), collectedCount: collected.length,
+    };
+  }, [revBreak, acct.periodTxns]);
   const trend = useMemo(() => pnlTrend(acct.periodTxns, pnlMode), [acct.periodTxns, pnlMode]);
 
   const activity = useMemo(() => {
@@ -559,7 +620,17 @@ export function FinanceScreen() {
   const openMap = (t: FinanceTxn) => { setMapTarget(''); setMapTxn(t); };
 
   const detail = shedDetail ? acct.sheds.find(s => s.shedId === shedDetail) ?? null : null;
-  const majorStock = gLedger.perIngredient.filter(r => r.closingKg > 0).slice(0, 4);
+  /** The two stores listed the same way: what stands, in its own unit, at the rate it carries. */
+  const feedHeld = gLedger.perIngredient.filter(r => r.closingKg > 0);
+  const feedLines: StockLine[] = feedHeld.slice(0, 4).map(r => ({
+    key: r.ingredient, label: r.ingredient, qty: `${fmtIN(r.closingKg)} kg`,
+    rate: r.avg === null ? 'no rate on record' : `${fmtMoney(r.avg, 2)}/kg · ${short(r.closingValue)}`,
+  }));
+  const medHeld = medBoard.rows.filter(r => r.qty > 0).sort((a, b) => b.value - a.value);
+  const medLines: StockLine[] = medHeld.slice(0, 4).map(r => ({
+    key: r.item.id, label: r.item.name, qty: unitQty(r.qty, r.item.unit),
+    rate: r.avg === null ? 'no rate on record' : `${fmtMoney(r.avg, 2)}/${r.item.unit} · ${short(r.value)}`,
+  }));
   const today = todayISO();
 
   const tabs = (
@@ -615,8 +686,16 @@ export function FinanceScreen() {
 
           <Card>
             <SectionTitle right={<span className="font-mono text-[10px] text-muted">every number below comes from a record</span>}>
-              <span className="inline-flex items-center gap-1.5"><Layers size={14} className="text-brand -mt-[1px]" />How the expense is built</span>
+              <span className="inline-flex items-center gap-1.5"><Layers size={14} className="text-brand -mt-[1px]" />How the {build === 'expense' ? 'expense' : 'income'} is built</span>
             </SectionTitle>
+            <div className="mt-2.5 w-fit">
+              <SegmentedTabs scroll value={build} onChange={setBuild} options={[
+                { value: 'expense', label: 'Expense' },
+                { value: 'income', label: 'Income' },
+              ]} />
+            </div>
+
+            {build === 'expense' && (
             <div className="mt-2.5 space-y-2">
               <AcctLine label="Direct shed expenses" hint={`operating money mapped to a shed · ${acct.sheds.reduce((s, r) => s + r.directCount, 0)} entries`} value={acct.sheds.reduce((s, r) => s + r.directExpense, 0)} />
               <AcctLine label="Feed consumed by sheds" hint="derived from godown issues — the stock actually eaten" value={acct.feedExpense} derived />
@@ -634,12 +713,44 @@ export function FinanceScreen() {
                 <AcctLine label="of which chicks" hint="the breakout of a line above — not an extra charge" value={acct.chickExpense} />
               )}
             </div>
+            )}
+
+            {build === 'income' && (
+            <div className="mt-2.5 space-y-2">
+              {incomeBuild.rows.length === 0 ? (
+                <p className="text-[12px] text-muted">No sale or other money arrived in this period.</p>
+              ) : incomeBuild.rows.map(r => (
+                <AcctLine key={r.label} label={r.label} tone="success" value={r.value}
+                  hint={r.share === null ? 'received in this period' : `${Math.round(r.share * 100)}% of what arrived on the day of sale`} />
+              ))}
+              {incomeBuild.collectedCount > 0 && (
+                <AcctLine label="Collections of bills already delivered" tone="success" value={incomeBuild.collected}
+                  hint={`${incomeBuild.collectedCount} ${incomeBuild.collectedCount === 1 ? 'receipt settles' : 'receipts settle'} a load billed on an earlier day`} />
+              )}
+              <div className="h-px bg-line-2" />
+              <AcctLine label="Total income" hint="the figure in the summary above" value={acct.income} strong />
+              {acct.unallocatedIncome > 0 && (
+                <AcctLine label="of which not yet mapped" hint="the breakout of a line above — a shed or the godown still needs naming" value={acct.unallocatedIncome} warn />
+              )}
+            </div>
+            )}
+
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <p className="text-[11px] text-muted leading-relaxed">
-                Feed and medicine purchases are <strong className="text-ink-2">stock, not expense</strong>: {money(acct.inventoryPurchase)} of purchases in this period stands on the shelves
-                and is expensed only as a shed draws it. Buying it twice — once as purchase, once as consumption — would double-count.
-                {' '}Chicks are the exception: a flock is never drawn out of a store, so {money(acct.chickExpense)} of birds is expense
-                on the day it was paid, and it is already counted above.
+                {build === 'expense' ? (
+                  <>
+                    Feed and medicine purchases are <strong className="text-ink-2">stock, not expense</strong>: {money(acct.inventoryPurchase)} of purchases in this period stands on the shelves
+                    and is expensed only as a shed draws it. Buying it twice — once as purchase, once as consumption — would double-count.
+                    {' '}Chicks are the exception: a flock is never drawn out of a store, so {money(acct.chickExpense)} of birds is expense
+                    on the day it was paid, and it is already counted above.
+                  </>
+                ) : (
+                  <>
+                    Only money that arrived is income: {incomeBuild.billedCount} {incomeBuild.billedCount === 1 ? 'entry books' : 'entries book'} what changed hands
+                    on the day the load left, and {incomeBuild.collectedCount || 'no'} {incomeBuild.collectedCount === 1 ? 'receipt brings in' : 'receipts bring in'} the credit part of a load billed earlier — the same rupee
+                    is never counted twice, because a bill was never income until it was paid. What a trader still owes waits in <strong className="text-ink-2">Receivables</strong> below and is not estimated into this figure.
+                  </>
+                )}
               </p>
               <div className="rounded-[12px] bg-sunk px-3 py-2.5 min-w-0">
                 <p className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-2">Money by payment method</p>
@@ -716,54 +827,42 @@ export function FinanceScreen() {
             </div>
           </Card>
 
-        {/* 2 · GODOWN CURRENT INVENTORY — an asset, never an expense */}
+        {/* 2 · STOCK ON HAND — two stores, one asset, never an expense */}
         <div className="rounded-[18px] border border-accent/35 bg-accent-soft/45 shadow-card overflow-hidden">
           <div className="px-4 py-3.5 border-b border-accent/25 flex items-start justify-between gap-3 flex-wrap">
             <div className="min-w-0">
-              <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.16em] text-accent-ink">Godown inventory · current stock value</p>
+              <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.16em] text-accent-ink">Stock on hand · two stores, one rule</p>
               <p className="font-display text-[26px] leading-9 font-semibold text-ink tnum tracking-tight mt-1">
-                {gLedger.asOfValue > 0 ? money(gLedger.asOfValue) : 'Rates not on record'}
+                {stockOnHand > 0 ? money(stockOnHand) : 'Rates not on record'}
               </p>
               <p className="font-mono text-[10.5px] text-muted mt-0.5 tnum">
-                {fmtIN(gLedger.asOfKg / 1000, 1)} MT across {gLedger.inStock} ingredient{gLedger.inStock === 1 ? '' : 's'} · an asset on the balance sheet, not a period expense
+                What the farm owns and has not yet consumed · an asset on the balance sheet, not a period expense
               </p>
             </div>
             <IconTile tone="accent" size={34}><Boxes size={17} /></IconTile>
           </div>
-          <div className="px-4 py-3.5">
-            {majorStock.length === 0 ? (
-              <p className="text-[12px] text-muted">Nothing is standing in the godown right now.</p>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3">
-                {majorStock.map(r => (
-                  <div key={r.ingredient} className="min-w-0">
-                    <p className="text-[12.5px] font-semibold text-ink truncate">{r.ingredient}</p>
-                    <p className="font-mono text-[11px] text-ink-2 tnum mt-0.5">{fmtIN(r.closingKg)} kg</p>
-                    <p className="font-mono text-[10px] text-muted tnum">{r.avg === null ? 'no rate on record' : `${fmtMoney(r.avg, 2)}/kg · ${short(r.closingValue)}`}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-            {gLedger.unpricedKg > 0 && (
-              <p className="mt-3 font-mono text-[10px] text-warn">{fmtIN(gLedger.unpricedKg)} kg carry no rate and are left out of the value, never priced at zero.</p>
-            )}
-            <div className="mt-3.5 pt-3 border-t border-accent/25 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.12em] text-muted-2 inline-flex items-center gap-1">
-                  <Pill size={11} />Medicine & vaccine store
-                </p>
-                <p className="font-mono text-[11.5px] text-ink-2 tnum mt-1">
-                  {medTotals.value > 0 ? money(medTotals.value) : 'Rates not on record'}
-                  {' · '}{medTotals.inStock} item{medTotals.inStock === 1 ? '' : 's'} held, each counted in its own unit
-                </p>
-                <p className="text-[10.5px] text-muted mt-0.5 leading-relaxed">
-                  Valued the same weighted-average way as feed. It stands as stock until a shed draws it, so buying it
-                  never reads as spending it.
-                </p>
-              </div>
-              {canOpenStore && <Button size="sm" variant="outline" onClick={() => nav('/medicines')}>Open store</Button>}
-            </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 divide-y divide-accent/25 lg:divide-y-0 lg:divide-x">
+            <StorePanel
+              icon={<Warehouse size={12} />} name="Feed godown"
+              value={gLedger.asOfValue > 0 ? money(gLedger.asOfValue) : 'Rates not on record'}
+              count={`${fmtIN(gLedger.asOfKg / 1000, 1)} MT across ${gLedger.inStock} ingredient${gLedger.inStock === 1 ? '' : 's'} · counted in kg`}
+              lines={feedLines} more={Math.max(0, feedHeld.length - feedLines.length)}
+              unpriced={gLedger.unpricedKg > 0 ? `${fmtIN(gLedger.unpricedKg)} kg carry no rate and are left out of the value, never priced at zero.` : null}
+              cta="Open godown" onOpen={canOpenGodown ? () => nav('/feed') : undefined}
+            />
+            <StorePanel
+              icon={<Pill size={12} />} name="Medicine & vaccine store"
+              value={medTotals.value > 0 ? money(medTotals.value) : 'Rates not on record'}
+              count={`${medTotals.inStock} item${medTotals.inStock === 1 ? '' : 's'} held · each counted in its own unit`}
+              lines={medLines} more={Math.max(0, medHeld.length - medLines.length)}
+              unpriced={medTotals.unpricedItems > 0 ? `${medTotals.unpricedItems} item${medTotals.unpricedItems === 1 ? '' : 's'} carry no rate and are left out of the value, never priced at zero.` : null}
+              cta="Open store" onOpen={canOpenStore ? () => nav('/medicines') : undefined}
+            />
           </div>
+          <p className="px-4 py-3 border-t border-accent/25 text-[11.5px] text-ink-2 leading-relaxed">
+            Both stores are replayed on the same weighted average, and neither one is spending on the day it is bought: the cost enters
+            the P&amp;L above only when a shed draws from that shelf.
+          </p>
         </div>
 
 
@@ -1700,8 +1799,8 @@ function NumCell({ v, tone, bold }: { v: number; tone?: 'success' | 'ink'; bold?
   );
 }
 
-function AcctLine({ label, hint, value, strong, derived, warn }: {
-  label: string; hint: string; value: number; strong?: boolean; derived?: boolean; warn?: boolean;
+function AcctLine({ label, hint, value, strong, derived, warn, tone = 'danger' }: {
+  label: string; hint: string; value: number; strong?: boolean; derived?: boolean; warn?: boolean; tone?: 'danger' | 'success';
 }) {
   return (
     <div className="flex items-start justify-between gap-3 min-w-0">
@@ -1712,7 +1811,8 @@ function AcctLine({ label, hint, value, strong, derived, warn }: {
         </p>
         <p className="font-mono text-[10px] text-muted truncate">{hint}</p>
       </div>
-      <span className={clsx('font-mono tnum font-semibold shrink-0', strong ? 'text-[17px] text-ink' : 'text-[14px]', warn ? 'text-warn' : strong ? '' : 'text-danger')}>
+      <span className={clsx('font-mono tnum font-semibold shrink-0', strong ? 'text-[17px] text-ink' : 'text-[14px]',
+        warn ? 'text-warn' : strong ? '' : tone === 'success' ? 'text-success' : 'text-danger')}>
         {fmtMoney(value)}
       </span>
     </div>
