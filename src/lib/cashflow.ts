@@ -12,11 +12,12 @@
  * adjusting the balance to match it.
  */
 import type {
-  CashCount, CashHandover, FinanceTxn, MoneyChannel, PaymentMethod, PaymentSplit, TraderTxn, TraderTxnKind, User,
+  CashCount, CashHandover, FinanceTxn, MoneyChannel, OpeningEntry, PaymentMethod, PaymentSplit, TraderTxn, TraderTxnKind, User,
 } from '@/types';
 import { CHANNEL_LABEL, MONEY_CHANNELS, PAYMENT_METHOD_LABEL } from '@/types';
 import { isInflow } from './accounting';
 import { fin, isISODate } from './analytics';
+import { todayISO } from './format';
 
 /** A date window; `Range` is accepted wherever a full one exists. */
 export type DateWindow = { from: string; to: string };
@@ -301,6 +302,20 @@ export function accountabilityError(row: {
   return isInflow(row.kind as FinanceTxn['kind'])
     ? 'Record who received the cash'
     : 'Record who paid the cash';
+}
+
+/**
+ * What an opening entry needs before it may stand as a ledger row. The date is judged against
+ * today rather than the placement: money that has not moved yet is not something the flock
+ * arrived with, and a row that moves cash must say how it moved like any other.
+ */
+export function openingEntryError(entry: OpeningEntry): string | null {
+  if (!entry.category.trim()) return 'Choose what the money was for';
+  if (!isISODate(entry.date)) return 'Pick the date the money actually moved';
+  if (entry.date > todayISO()) return 'An opening entry cannot be dated in the future';
+  const amount = fin(entry.amount);
+  if (amount === null || amount <= 0) return 'Enter an amount above zero';
+  return accountabilityError(entry);
 }
 
 /* ============================= DAILY CASH RECONCILIATION ============================= */

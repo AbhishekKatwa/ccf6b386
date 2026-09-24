@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
-import { ChevronRight, Info, Package, Receipt, TriangleAlert, Wheat } from 'lucide-react';
+import { ChevronRight, Info, Package, Plus, Receipt, TriangleAlert, Wheat } from 'lucide-react';
 import clsx from 'clsx';
 import { useCan, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, EmptyState, IconTile, KPI, SectionTitle, type Tone } from '@/components/ui/Card';
-import { SegmentedTabs } from '@/components/ui/Form';
+import { Button, SegmentedTabs } from '@/components/ui/Form';
 import { AreaTrend, BarsMini, CHART, ChartCard } from '@/components/ui/Charts';
+import { AddStockDialog } from '@/components/godown/AddStockDialog';
 import { LedgerDayHeader } from '@/components/godown/StockLedger';
 import { MovementDetail } from '@/components/godown/MovementDetail';
 import { KIND_META, ledgerKg } from '@/components/godown/movementMeta';
@@ -41,12 +42,14 @@ export function IngredientStockScreen() {
   const ingredient = decodeURIComponent(slug ?? '');
   const data = useCompanyData();
   const canFinance = useCan('viewFinance');
+  const canCreate = useCan('create');
   const { valuation } = useGodownPrices();
   const { coverage } = useFeedCoverage();
   const allocate = useShortageAllocator();
   const today = todayISO();
   const [tab, setTab] = useState<IngredientTab>('overview');
   const [open, setOpen] = useState<Movement | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   const movements = useMemo(
     () => godownMovements(data.feedStock, valuation, { sheds: data.sheds, batches: data.batches, feed: data.feed, users: data.users }),
@@ -86,15 +89,29 @@ export function IngredientStockScreen() {
   const formulaPathOf = (m: Movement) =>
     m.formulaId && data.feedFormulas.some(f => f.id === m.formulaId) ? `/feed/formulas/${m.formulaId}` : null;
 
+  /* The Godown's own booking sheet, opened with this ingredient already in hand. */
+  const addStockButton = canCreate && (
+    <Button size="sm" icon={<Plus size={14} />} onClick={() => setAddOpen(true)}>Add stock</Button>
+  );
+  const addStockDialog = (
+    <AddStockDialog open={addOpen} onClose={() => setAddOpen(false)} presetIngredient={ingredient} />
+  );
+
   if (!events.length) {
     return (
       <Page withNav>
-        <Header title={ingredient || 'Ingredient'} subtitle="Stock history" backTo="/feed" />
+        <Header title={ingredient || 'Ingredient'} subtitle="Stock history" backTo="/feed" action={addStockButton} />
         <div className="px-4 sm:px-0 mt-3 space-y-4">
           {cover.dailyKg > 0 && <ForecastCard cover={cover} />}
           <EmptyState icon={<Package size={22} />} title="No movements for this ingredient"
-            description="The godown ledger holds nothing under this name yet, so there is no history to trace." />
+            description="The godown ledger holds nothing under this name yet, so there is no history to trace."
+            action={canCreate && (
+              <Button size="sm" icon={<Plus size={14} />} onClick={() => setAddOpen(true)}>
+                Book the first {ingredient} entry
+              </Button>
+            )} />
         </div>
+        {addStockDialog}
       </Page>
     );
   }
@@ -111,7 +128,7 @@ export function IngredientStockScreen() {
     <Page withNav>
       <Header title={ingredient}
         subtitle={canFinance ? 'Stock history and valuation · central godown' : 'Stock history · central godown'}
-        backTo="/feed" />
+        backTo="/feed" action={addStockButton} />
 
       <div className="px-4 sm:px-0 mt-3 space-y-4">
         {/* §4 · where this ingredient stands, all of it read off the ledger */}
@@ -345,6 +362,8 @@ export function IngredientStockScreen() {
           </div>
         </>)}
       </div>
+
+      {addStockDialog}
 
       <MovementDetail movement={open} onClose={() => setOpen(null)} canFinance={canFinance}
         allocate={allocate} formulaPath={open ? formulaPathOf(open) : null} />

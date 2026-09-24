@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, Plus, Users, Power, LogIn, Check, MessageCircle, Inbox, ShieldCheck } from 'lucide-react';
+import { Building2, Plus, Users, Power, LogIn, Check, MessageCircle, Inbox, ShieldCheck, ChevronDown, UserPlus } from 'lucide-react';
 import clsx from 'clsx';
 import { Page, ScreenTitle } from '@/components/ui/Header';
 import { Button, Field, SelectField, SegmentedTabs } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
-import { Badge, EmptyState } from '@/components/ui/Card';
+import { Avatar, Badge, EmptyState } from '@/components/ui/Card';
 import { useApp } from '@/store/app';
 import { COMPANY_ASSIGNABLE_ROLES, ROLE_LABELS, type Role } from '@/types';
 import { fmtDateTime } from '@/lib/format';
@@ -32,15 +32,20 @@ export function AdminScreen() {
   const [newCompany, setNewCompany] = useState('');
   const [userDialog, setUserDialog] = useState(false);
   const [mapDialog, setMapDialog] = useState<string | null>(null);
+  const [rosterOpen, setRosterOpen] = useState<string | null>(null);
+  const [pickerCompanyId, setPickerCompanyId] = useState<string | null>(null);
 
   const [form, setForm] = useState({ name: '', mobile: '', password: '', role: 'OWNER' as Role, companyIds: [] as string[] });
   const [formError, setFormError] = useState<string | null>(null);
 
   function submitCompany() {
-    if (!newCompany.trim()) return;
-    addCompany(newCompany.trim());
-    pushToast('success', `Company "${newCompany.trim()}" created`);
+    const name = newCompany.trim();
+    if (!name) return;
+    const company = addCompany(name);
+    pushToast('success', `Company "${name}" created`);
     setNewCompany(''); setCompanyDialog(false);
+    // A company with nobody in it is a dead end — go straight to mapping.
+    setPickerCompanyId(company.id);
   }
 
   function submitUser() {
@@ -78,7 +83,8 @@ export function AdminScreen() {
         {tab === 'companies' && (
           <div className="space-y-2.5">
             {companies.map(c => {
-              const memberCount = users.filter(u => u.companyIds.includes(c.id)).length;
+              const members = users.filter(u => u.companyIds.includes(c.id));
+              const rosterOpenHere = rosterOpen === c.id;
               return (
                 <div key={c.id} className="bg-card border border-line rounded-[16px] p-4 shadow-card">
                   <div className="flex items-start gap-3">
@@ -88,13 +94,43 @@ export function AdminScreen() {
                         <p className="text-[15px] font-semibold text-ink truncate">{c.name}</p>
                         <Badge tone={c.active ? 'success' : 'neutral'}>{c.active ? 'Active' : 'Off'}</Badge>
                       </div>
-                      <p className="font-mono text-[11px] text-muted mt-1 tnum">{memberCount} user{memberCount === 1 ? '' : 's'}</p>
+                      <button type="button"
+                        onClick={() => setRosterOpen(rosterOpenHere ? null : c.id)}
+                        disabled={members.length === 0}
+                        className={clsx('mt-1 flex items-center gap-1.5 font-mono text-[11px] tnum',
+                          members.length === 0 ? 'text-muted-2' : 'text-muted hover:text-ink')}>
+                        <Users size={12} className="shrink-0" />
+                        {members.length === 0
+                          ? 'No users mapped'
+                          : <>
+                            <span className="truncate">{members.length} user{members.length === 1 ? '' : 's'} · {members.map(u => u.name).join(', ')}</span>
+                            <ChevronDown size={13} className={clsx('shrink-0 transition-transform', rosterOpenHere && 'rotate-180')} />
+                          </>}
+                      </button>
                     </div>
                   </div>
-                  <div className="flex gap-2 mt-3">
+                  {rosterOpenHere && members.length > 0 && (
+                    <div className="mt-3 space-y-1 rounded-[12px] bg-sunk p-2">
+                      {members.map(u => (
+                        <div key={u.id} className="flex items-center gap-2.5 min-w-0">
+                          <Avatar name={u.name} initials={u.initials} size={28} tone={u.active ? 'brand' : 'neutral'} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[13px] font-semibold text-ink truncate">{u.name}</p>
+                            <p className="font-mono text-[10.5px] text-muted tnum truncate">{u.mobile} · {ROLE_LABELS[u.role]}</p>
+                          </div>
+                          {!u.active && <Badge tone="neutral">Off</Badge>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2 mt-3">
                     <Button size="sm" variant="outline" icon={<LogIn size={14} />}
                       onClick={() => { const r = selectCompany(c.id); if (r.ok) { pushToast('info', `Entered ${c.name}`); nav('/'); } else pushToast('error', r.error ?? 'Cannot enter'); }}>
                       Enter
+                    </Button>
+                    <Button size="sm" variant={members.length === 0 ? 'success' : 'outline'} icon={<UserPlus size={14} />}
+                      onClick={() => setPickerCompanyId(c.id)}>
+                      Map users
                     </Button>
                     <Button size="sm" variant={c.active ? 'outline' : 'success'} icon={<Power size={14} />}
                       onClick={() => { toggleCompanyActive(c.id); pushToast('success', c.active ? 'Company deactivated' : 'Company activated'); }}>
@@ -221,6 +257,32 @@ export function AdminScreen() {
             </div>
           )}
           {formError && <p className="text-[12px] text-danger font-medium">{formError}</p>}
+        </div>
+      </Dialog>
+
+      {/* Map users → this company (the reverse of the per-user sheet above) */}
+      <Dialog open={!!pickerCompanyId} onClose={() => setPickerCompanyId(null)} title="Mapped users"
+        subtitle={companies.find(c => c.id === pickerCompanyId)?.name}
+        footer={<Button block onClick={() => { setPickerCompanyId(null); pushToast('success', 'Access updated'); }}>Done</Button>}>
+        <div className="space-y-1.5">
+          {users.filter(u => u.role !== 'MASTER_ADMIN').map(u => {
+            const on = pickerCompanyId !== null && u.companyIds.includes(pickerCompanyId);
+            return (
+              <button key={u.id} type="button"
+                onClick={() => updateUserCompanies(u.id, on && pickerCompanyId
+                  ? u.companyIds.filter(x => x !== pickerCompanyId)
+                  : [...u.companyIds, ...(pickerCompanyId ? [pickerCompanyId] : [])])}
+                className={clsx('w-full flex items-center gap-2.5 rounded-[12px] border px-3 py-2.5 text-left press', on ? 'border-brand bg-brand-soft' : 'border-line bg-card')}>
+                <span className={clsx('w-5 h-5 rounded-[6px] border flex items-center justify-center shrink-0', on ? 'bg-brand border-brand text-white' : 'border-line')}>
+                  {on && <Check size={13} />}
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-[13px] font-medium text-ink truncate">{u.name}</span>
+                  <span className="block font-mono text-[10.5px] text-muted tnum truncate">{u.mobile} · {ROLE_LABELS[u.role]}</span>
+                </span>
+              </button>
+            );
+          })}
         </div>
       </Dialog>
 

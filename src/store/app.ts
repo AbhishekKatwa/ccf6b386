@@ -6,7 +6,7 @@ import type {
   EggCollection, EggGradeCounts, Farm, FarmTask, FeedConsumption,
   EggSaleBooking, EggSaleBookingDraft,
   FeedFormula, FeedFormulaItem, FeedRoundLog, FeedStockEntry, FinanceTxn, FormulaInput, EggGrade,
-  MortalityEntry, NewBatchInput, PaymentMethod, PermissionKey, PaymentSplit, PermissionSet, Role,
+  MortalityEntry, NewBatchInput, OpeningEntry, PaymentMethod, PermissionKey, PaymentSplit, PermissionSet, Role,
   SaleEntry, SaleEntryDraft, SaleEntryLine, SaleLog, Session, Shed, SupportMessage, Trader, TraderTxn, User,
   BirdType, VaccinationDraft, VaccinationItem, VaccinationStatus, VaccinationTemplate, VaccinationTemplateItem,
   MedicineItem, MedicineItemDraft, MedicineReceiptDraft, MedicineStockEntry, MedicineUsageDraft, MedicineAdjustmentDraft,
@@ -14,7 +14,7 @@ import type {
 import { EGG_GRADE_LABELS, EGG_GRADES, EGGS_PER_TRAY, EMPTY_GRADE_COUNTS, FEED_INGREDIENTS, FEED_ROUNDS, MEDICINE_UNITS } from '@/types';
 import { DEFAULT_ROLE_PERMISSIONS, effectiveCan } from '@/lib/permissions';
 import { generateOtp, hashPassword, isOtpValid, normalizeMobile, verifyPassword } from '@/lib/auth';
-import { accountabilityError, cashPositionOf } from '@/lib/cashflow';
+import { accountabilityError, cashPositionOf, openingEntryError } from '@/lib/cashflow';
 import { FEED_PURCHASE_CATEGORY, MEDICINE_PURCHASE_CATEGORY } from '@/lib/accounting';
 import {
   batchOfShedOn, eggStockByGrade, entryAmount, entryTrays, formulaDeduction, formulaForDate,
@@ -159,7 +159,7 @@ interface AppState {
    * stored as this batch's own rows, so editing a template afterwards never reaches back
    * into a placed flock (§1).
    */
-  addBatch: (input: NewBatchInput, schedule?: VaccinationDraft[]) => Result;
+  addBatch: (input: NewBatchInput, schedule?: VaccinationDraft[], opening?: OpeningEntry[]) => Result;
   nextBatchCode: (shedId: string) => string;
   updateBatch: (id: string, patch: Partial<Batch>) => void;
   setBatchFeedIntake: (id: string, tonnesPerDay: number | null) => Result;
@@ -1129,7 +1129,7 @@ export const useApp = create<AppState>()(persist(
         while (used.has(`${base}-${String.fromCharCode(65 + i)}`)) i++;
         return `${base}-${String.fromCharCode(65 + i)}`;
       },
-      addBatch: (input, schedule) => {
+      addBatch: (input, schedule, opening) => {
         const companyId = cid();
         if (!companyId) return { ok: false, error: 'No company selected' };
         const role = me()?.role;
@@ -1144,7 +1144,20 @@ export const useApp = create<AppState>()(persist(
         if (!input.breed.trim()) return { ok: false, error: 'Breed is required' };
         if (!input.placementDate) return { ok: false, error: 'Placement date is required' };
         if (input.initialBirds <= 0) return { ok: false, error: 'Place at least one bird' };
-        if (input.initialBirds > shed.capacity) return { ok: false, error: `Shed capacity is ${shed.capacity} birds` };
+        // Shed capacity is a planning figure, not a ceiling: a real placement can exceed it.
+        // Opening money is booked into the Finance ledger as part of this one decision, so it
+        // answers to the finance permission, the accountability questions and the day lock —
+        // and a rejected line stops the placement rather than half-booking a flock.
+        if (opening?.length) {
+          if (!can('viewFinance')) return { ok: false, error: 'Only roles that record finance can add opening entries' };
+          for (const entry of opening) {
+            const invalid = openingEntryError(entry);
+            if (invalid) return { ok: false, error: invalid };
+            if (get().isLocked(shed.id, entry.date)) {
+              return { ok: false, error: `${entry.date} is locked for ${shed.name} — the Owner must unlock it first` };
+            }
+          }
+        }
         // The plan is part of placing the flock: a half-filled line stops the placement rather
         // than leaving a batch whose schedule silently lost a dose.
         for (const draft of schedule ?? []) {
@@ -1167,6 +1180,13 @@ export const useApp = create<AppState>()(persist(
         const rows = (schedule ?? []).map(d => vaccinationRow(
           d, batch, batch.createdBy, get().online,
         ));
+        // Booked as ordinary ledger rows tagged to the batch: from here the ledger, the cash
+        // position and every report treat them like any hand-typed entry, and Finance can
+        // correct them the same way.
+        const openingRows: FinanceTxn[] = (opening ?? []).map(e => ({
+          ...e, id: uid('fx'), companyId, batchId: batch.id,
+          createdBy: batch.createdBy, createdAt: nowISO(), synced: get().online,
+        }));
         set(s => {
           // One audit row for the placement and one for the plan it carried in: the copies
           // are the decision taken here, and a later dispute reads them as such.
@@ -1178,10 +1198,19 @@ export const useApp = create<AppState>()(persist(
               byUserId: batch.createdBy, at: nowISO(),
             });
           }
+          if (openingRows.length) {
+            entries.unshift({
+              id: uid('au'), companyId, entity: 'Batch', entityId: batch.id,
+              action: 'CREATE', field: 'openingEntries',
+              newValue: `${openingRows.length} opening entr${openingRows.length === 1 ? 'y' : 'ies'} · ${fmtMoney(openingRows.reduce((t, r) => t + r.amount, 0))}`,
+              byUserId: batch.createdBy, at: nowISO(),
+            });
+          }
           return {
             batches: [...s.batches, batch],
             sheds: s.sheds.map(x => x.id === shed.id ? { ...x, status: 'ACTIVE', updatedAt: nowISO() } : x),
             vaccinations: [...s.vaccinations, ...rows],
+            finance: openingRows.length ? [...s.finance, ...openingRows] : s.finance,
             audit: entries.slice(0, 500),
           };
         });

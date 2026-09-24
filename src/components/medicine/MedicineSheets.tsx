@@ -260,7 +260,10 @@ export function MedicineReceiveSheet({ medicineId, onClose }: { medicineId?: str
 
 /* ============================= USE IN SHED / BATCH ============================= */
 
-export function MedicineUsageSheet({ medicineId, onClose }: { medicineId?: string; onClose: () => void }) {
+/** Mounted only while it is open; `presetBatchId` opens it on the flock the caller is reading. */
+export function MedicineUsageSheet({ medicineId, presetBatchId, onClose }: {
+  medicineId?: string; presetBatchId?: string; onClose: () => void;
+}) {
   const useMedicine = useApp(s => s.useMedicine);
   const pushToast = useApp(s => s.pushToast);
   const isLocked = useApp(s => s.isLocked);
@@ -272,9 +275,12 @@ export function MedicineUsageSheet({ medicineId, onClose }: { medicineId?: strin
   const today = todayISO();
 
   const usable = items.filter(i => i.active);
+  // Only a flock whose shed this person can see may seed the sheet, or the gate would jam.
+  const preset = batches.find(b => b.id === presetBatchId && sheds.some(s => s.id === b.shedId));
   const [f, setF] = useState({
     medicineId: medicineId ?? usable[0]?.id ?? '', date: today, qty: '',
-    shedId: sheds[0]?.id ?? '', batchId: '', reason: USE_REASONS[0],
+    shedId: preset?.shedId ?? sheds[0]?.id ?? '', batchId: preset?.id ?? '',
+    reason: USE_REASONS[0],
     usedBy: user?.name ?? '', remarks: '',
   });
 

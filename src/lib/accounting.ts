@@ -38,7 +38,15 @@ export const isInflow = (k: TxnKind) => k === 'INCOME' || k === 'SALE' || k === 
  */
 export const FEED_PURCHASE_CATEGORY = 'Feed Purchase';
 export const MEDICINE_PURCHASE_CATEGORY = 'Medicine Purchase';
-export const INVENTORY_CATEGORIES = new Set([FEED_PURCHASE_CATEGORY, MEDICINE_PURCHASE_CATEGORY, 'Chick Purchase']);
+export const CHICK_PURCHASE_CATEGORY = 'Chick Purchase';
+export const INVENTORY_CATEGORIES = new Set([FEED_PURCHASE_CATEGORY, MEDICINE_PURCHASE_CATEGORY, CHICK_PURCHASE_CATEGORY]);
+
+/** The heads the money forms offer. One list, so a category means the same thing everywhere. */
+export const FINANCE_CATEGORIES = [
+  'Egg Sale', 'Bird Sale', 'Manure Sale',
+  FEED_PURCHASE_CATEGORY, MEDICINE_PURCHASE_CATEGORY, CHICK_PURCHASE_CATEGORY,
+  'Medicine', 'Labour', 'Electricity', 'Transport', 'Maintenance', 'Other',
+];
 
 /**
  * Is this outflow an inventory/capital acquisition rather than operating spend?

@@ -21,11 +21,12 @@ import {
 import { RecordPaymentDialog, type PaymentTarget, type Receivable } from '@/components/finance/RecordPaymentDialog';
 import { usePurchasePositions, useSalePositions } from '@/hooks/usePaymentPositions';
 import { payableTotals, UNSUPPLIED, unlinkedPurchasePayments, type PurchasePosition } from '@/lib/purchasing';
+import { saleReceivableTotal } from '@/lib/calc';
 import { fmtMoney, fmtIN, fmtDate, fmtDateShort, todayISO } from '@/lib/format';
 import { latestFirst } from '@/lib/order';
 import { feedCostByShed, feedExpenseTraces, revenueBreakdown, pnlTrend, type FeedTrace, type PnlMode, type Range } from '@/lib/analytics';
 import {
-  allocateShortage, computeFarmPnl, godownLedger, INVENTORY_CATEGORIES, isInventoryPurchase, isInflow, shortageRows,
+  allocateShortage, computeFarmPnl, FINANCE_CATEGORIES, godownLedger, INVENTORY_CATEGORIES, isInventoryPurchase, isInflow, shortageRows,
   type ShedPnl,
 } from '@/lib/accounting';
 import {
@@ -37,7 +38,6 @@ import { MEDICINE_ROLES } from '@/lib/permissions';
 import type { FinanceTxn, TxnKind } from '@/types';
 
 const KINDS: TxnKind[] = ['INCOME', 'EXPENSE', 'PURCHASE', 'SALE', 'PAYMENT_IN', 'PAYMENT_OUT'];
-const CATEGORIES = ['Egg Sale', 'Bird Sale', 'Manure Sale', 'Feed Purchase', 'Medicine Purchase', 'Chick Purchase', 'Medicine', 'Labour', 'Electricity', 'Transport', 'Maintenance', 'Other'];
 
 /* ============================= PERIOD ============================= */
 
@@ -250,6 +250,9 @@ export function FinanceScreen() {
   /** Money that left as a purchase payment but answers to no receipt on this farm. */
   const strays = useMemo(() => unlinkedPurchasePayments(finance, feedStock, medicineStock), [finance, feedStock, medicineStock]);
   const dues = useSalePositions();
+  /** Billed to traders and still unpaid — the gap between income booked and money received. */
+  const receivableTotal = useMemo(() => saleReceivableTotal(dues), [dues]);
+  const openDues = useMemo(() => dues.filter(p => p.outstanding > 0).length, [dues]);
   const receivables = useMemo<Receivable[]>(() => {
     const traderName = new Map(traders.map(t => [t.id, t.name]));
     return dues.map(p => ({ position: p, traderName: traderName.get(p.entry.traderId) ?? 'Trader no longer on file' }));
@@ -584,6 +587,20 @@ export function FinanceScreen() {
             <KpiCard label="Total income" value={money(acct.income)} foot={`${acct.periodTxns.filter(t => isInflow(t.kind)).length} credit ${acct.periodTxns.filter(t => isInflow(t.kind)).length === 1 ? 'entry' : 'entries'}`} tone="success" icon={<TrendingUp size={15} />} />
             <KpiCard label="Total expense" value={money(acct.totalExpense)} foot="Operating + feed consumed + shared godown" tone="danger" icon={<TrendingDown size={15} />} />
             <KpiCard label="Net profit" value={money(acct.net)} foot={acct.net >= 0 ? 'Surplus for this period' : 'Deficit for this period'} tone={acct.net >= 0 ? 'brand' : 'danger'} icon={<Scale size={15} />} />
+          </div>
+
+          {/* 1a · THE TWO OUTSTANDING POSITIONS — billed on the books above, not yet settled in cash.
+              These are every open bill on the farm, so they deliberately ignore the period filter. */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <KpiCard label="Receivables outstanding" value={money(receivableTotal)}
+              foot={`${openDues} of ${dues.length} ${dues.length === 1 ? 'bill' : 'bills'} owed to the farm · all time`}
+              tone={receivableTotal > 0 ? 'brand' : 'success'} icon={<ArrowDownLeft size={15} />} />
+            <KpiCard label="Payables outstanding" value={money(payables.outstanding)}
+              foot={`${payables.unpaidPurchases} of ${payables.purchases} ${payables.purchases === 1 ? 'receipt' : 'receipts'} unpaid${payables.unpriced ? ` · ${payables.unpriced} unpriced` : ''} · all time`}
+              tone={payables.outstanding > 0 ? 'danger' : 'success'} icon={<ArrowUpRight size={15} />} />
+            <KpiCard label="Net outstanding" value={money(receivableTotal - payables.outstanding)}
+              foot={receivableTotal - payables.outstanding >= 0 ? 'More owed to the farm than by it' : 'The farm owes more than it is owed'}
+              tone={receivableTotal - payables.outstanding >= 0 ? 'brand' : 'danger'} icon={<ArrowLeftRight size={15} />} />
           </div>
 
           {/* 1b · MONEY IN / MONEY OUT BY HOW IT MOVED — same ledger money, never a second set of rows */}
@@ -1345,7 +1362,7 @@ export function FinanceScreen() {
           <Field label="Date" type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
           <Field label="Amount (₹)" type="number" inputMode="decimal" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="0.00" className="font-mono" />
           <SelectField label="Category" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-            options={CATEGORIES.map(c => ({ value: c, label: c }))} />
+            options={FINANCE_CATEGORIES.map(c => ({ value: c, label: c }))} />
           <SelectField label="Belongs to" value={form.target} onChange={e => setForm(f => ({ ...f, target: e.target.value }))}
             options={targetOptions} />
           <p className="-mt-2 text-[11px] text-muted">Every expense and income should land on a shed (via its batch) or on the godown itself. Anything left unmapped is shown as Unmapped and stays out of the shed figures.</p>

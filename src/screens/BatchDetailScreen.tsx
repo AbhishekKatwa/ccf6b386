@@ -18,6 +18,8 @@ import { useGodownPrices } from '@/hooks/useGodownPrices';
 import { useVaccinationSchedule } from '@/hooks/useVaccinations';
 import { countsSummaryLine } from '@/lib/vaccination';
 import { VaccinationBatchSection } from '@/components/vaccination/VaccinationBatchSection';
+import { FeedGivenDialog } from '@/components/godown/FeedGivenDialog';
+import { MedicineUsageSheet } from '@/components/medicine/MedicineSheets';
 import { usageExpenseOf } from '@/lib/medicines';
 import { useMedicineValuation } from '@/hooks/useMedicineValuation';
 import { MedicineLedgerSurface, type MedicineRefs } from '@/components/medicine/MedicineLedger';
@@ -49,6 +51,8 @@ export function BatchDetailScreen() {
   const canClose = useCan('closeBatch');
   const canUpdate = useCan('update');
   const canManageFormula = useCan('manageFormulas');
+  const canFeed = useCan('createDailyOps');
+  const canBook = useCan('create');
   const user = useCurrentUser();
   const { priceOf } = useGodownPrices();
   const vac = useVaccinationSchedule(batchId);
@@ -62,6 +66,8 @@ export function BatchDetailScreen() {
   const [intakeOpen, setIntakeOpen] = useState(false);
   const [intake, setIntake] = useState('');
   const [medicineOpen, setMedicineOpen] = useState(false);
+  const [feedOpen, setFeedOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
 
   const canSeeMedicine = !!user && MEDICINE_ROLES.includes(user.role);
   const canSeeFormula = !!user && FORMULA_VIEW_ROLES.includes(user.role);
@@ -380,7 +386,7 @@ export function BatchDetailScreen() {
               figure={todaysFeed ? `${fmtIN(todaysFeed, 2)} t given today` : 'Not fed today'}
               hint={`${fmtIN(m.feed30.tonnes, 2)} t in the last 30 days${canFinance ? ` · ${fmtMoney(feedCost.cost)} charged to this flock` : ''}`}
               actionLabel={isActive ? 'Record feeding' : 'View feed ledger'}
-              onAction={() => nav('/feed')} />
+              onAction={() => { if (isActive && canFeed) setFeedOpen(true); else nav('/feed'); }} />
           </div>
         )}
 
@@ -503,7 +509,7 @@ export function BatchDetailScreen() {
                   </div>
                 )}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <Button size="sm" variant="outline" onClick={() => nav('/medicines')}>Record medicine usage</Button>
+                  <Button size="sm" variant="outline" onClick={() => { if (canBook) setUsageOpen(true); else nav('/medicines'); }}>Record medicine usage</Button>
                   {canFinance && (
                     <span className="font-mono text-[11px] text-muted tnum">
                       {fmtMoney(medicineExpense)} charged to this flock
@@ -568,6 +574,10 @@ export function BatchDetailScreen() {
           Leave it empty to keep this batch out of the forecast — the godown assumes nothing for it.
         </p>
       </Dialog>
+
+      {/* The same two sheets the module screens use, opened on this flock. */}
+      {feedOpen && <FeedGivenDialog onClose={() => setFeedOpen(false)} presetBatchId={batch.id} />}
+      {usageOpen && <MedicineUsageSheet presetBatchId={batch.id} onClose={() => setUsageOpen(false)} />}
     </Page>
   );
 }

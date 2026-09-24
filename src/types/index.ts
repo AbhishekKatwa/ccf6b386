@@ -820,6 +820,21 @@ export interface FinanceTxn extends PaymentAccountability {
   synced: boolean;
 }
 
+/**
+ * A money line a flock arrives with when it is onboarded mid-life — already paid out or
+ * taken in before anyone tracked it here. It is not a special kind of record: placing the
+ * batch turns each one into an ordinary dated Finance row tagged to that batch, so the
+ * ledger, the cash position and every report see it exactly as they see a hand-typed entry.
+ */
+export interface OpeningEntry extends PaymentAccountability {
+  kind: Extract<TxnKind, 'INCOME' | 'EXPENSE'>;
+  category: string;
+  amount: number;
+  /** The day the money actually moved, which is usually before the placement date. */
+  date: string;
+  remarks?: string;
+}
+
 /* ============================= SUPPORT ============================= */
 
 /** A message sent from Contact & help. Persisted so the Master Admin panel can see it. */

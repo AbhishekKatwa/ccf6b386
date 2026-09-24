@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { Building2, ChevronRight, Plus } from 'lucide-react';
-import { useApp, useCompanyData, useCurrentUser } from '@/store/app';
+import { useApp, useCan, useCompanyData, useCurrentUser } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, Row, StatusBadge, EmptyState, IconTile } from '@/components/ui/Card';
 import { Button, Field, SegmentedTabs } from '@/components/ui/Form';
@@ -10,6 +10,7 @@ import { fmtClock, fmtIN, fmtPct, todayISO } from '@/lib/format';
 import { eggStockTrays } from '@/lib/calc';
 import { useBatchMetrics } from '@/hooks/useBatchMetrics';
 import { VaccinationPlanStep } from '@/components/vaccination/VaccinationPlan';
+import { OpeningEntriesStep, blankOpening, toOpeningEntry, type OpeningForm } from '@/components/batch/OpeningEntries';
 import { FEED_ROUNDS, FEED_ROUND_LABELS, type BirdType, type VaccinationDraft } from '@/types';
 
 /** A shed with a live flock has no page of its own: the flock's operating view is the shed. */
@@ -40,6 +41,8 @@ export function ShedDetailScreen() {
   });
   /** The plan copied into the new batch at placement; the batch owns these dates from then on. */
   const [schedule, setSchedule] = useState<VaccinationDraft[]>([]);
+  /** Money that had already moved before this flock was tracked here. */
+  const [opening, setOpening] = useState<OpeningForm[]>([]);
 
   if (!shed) return <Page><Header title="Shed" /><div className="px-4 sm:px-0"><EmptyState title="Shed not found" /></div></Page>;
 
@@ -49,10 +52,13 @@ export function ShedDetailScreen() {
   const rounds = FEED_ROUNDS.map(rd => ({ rd, e: feedRounds.find(r => r.shedId === shed.id && r.date === today && r.round === rd) }));
 
   const canPlace = !live && (user?.role === 'OWNER' || user?.role === 'FARM_SUPERVISOR');
+  // Opening money lands in the Finance ledger, so only a role that may record finance sees the step.
+  const canMoney = useCan('viewFinance');
 
   function resetForm() {
     setForm({ birdType: 'LAYER', breed: '', hatchDate: '', placementDate: todayISO(), birds: '' });
     setSchedule([]);
+    setOpening([]);
   }
 
   function submit() {
@@ -61,11 +67,11 @@ export function ShedDetailScreen() {
       farmId: shed!.farmId, shedId: shed!.id, birdType: form.birdType, breed: form.breed,
       hatchDate: form.hatchDate || form.placementDate, placementDate: form.placementDate,
       initialBirds: parseInt(form.birds, 10) || 0,
-    }, schedule.length ? schedule : undefined);
+    }, schedule.length ? schedule : undefined, opening.length ? opening.map(toOpeningEntry) : undefined);
     if (!r.ok) return pushToast('error', r.error ?? 'Failed');
-    pushToast('success', schedule.length
-      ? `Batch ${code} placed with ${schedule.length} vaccination${schedule.length === 1 ? '' : 's'} scheduled`
-      : `Batch ${code} placed in ${shed!.name}`);
+    pushToast('success', `Batch ${code} placed in ${shed!.name}`
+      + (schedule.length ? ` · ${schedule.length} vaccination${schedule.length === 1 ? '' : 's'} scheduled` : '')
+      + (opening.length ? ` · ${opening.length} opening entr${opening.length === 1 ? 'y' : 'ies'} booked` : ''));
     setOpen(false);
     resetForm();
   }
@@ -144,7 +150,11 @@ export function ShedDetailScreen() {
             <Field label="Placement date" type="date" value={form.placementDate} onChange={e => setForm(f => ({ ...f, placementDate: e.target.value }))} />
             <Field label="Birds placed" type="number" inputMode="numeric" value={form.birds}
               onChange={e => setForm(f => ({ ...f, birds: e.target.value }))}
-              placeholder={`up to ${shed.capacity}`} className="font-mono" suffix="birds" hint={`Batch number ${nextBatchCode(shed.id)}`} />
+              placeholder={`e.g. ${fmtIN(shed.capacity)}`} className="font-mono" suffix="birds"
+              hint={`Shed capacity ${fmtIN(shed.capacity)} · Batch number ${nextBatchCode(shed.id)}`} />
+            {canMoney && (
+              <OpeningEntriesStep placementDate={form.placementDate} forms={opening} onChange={setOpening} />
+            )}
             <VaccinationPlanStep placementDate={form.placementDate} birdType={form.birdType}
               drafts={schedule} onChange={setSchedule} />
           </div>
