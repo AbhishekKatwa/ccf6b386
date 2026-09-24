@@ -17,13 +17,13 @@ import { fmtDate, fmtIN, fmtMoney, fmtPct, shiftDate, todayISO } from '@/lib/for
 import { latestFirst } from '@/lib/order';
 import { dayKeys } from '@/lib/analytics';
 import {
-  batchOfShedOn, eggStockByGrade, entryAmount, entryTrays, gradeTotal, linesByGrade, loadBilled, loadPaid,
+  batchOfShedOn, eggStockByGrade, entryAmount, entryTrays, gradeTotal, isWalkInTrader, linesByGrade, loadBilled, loadPaid,
   ratePerEgg, salePositions, saleReceivableTotal, saleEntryTotals, type SalePosition,
 } from '@/lib/calc';
 import {
   EGG_GRADES, EGGS_PER_TRAY,
   type Batch, type EggCollection, type EggGrade, type EggGradeCounts, type EggSaleBooking, type GradeRates,
-  type SaleEntry, type SaleEntryDraft, type SaleEntryLine, type SalePricing, type TraderTxn,
+  type SaleEntry, type SaleEntryDraft, type SaleEntryLine, type SalePricing, type Trader, type TraderTxn,
 } from '@/types';
 
 /** One company's rows, exactly as the store hands them out. */
@@ -73,7 +73,8 @@ interface EntryForm {
 const emptyTrays = (): Record<EggGrade, string> => ({ GOOD: '', BROKEN: '', DOUBLE: '', SMALL: '' });
 const emptyRates = (): Record<EggGrade, string> => ({ GOOD: '', BROKEN: '', DOUBLE: '', SMALL: '' });
 
-function formFromEntry(entry?: SaleEntry): EntryForm {
+/** A new voucher opens on the walk-in account: the gate sale that names nobody is still a sale. */
+function formFromEntry(entry?: SaleEntry, walkInId = ''): EntryForm {
   const trays: TraysByShed = {};
   for (const line of entry?.lines ?? []) {
     trays[line.shedId] = {
@@ -84,7 +85,7 @@ function formFromEntry(entry?: SaleEntry): EntryForm {
     };
   }
   return {
-    traderId: entry?.traderId ?? '',
+    traderId: entry?.traderId ?? walkInId,
     date: entry?.date ?? todayISO(),
     pricing: entry?.pricing ?? 'RATE',
     trays,
@@ -501,7 +502,10 @@ export function SalesScreen() {
     shedId: activeSheds[0]?.id ?? '', trays: 10, grade: 'GOOD' as EggGrade, date: todayISO(), remarks: '',
   });
 
-  const [form, setForm] = useState<EntryForm>(() => formFromEntry());
+  /** Every company carries one walk-in account, so a gate sale never has to invent a trader. */
+  const walkInId = data.traders.find(isWalkInTrader)?.id ?? '';
+
+  const [form, setForm] = useState<EntryForm>(() => formFromEntry(undefined, walkInId));
 
   /** A booking can name a shed whose trays are not laid yet, so the form keeps showing
    * whatever shed it already carries — the stock check at save time is the honest gate. */
@@ -549,7 +553,7 @@ export function SalesScreen() {
 
   function openNewEntry() {
     setEditing(null);
-    setForm(formFromEntry());
+    setForm(formFromEntry(undefined, walkInId));
     setError(null);
     setEntryOpen(true);
   }
@@ -964,6 +968,13 @@ function SaleEntrySheet({ open, onClose, form, setForm, error, setError, editing
   const data = useCompanyData();
   const cashPeople = useApp(s => s.cashPeople);
   const nextCashReceiptNo = useApp(s => s.nextCashReceiptNo);
+  const addTrader = useApp(s => s.addTrader);
+  const pushToast = useApp(s => s.pushToast);
+  const canAddTrader = useCan('manageTraders');
+  /** Only the people who may keep the trader book may extend it from a voucher. */
+  const [traderOpen, setTraderOpen] = useState(false);
+  const [tform, setTform] = useState({ name: '', mobile: '' });
+  const [tErr, setTErr] = useState<string | null>(null);
   /** Only the company's own people may be named as the one who held the cash. */
   const people = useMemo(() => cashPeople(), [cashPeople, data.users]);
   const set = <K extends keyof EntryForm>(key: K, v: EntryForm[K]) => setForm(f => ({ ...f, [key]: v }));
@@ -974,6 +985,18 @@ function SaleEntrySheet({ open, onClose, form, setForm, error, setError, editing
     () => latestFirst(data.eggSaleBookings.filter(b => b.status === 'PLANNED')),
     [data.eggSaleBookings],
   );
+
+  /** The walk-in account is a fallback, so it says so and is asked for last. */
+  const traderOptions = useMemo(() => {
+    const label = (t: Trader) => isWalkInTrader(t)
+      ? `${t.name} · walk-in at the gate`
+      : canFinance && t.outstandingAmount > 0 ? `${t.name} · ${fmtMoney(t.outstandingAmount)} due` : t.name;
+    return [
+      { value: '', label: 'Select trader' },
+      ...data.traders.filter(t => !isWalkInTrader(t)).map(t => ({ value: t.id, label: label(t) })),
+      ...data.traders.filter(isWalkInTrader).map(t => ({ value: t.id, label: label(t) })),
+    ];
+  }, [data.traders, canFinance]);
 
   const lines = formLines(form);
   const rates: GradeRates = {};
@@ -1021,6 +1044,21 @@ function SaleEntrySheet({ open, onClose, form, setForm, error, setError, editing
     });
   }
 
+  /** A trader met at the gate is typed here rather than sent away to another screen. */
+  function createTrader() {
+    const name = tform.name.trim();
+    const mobile = tform.mobile.replace(/\D/g, '');
+    if (!name) { setTErr('Name the trader'); return; }
+    if (mobile.length !== 10) { setTErr('Enter their 10-digit mobile number'); return; }
+    const t = addTrader({ name, mobile, openingBalance: 0, outstandingAmount: 0, active: true });
+    if (!t) { setTErr('You cannot add traders'); return; }
+    set('traderId', t.id);
+    setTErr(null);
+    setTform({ name: '', mobile: '' });
+    setTraderOpen(false);
+    pushToast('success', `${name} added and set on this load`);
+  }
+
   return (
     <Dialog open={open} onClose={onClose}
       title={editing ? 'Edit sale entry' : 'New sale entry'}
@@ -1038,11 +1076,17 @@ function SaleEntrySheet({ open, onClose, form, setForm, error, setError, editing
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-2">
           <SelectField label="Trader" value={form.traderId} onChange={e => set('traderId', e.target.value)}
-            options={[{ value: '', label: 'Select trader' }, ...data.traders.map(t => ({
-              value: t.id, label: canFinance && t.outstandingAmount > 0 ? `${t.name} · ${fmtMoney(t.outstandingAmount)} due` : t.name,
-            }))]} />
+            hint={trader && isWalkInTrader(trader)
+              ? 'Booked to the gate account. Name the buyer if they trade here regularly.' : undefined}
+            options={traderOptions} />
           <Field label="Date" type="date" value={form.date} onChange={e => set('date', e.target.value)} />
         </div>
+        {canAddTrader && (
+          <Button size="sm" variant="ghost" icon={<Plus size={14} />} className="-mt-1"
+            onClick={() => { setTErr(null); setTraderOpen(true); }}>
+            Trader not in the list? Add one
+          </Button>
+        )}
 
         {!editing && openBookings.length > 0 && (
           <SelectField label="Use planner booking" value={form.bookingId}
@@ -1234,6 +1278,21 @@ function SaleEntrySheet({ open, onClose, form, setForm, error, setError, editing
             <Trash2 size={14} /> Delete this entry
           </button>
         )}
+
+        <Dialog open={traderOpen} onClose={() => setTraderOpen(false)} title="Add trader"
+          subtitle="Who took the load and how to reach them. GSTIN and address can wait for the trader's own page.">
+          <div className="space-y-3">
+            <Field label="Trader name" value={tform.name} onChange={e => setTform(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Rajesh Traders" />
+            <Field label="Mobile number" type="tel" inputMode="numeric" maxLength={10} value={tform.mobile}
+              onChange={e => setTform(f => ({ ...f, mobile: e.target.value.replace(/\D/g, '') }))}
+              prefix="+91" placeholder="10-digit" className="font-mono" />
+            {tErr && <p className="text-[12px] text-danger font-medium">{tErr}</p>}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" block onClick={() => setTraderOpen(false)}>Cancel</Button>
+              <Button block onClick={createTrader}>Add trader</Button>
+            </div>
+          </div>
+        </Dialog>
       </div>
     </Dialog>
   );

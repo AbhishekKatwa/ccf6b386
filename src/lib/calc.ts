@@ -1,10 +1,10 @@
 import type {
-  Batch, EggCollection, EggGrade, EggGradeCounts, FeedConsumption,
+  Batch, Company, EggCollection, EggGrade, EggGradeCounts, FeedConsumption,
   FeedStockEntry, GradeRates, MortalityEntry, PaymentStatus, SaleEntry,
-  SaleEntryLine, SalePricing, FeedFormula, TraderTxn, TraderTxnKind,
+  SaleEntryLine, SalePricing, FeedFormula, Trader, TraderTxn, TraderTxnKind,
 } from '@/types';
 import { EGG_GRADES, EGGS_PER_TRAY, EMPTY_GRADE_COUNTS } from '@/types';
-import { daysBetween, todayISO } from './format';
+import { daysBetween, nowISO, todayISO } from './format';
 
 /* ============================= BIRDS / MORTALITY ============================= */
 
@@ -256,6 +256,34 @@ export function txnSignedAmount(t: TraderTxn): number {
  */
 export function traderBalance(openingBalance: number, txns: TraderTxn[]): number {
   return round2(txns.reduce((n, t) => n + txnSignedAmount(t), openingBalance));
+}
+
+/**
+ * The walk-in account. A load sold at the gate to someone who never comes back still has to
+ * be booked against a name, so every company carries exactly one of these: no profile, the
+ * placeholder number the gate never asks for, and the same ledger as any other trader — its
+ * dues are real dues, they are just nobody's credit history.
+ */
+export const WALK_IN_NAME = 'Anonymous';
+export const WALK_IN_MOBILE = '999999999';
+export const walkInTraderId = (companyId: string) => `tr_anon_${companyId}`;
+
+export function isWalkInTrader(t: Trader): boolean {
+  return t.id === walkInTraderId(t.companyId);
+}
+
+export function walkInTrader(companyId: string): Trader {
+  const at = nowISO();
+  return {
+    id: walkInTraderId(companyId), companyId, name: WALK_IN_NAME, mobile: WALK_IN_MOBILE,
+    openingBalance: 0, outstandingAmount: 0, active: true, createdAt: at, updatedAt: at,
+  };
+}
+
+/** Append the walk-in account to every company that does not already have one. */
+export function ensureWalkInTraders(traders: Trader[], companies: Company[]): Trader[] {
+  const held = new Set(traders.filter(isWalkInTrader).map(t => t.companyId));
+  return [...traders, ...companies.filter(c => !held.has(c.id)).map(c => walkInTrader(c.id))];
 }
 
 /** How each ledger type is named wherever a trader's account is shown. */

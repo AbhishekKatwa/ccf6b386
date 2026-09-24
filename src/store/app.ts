@@ -17,9 +17,9 @@ import { generateOtp, hashPassword, isOtpValid, normalizeMobile, verifyPassword 
 import { accountabilityError, cashPositionOf, openingEntryError } from '@/lib/cashflow';
 import { FEED_PURCHASE_CATEGORY, MEDICINE_PURCHASE_CATEGORY } from '@/lib/accounting';
 import {
-  batchOfShedOn, eggStockByGrade, entryAmount, entryTrays, formulaDeduction, formulaForDate,
+  batchOfShedOn, eggStockByGrade, entryAmount, entryTrays, ensureWalkInTraders, formulaDeduction, formulaForDate,
   formulaTotalKg, formulaUsage, gradeTotal, linesByGrade, loadBilled, loadCredit, loadPaid, ratePerEgg, saleOutstanding,
-  traderBalance,
+  traderBalance, walkInTrader,
 } from '@/lib/calc';
 import { daysBetween, fmtIN, fmtMoney, nowISO, todayISO, uid } from '@/lib/format';
 import { nextPurchaseRef, purchasePosition } from '@/lib/purchasing';
@@ -473,7 +473,8 @@ function baseSeed() {
     saleLogs: seedSaleLogs, saleEntries: seedSaleEntries, feedStock: seedFeedStock,
     medicineItems: seedMedicineItems, medicineStock: seedMedicineStock,
     eggSaleBookings: [] as EggSaleBooking[],
-    feedFormulas: seedFeedFormulas, finance: seedFinance, traders: seedTraders,
+    feedFormulas: seedFeedFormulas, finance: seedFinance,
+    traders: ensureWalkInTraders(seedTraders, seedCompanies),
     traderTxns: seedTraderTxns, tasks: seedTasks, ingredientCatalog: [...FEED_INGREDIENTS],
     vaccinations: seedVaccinations, vaccinationTemplates: seedVaccinationTemplates,
     supportMessages: [] as SupportMessage[],
@@ -701,7 +702,7 @@ function migrateSaved(saved: unknown, fromVersion = 0): AppState {
   }
   // Read every balance back off its ledger, which also heals a save whose stored
   // totals had drifted away from the rows under them.
-  merged.traders = rebalanceTraders(merged.traders, merged.traderTxns);
+  merged.traders = rebalanceTraders(ensureWalkInTraders(merged.traders, merged.companies), merged.traderTxns);
   delete (merged as unknown as Record<string, unknown>).eggSales;
   merged.feedRounds = merged.feedRounds.filter(
     r => FEED_ROUNDS.includes(r.round) && (r.status === 'GIVEN' || r.status === 'SKIPPED'),
@@ -1065,7 +1066,12 @@ export const useApp = create<AppState>()(persist(
 
       addCompany: (name) => {
         const company: Company = { id: uid('c'), name, active: true, createdAt: nowISO(), updatedAt: nowISO() };
-        set(s => ({ companies: [...s.companies, company], audit: audit(s, 'Company', company.id, 'CREATE') }));
+        // A company is born able to sell at the gate, so its walk-in account comes with it.
+        set(s => ({
+          companies: [...s.companies, company],
+          traders: [...s.traders, walkInTrader(company.id)],
+          audit: audit(s, 'Company', company.id, 'CREATE'),
+        }));
         return company;
       },
       toggleCompanyActive: (id) => set(s => ({
@@ -2626,7 +2632,9 @@ export const useApp = create<AppState>()(persist(
     // slices. An older save simply gains them; nothing on it is rewritten.
     // v15: a load's price is read as ₹ per egg off its egg money, so the sale rows a voucher
     // owns are rebuilt from that voucher. Billed and received amounts are untouched.
-    version: 15,
+    // v16: every company gains its walk-in account, the trader a gate sale is booked against
+    // when there is no regular buyer. Nothing existing is rewritten.
+    version: 16,
     storage: createJSONStorage(() => localStorage),
     migrate: migrateSaved,
     partialize: (s) => {
