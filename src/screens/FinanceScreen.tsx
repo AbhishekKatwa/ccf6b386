@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Wallet, Plus, TrendingUp, TrendingDown, ShieldAlert, ArrowUpRight, ArrowDownLeft,
   ShoppingCart, HandCoins, ChevronRight, ChevronDown, Search, Warehouse, Boxes, Layers, Scale, AlertTriangle,
-  LayoutDashboard, Activity, ScrollText, Banknote, Landmark, ArrowLeftRight, ClipboardCheck, UserRound, Pill,
+  LayoutDashboard, Activity, ScrollText, Banknote, Landmark, ArrowLeftRight, ClipboardCheck, UserRound, Pill, ChartColumn,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -100,7 +100,7 @@ const DIRECTION_FILTERS = [
 
 /* ============================= TABS ============================= */
 
-type FinTab = 'overview' | 'activity' | 'ledger';
+type FinTab = 'overview' | 'analysis' | 'activity' | 'ledger';
 
 /* ============================= KPI CARD ============================= */
 
@@ -565,6 +565,7 @@ export function FinanceScreen() {
   const tabs = (
     <SegmentedTabs<FinTab> value={tab} onChange={setTab} options={[
       { value: 'overview', label: 'Overview', icon: <LayoutDashboard size={13} /> },
+      { value: 'analysis', label: 'Analysis', icon: <ChartColumn size={13} /> },
       { value: 'activity', label: 'Recent Activity', icon: <Activity size={13} /> },
       { value: 'ledger', label: 'Ledger', icon: <ScrollText size={13} /> },
     ]} scroll />
@@ -609,36 +610,55 @@ export function FinanceScreen() {
             <KpiCard label="Net profit" value={money(acct.net)} foot={acct.net >= 0 ? 'Surplus for this period' : 'Deficit for this period'} tone={acct.net >= 0 ? 'brand' : 'danger'} icon={<Scale size={15} />} />
           </div>
 
-        {/* 1a · BALANCES — the two positions still open on the farm, in both directions.
-            These are every open bill, so they deliberately ignore the period filter. */}
-        <div className="rounded-[18px] border border-brand/25 bg-brand-soft/50 px-3.5 py-3.5 sm:px-4 sm:py-4 space-y-3 min-w-0">
-          <Band
-            label="Balances · still open"
-            note="Not income and not expense — these are goods and money that have crossed but not settled. What suppliers are owed already sits in the godown and the medicine store as stock; what traders owe is loads already delivered. Nothing here repeats a figure from the row above."
-            right={<span className="font-mono text-[9px] uppercase tracking-[0.12em] text-brand-ink shrink-0">all time · ignores the period</span>}
-          />
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <KpiCard label="Receivables outstanding" value={money(receivableTotal)}
-              foot={`${openDues} of ${dues.length} ${dues.length === 1 ? 'bill' : 'bills'} owed to the farm`}
-              tone={receivableTotal > 0 ? 'brand' : 'success'} icon={<ArrowDownLeft size={15} />} />
-            <KpiCard label="Payables outstanding" value={money(payables.outstanding)}
-              foot={`${payables.unpaidPurchases} of ${payables.purchases} ${payables.purchases === 1 ? 'receipt' : 'receipts'} unpaid${payables.unpriced ? ` · ${payables.unpriced} unpriced` : ''}`}
-              tone={payables.outstanding > 0 ? 'danger' : 'success'} icon={<ArrowUpRight size={15} />} />
-            <KpiCard label="Net position" value={money(receivableTotal - payables.outstanding)}
-              foot={receivableTotal - payables.outstanding >= 0 ? 'Settles in the farm’s favour' : 'Settles against the farm'}
-              tone={receivableTotal - payables.outstanding >= 0 ? 'brand' : 'danger'} icon={<ArrowLeftRight size={15} />} />
-          </div>
-          <p className="text-[11.5px] text-ink-2 leading-relaxed px-0.5">
-            {payables.outstanding > 0
-              ? <>The {money(payables.outstanding)} owed to suppliers is not a loss: {stockOnHand >= payables.outstanding
-                  ? `${money(stockOnHand)} of feed and medicine stands on the shelves against it`
-                  : `${money(stockOnHand)} still stands on the shelves, and the balance has already left as feed and medicine the sheds consumed`}.
-                {' '}It enters the P&amp;L above only when a shed draws it, and paying it here moves cash without changing that P&amp;L again.
-              </>
-              : <>No supplier is waiting on the farm — every stock receipt on record is settled. </>}
-            {receivableTotal > 0 && <>{' '}The {money(receivableTotal)} traders owe joins Total income only when its receipt is booked.</>}
-          </p>
+        
+
+
+          <Card>
+            <SectionTitle right={<span className="font-mono text-[10px] text-muted">every number below comes from a record</span>}>
+              <span className="inline-flex items-center gap-1.5"><Layers size={14} className="text-brand -mt-[1px]" />How the expense is built</span>
+            </SectionTitle>
+            <div className="mt-2.5 space-y-2">
+              <AcctLine label="Direct shed expenses" hint={`operating money mapped to a shed · ${acct.sheds.reduce((s, r) => s + r.directCount, 0)} entries`} value={acct.sheds.reduce((s, r) => s + r.directExpense, 0)} />
+              <AcctLine label="Feed consumed by sheds" hint="derived from godown issues — the stock actually eaten" value={acct.feedExpense} derived />
+              <AcctLine label="Medicine drawn by sheds" hint="derived from store issues — valued at the shelf average of the day it left" value={acct.medicineExpense} derived />
+              <AcctLine label="Shared godown expenses" hint={shortage.basis === 'feed' ? 'godown shortage + farm-level charges, spread to sheds' : 'godown charges held at farm level'} value={acct.godownOperatingExpense + acct.allocatedShortage} />
+              {(acct.shortageExpense ?? 0) > 0 && shortage.basis === 'none' && (
+                <AcctLine label="Godown shortage (unspread)" hint="no feed consumed to spread it against" value={acct.unallocatedShortage} />
+              )}
+              {acct.unallocatedExpense > 0 && (
+                <AcctLine label="Not yet mapped" hint={`${acct.unallocatedCount} ${acct.unallocatedCount === 1 ? 'entry needs' : 'entries need'} a shed or the godown`} value={acct.unallocatedExpense} warn />
+              )}
+              <div className="h-px bg-line-2" />
+              <AcctLine label="Total expense" hint="the figure in the summary above" value={acct.totalExpense} strong />
+            </div>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <p className="text-[11px] text-muted leading-relaxed">
+                Feed and chick purchases are <strong className="text-ink-2">stock, not expense</strong>: {money(acct.inventoryPurchase)} of purchases in this period sits in the godown
+                (or in the birds) and is only expensed as the shed eats feed or the flock is sold. Buying it twice — once as purchase, once as consumption — would double-count.
+              </p>
+              <div className="rounded-[12px] bg-sunk px-3 py-2.5 min-w-0">
+                <p className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-2">Money by payment method</p>
+                {methods.length === 0 ? (
+                  <p className="font-mono text-[10.5px] text-muted mt-1 leading-relaxed">Nothing in this period says how it was paid.</p>
+                ) : (
+                  <div className="mt-1.5 space-y-1">
+                    {methods.slice(0, 4).map(m => (
+                      <div key={`${m.channel}:${m.method ?? '-'}`} className="flex items-baseline justify-between gap-2 min-w-0">
+                        <span className="text-[11.5px] text-ink-2 truncate">{m.label}</span>
+                        <span className="font-mono text-[11px] tnum shrink-0">
+                          {m.received > 0 && <span className="text-success">+{short(m.received)}</span>}
+                          {m.paid > 0 && <span className="text-danger ml-1.5">−{short(m.paid)}</span>}
+                        </span>
+                      </div>
+                    ))}
+                    {methods.length > 4 && <p className="font-mono text-[10px] text-muted">{methods.length - 4} more methods in the period.</p>}
+                  </div>
+                )}
+              </div>
+            </div>
+          </Card>
         </div>
+
 
           {/* 1b · MONEY IN / MONEY OUT BY HOW IT MOVED — same ledger money, never a second set of rows */}
           <Card>
@@ -691,52 +711,6 @@ export function FinanceScreen() {
             </div>
           </Card>
 
-          <Card>
-            <SectionTitle right={<span className="font-mono text-[10px] text-muted">every number below comes from a record</span>}>
-              <span className="inline-flex items-center gap-1.5"><Layers size={14} className="text-brand -mt-[1px]" />How the expense is built</span>
-            </SectionTitle>
-            <div className="mt-2.5 space-y-2">
-              <AcctLine label="Direct shed expenses" hint={`operating money mapped to a shed · ${acct.sheds.reduce((s, r) => s + r.directCount, 0)} entries`} value={acct.sheds.reduce((s, r) => s + r.directExpense, 0)} />
-              <AcctLine label="Feed consumed by sheds" hint="derived from godown issues — the stock actually eaten" value={acct.feedExpense} derived />
-              <AcctLine label="Medicine drawn by sheds" hint="derived from store issues — valued at the shelf average of the day it left" value={acct.medicineExpense} derived />
-              <AcctLine label="Shared godown expenses" hint={shortage.basis === 'feed' ? 'godown shortage + farm-level charges, spread to sheds' : 'godown charges held at farm level'} value={acct.godownOperatingExpense + acct.allocatedShortage} />
-              {(acct.shortageExpense ?? 0) > 0 && shortage.basis === 'none' && (
-                <AcctLine label="Godown shortage (unspread)" hint="no feed consumed to spread it against" value={acct.unallocatedShortage} />
-              )}
-              {acct.unallocatedExpense > 0 && (
-                <AcctLine label="Not yet mapped" hint={`${acct.unallocatedCount} ${acct.unallocatedCount === 1 ? 'entry needs' : 'entries need'} a shed or the godown`} value={acct.unallocatedExpense} warn />
-              )}
-              <div className="h-px bg-line-2" />
-              <AcctLine label="Total expense" hint="the figure in the summary above" value={acct.totalExpense} strong />
-            </div>
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <p className="text-[11px] text-muted leading-relaxed">
-                Feed and chick purchases are <strong className="text-ink-2">stock, not expense</strong>: {money(acct.inventoryPurchase)} of purchases in this period sits in the godown
-                (or in the birds) and is only expensed as the shed eats feed or the flock is sold. Buying it twice — once as purchase, once as consumption — would double-count.
-              </p>
-              <div className="rounded-[12px] bg-sunk px-3 py-2.5 min-w-0">
-                <p className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-2">Money by payment method</p>
-                {methods.length === 0 ? (
-                  <p className="font-mono text-[10.5px] text-muted mt-1 leading-relaxed">Nothing in this period says how it was paid.</p>
-                ) : (
-                  <div className="mt-1.5 space-y-1">
-                    {methods.slice(0, 4).map(m => (
-                      <div key={`${m.channel}:${m.method ?? '-'}`} className="flex items-baseline justify-between gap-2 min-w-0">
-                        <span className="text-[11.5px] text-ink-2 truncate">{m.label}</span>
-                        <span className="font-mono text-[11px] tnum shrink-0">
-                          {m.received > 0 && <span className="text-success">+{short(m.received)}</span>}
-                          {m.paid > 0 && <span className="text-danger ml-1.5">−{short(m.paid)}</span>}
-                        </span>
-                      </div>
-                    ))}
-                    {methods.length > 4 && <p className="font-mono text-[10px] text-muted">{methods.length - 4} more methods in the period.</p>}
-                  </div>
-                )}
-              </div>
-            </div>
-          </Card>
-        </div>
-
         {/* 2 · GODOWN CURRENT INVENTORY — an asset, never an expense */}
         <div className="rounded-[18px] border border-accent/35 bg-accent-soft/45 shadow-card overflow-hidden">
           <div className="px-4 py-3.5 border-b border-accent/25 flex items-start justify-between gap-3 flex-wrap">
@@ -786,6 +760,39 @@ export function FinanceScreen() {
             </div>
           </div>
         </div>
+
+
+{/* 1a · BALANCES — the two positions still open on the farm, in both directions.
+            These are every open bill, so they deliberately ignore the period filter. */}
+        <div className="rounded-[18px] border border-brand/25 bg-brand-soft/50 px-3.5 py-3.5 sm:px-4 sm:py-4 space-y-3 min-w-0">
+          <Band
+            label="Balances · still open"
+            note="Not income and not expense — these are goods and money that have crossed but not settled. What suppliers are owed already sits in the godown and the medicine store as stock; what traders owe is loads already delivered. Nothing here repeats a figure from the row above."
+            right={<span className="font-mono text-[9px] uppercase tracking-[0.12em] text-brand-ink shrink-0">all time · ignores the period</span>}
+          />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <KpiCard label="Receivables outstanding" value={money(receivableTotal)}
+              foot={`${openDues} of ${dues.length} ${dues.length === 1 ? 'bill' : 'bills'} owed to the farm`}
+              tone={receivableTotal > 0 ? 'brand' : 'success'} icon={<ArrowDownLeft size={15} />} />
+            <KpiCard label="Payables outstanding" value={money(payables.outstanding)}
+              foot={`${payables.unpaidPurchases} of ${payables.purchases} ${payables.purchases === 1 ? 'receipt' : 'receipts'} unpaid${payables.unpriced ? ` · ${payables.unpriced} unpriced` : ''}`}
+              tone={payables.outstanding > 0 ? 'danger' : 'success'} icon={<ArrowUpRight size={15} />} />
+            <KpiCard label="Net position" value={money(receivableTotal - payables.outstanding)}
+              foot={receivableTotal - payables.outstanding >= 0 ? 'Settles in the farm’s favour' : 'Settles against the farm'}
+              tone={receivableTotal - payables.outstanding >= 0 ? 'brand' : 'danger'} icon={<ArrowLeftRight size={15} />} />
+          </div>
+          <p className="text-[11.5px] text-ink-2 leading-relaxed px-0.5">
+            {payables.outstanding > 0
+              ? <>The {money(payables.outstanding)} owed to suppliers is not a loss: {stockOnHand >= payables.outstanding
+                  ? `${money(stockOnHand)} of feed and medicine stands on the shelves against it`
+                  : `${money(stockOnHand)} still stands on the shelves, and the balance has already left as feed and medicine the sheds consumed`}.
+                {' '}It enters the P&amp;L above only when a shed draws it, and paying it here moves cash without changing that P&amp;L again.
+              </>
+              : <>No supplier is waiting on the farm — every stock receipt on record is settled. </>}
+            {receivableTotal > 0 && <>{' '}The {money(receivableTotal)} traders owe joins Total income only when its receipt is booked.</>}
+          </p>
+        </div>
+
 
         {/* 2b · OUTSTANDING PAYABLES — stock already in the godown whose money has not gone out */}
         <Card>
@@ -878,6 +885,15 @@ export function FinanceScreen() {
             </>
           )}
         </Card>
+        </>)}
+
+        {/* ANALYSIS · the same records, cut by movement, time, category, shed and shortage */}
+        {tab === 'analysis' && (<>
+        <Band
+          label="Analysis of this period"
+          note="Nothing is booked or re-added here — every card reads the same records as Overview, cut by physical movement, time, category, shed and shortage."
+          right={<span className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-2 shrink-0">follows the period above</span>}
+        />
 
         {/* 3 · GODOWN LEDGER — how that position arose */}
         <Card>
@@ -1103,6 +1119,10 @@ export function FinanceScreen() {
             </>
           )}
         </Card>
+        </>)}
+
+        {/* Overview continues below: the period's flows, activity mix and cash custody. */}
+        {tab === 'overview' && (<>
 
         {/* financial flow + activity */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1275,7 +1295,6 @@ export function FinanceScreen() {
             </div>
           )}
         </Card>
-
         </>)}
 
         {/* RECENT ACTIVITY · the period's entries, newest day first, one tap opens the entry */}
