@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDownLeft, ChevronRight, RotateCcw, SlidersHorizontal } from 'lucide-react';
-import type { ReactNode } from 'react';
 import clsx from 'clsx';
 import { Card, EmptyState, IconTile, Skeleton, type Tone } from '@/components/ui/Card';
 import { Button, SearchField, SelectField } from '@/components/ui/Form';
@@ -21,12 +20,11 @@ const kg = ledgerKg;
 type KindFilter = 'ALL' | MovementKind;
 type MonthFilter = 'ALL' | string;
 
-export function StockLedger({ movements, totals, godownValue, canFinance, actions, allocate, focusEntryId }: {
+export function StockLedger({ movements, totals, godownValue, canFinance, allocate, focusEntryId }: {
   movements: Movement[];
   totals: LedgerTotals;
   godownValue: number;
   canFinance: boolean;
-  actions?: ReactNode;
   allocate: (m: Movement) => ShortageAllocation | null;
   /** A receipt someone asked to see — from a payable in Finance, or a payment's own row. */
   focusEntryId?: string | null;
@@ -128,10 +126,7 @@ export function StockLedger({ movements, totals, godownValue, canFinance, action
             {canFinance && godownValue > 0 && <> · <span className="text-accent-ink">{fmtMoney(godownValue)}</span> on the shelf</>}
           </p>
         </div>
-        {actions && <div className="hidden sm:flex items-center gap-2 shrink-0 pt-1">{actions}</div>}
       </div>
-
-      {actions && <div className="grid grid-cols-2 gap-2 sm:hidden">{actions}</div>}
 
       {/* §4 · compact summary — counts and KG straight off the rows */}
       {totals.movements > 0 && (

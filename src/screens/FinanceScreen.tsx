@@ -121,6 +121,19 @@ function KpiCard({ label, value, foot, tone, icon }: {
   );
 }
 
+/** Names which book a row of figures belongs to, and what it does not overlap with. */
+function Band({ label, note, right }: { label: string; note: string; right?: React.ReactNode }) {
+  return (
+    <div className="flex items-end justify-between gap-x-3 gap-y-1 flex-wrap px-0.5">
+      <div className="min-w-0">
+        <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.16em] text-brand-ink">{label}</p>
+        <p className="text-[11.5px] text-muted leading-snug mt-1 max-w-[68ch]">{note}</p>
+      </div>
+      {right}
+    </div>
+  );
+}
+
 /** A stat block used inside the summary and godown panels. */
 function Stat({ label, value, foot, tone }: { label: string; value: string; foot?: React.ReactNode; tone?: 'ink' | 'brand' | 'danger' | 'success' | 'warn' | 'accent' }) {
   const toneText = {
@@ -247,6 +260,8 @@ export function FinanceScreen() {
   /** Receipts still owed — the only things a payment out may be linked to. */
   const openBuys = useMemo(() => positions.filter(p => p.status === 'PENDING' || p.status === 'PARTIAL'), [positions]);
   const payables = useMemo(() => payableTotals(positions), [positions]);
+  /** What the credit bought and has not yet been consumed: both stores valued at their own averages. */
+  const stockOnHand = (gLedger.asOfValue || 0) + (medTotals.value || 0);
   /** Money that left as a purchase payment but answers to no receipt on this farm. */
   const strays = useMemo(() => unlinkedPurchasePayments(finance, feedStock, medicineStock), [finance, feedStock, medicineStock]);
   const dues = useSalePositions();
@@ -583,25 +598,47 @@ export function FinanceScreen() {
         {tab === 'overview' && (<>
         {/* 1 · FARM FINANCIAL SUMMARY — the accrual view, reconciled line by line */}
         <div className="space-y-3">
+          <Band
+            label="Realised in this period"
+            note="What has actually happened between the dates above: money received, and expense the farm has carried. Feed and medicine count here the day a shed consumes them — buying a load is not spending it."
+            right={<span className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-2 shrink-0">follows the period above</span>}
+          />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <KpiCard label="Total income" value={money(acct.income)} foot={`${acct.periodTxns.filter(t => isInflow(t.kind)).length} credit ${acct.periodTxns.filter(t => isInflow(t.kind)).length === 1 ? 'entry' : 'entries'}`} tone="success" icon={<TrendingUp size={15} />} />
             <KpiCard label="Total expense" value={money(acct.totalExpense)} foot="Operating + feed consumed + shared godown" tone="danger" icon={<TrendingDown size={15} />} />
             <KpiCard label="Net profit" value={money(acct.net)} foot={acct.net >= 0 ? 'Surplus for this period' : 'Deficit for this period'} tone={acct.net >= 0 ? 'brand' : 'danger'} icon={<Scale size={15} />} />
           </div>
 
-          {/* 1a · THE TWO OUTSTANDING POSITIONS — billed on the books above, not yet settled in cash.
-              These are every open bill on the farm, so they deliberately ignore the period filter. */}
+        {/* 1a · BALANCES — the two positions still open on the farm, in both directions.
+            These are every open bill, so they deliberately ignore the period filter. */}
+        <div className="rounded-[18px] border border-brand/25 bg-brand-soft/50 px-3.5 py-3.5 sm:px-4 sm:py-4 space-y-3 min-w-0">
+          <Band
+            label="Balances · still open"
+            note="Not income and not expense — these are goods and money that have crossed but not settled. What suppliers are owed already sits in the godown and the medicine store as stock; what traders owe is loads already delivered. Nothing here repeats a figure from the row above."
+            right={<span className="font-mono text-[9px] uppercase tracking-[0.12em] text-brand-ink shrink-0">all time · ignores the period</span>}
+          />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <KpiCard label="Receivables outstanding" value={money(receivableTotal)}
-              foot={`${openDues} of ${dues.length} ${dues.length === 1 ? 'bill' : 'bills'} owed to the farm · all time`}
+              foot={`${openDues} of ${dues.length} ${dues.length === 1 ? 'bill' : 'bills'} owed to the farm`}
               tone={receivableTotal > 0 ? 'brand' : 'success'} icon={<ArrowDownLeft size={15} />} />
             <KpiCard label="Payables outstanding" value={money(payables.outstanding)}
-              foot={`${payables.unpaidPurchases} of ${payables.purchases} ${payables.purchases === 1 ? 'receipt' : 'receipts'} unpaid${payables.unpriced ? ` · ${payables.unpriced} unpriced` : ''} · all time`}
+              foot={`${payables.unpaidPurchases} of ${payables.purchases} ${payables.purchases === 1 ? 'receipt' : 'receipts'} unpaid${payables.unpriced ? ` · ${payables.unpriced} unpriced` : ''}`}
               tone={payables.outstanding > 0 ? 'danger' : 'success'} icon={<ArrowUpRight size={15} />} />
-            <KpiCard label="Net outstanding" value={money(receivableTotal - payables.outstanding)}
-              foot={receivableTotal - payables.outstanding >= 0 ? 'More owed to the farm than by it' : 'The farm owes more than it is owed'}
+            <KpiCard label="Net position" value={money(receivableTotal - payables.outstanding)}
+              foot={receivableTotal - payables.outstanding >= 0 ? 'Settles in the farm’s favour' : 'Settles against the farm'}
               tone={receivableTotal - payables.outstanding >= 0 ? 'brand' : 'danger'} icon={<ArrowLeftRight size={15} />} />
           </div>
+          <p className="text-[11.5px] text-ink-2 leading-relaxed px-0.5">
+            {payables.outstanding > 0
+              ? <>The {money(payables.outstanding)} owed to suppliers is not a loss: {stockOnHand >= payables.outstanding
+                  ? `${money(stockOnHand)} of feed and medicine stands on the shelves against it`
+                  : `${money(stockOnHand)} still stands on the shelves, and the balance has already left as feed and medicine the sheds consumed`}.
+                {' '}It enters the P&amp;L above only when a shed draws it, and paying it here moves cash without changing that P&amp;L again.
+              </>
+              : <>No supplier is waiting on the farm — every stock receipt on record is settled. </>}
+            {receivableTotal > 0 && <>{' '}The {money(receivableTotal)} traders owe joins Total income only when its receipt is booked.</>}
+          </p>
+        </div>
 
           {/* 1b · MONEY IN / MONEY OUT BY HOW IT MOVED — same ledger money, never a second set of rows */}
           <Card>

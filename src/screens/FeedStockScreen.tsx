@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Package, Plus, FlaskConical, AlertTriangle, Wheat, ScrollText, ChevronRight, ChevronDown, Info } from 'lucide-react';
+import { Package, Plus, AlertTriangle, ScrollText, ChevronRight, ChevronDown, Info } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useApp, useCan, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
@@ -8,11 +8,10 @@ import { Card, EmptyState, StatStrip, StatCell, Stat, IconTile, GroupList, ListR
 import { Button, SearchField, SegmentedTabs } from '@/components/ui/Form';
 import { StockLedger } from '@/components/godown/StockLedger';
 import { AddStockDialog } from '@/components/godown/AddStockDialog';
-import { FeedGivenDialog } from '@/components/godown/FeedGivenDialog';
 import { COVERAGE_META } from '@/components/godown/coverageMeta';
 import { fmtIN, fmtMoney, todayISO } from '@/lib/format';
 import { GODOWN_LOW_KG, stockStatus } from '@/lib/calc';
-import { COVERAGE_CRITICAL_DAYS, COVERAGE_LOW_DAYS, compareCoverage, coverageBands, coverageRows, fmtDays } from '@/lib/coverage';
+import { compareCoverage, coverageBands, coverageRows, fmtDays } from '@/lib/coverage';
 import { godownMovements, ledgerTotals, type Movement } from '@/lib/movements';
 import { useShortageAllocator } from '@/hooks/useShortageAllocator';
 import { useGodownPrices } from '@/hooks/useGodownPrices';
@@ -36,7 +35,6 @@ export function FeedStockScreen() {
   const stock = data.feedStock;
   const catalog = useApp(s => s.ingredientCatalog);
   const canCreate = useCan('create');
-  const canDaily = useCan('createDailyOps');
   const canFinance = useCan('viewFinance');
   const { valuation } = useGodownPrices();
   const { forecast, coverage } = useFeedCoverage();
@@ -49,9 +47,6 @@ export function FeedStockScreen() {
   const [sortByCoverage, setSortByCoverage] = useState(false);
   const [whyOpen, setWhyOpen] = useState(false);
   const [open, setOpen] = useState(false);
-
-  /** Shed-side entry: tonnes given today, auto-deducted through the shed formula. */
-  const [feedOpen, setFeedOpen] = useState(false);
 
   /** Movement buckets per ingredient — the physical KG story behind each row. */
   const movements = useMemo(() => {
@@ -115,11 +110,9 @@ export function FeedStockScreen() {
   /** A shortage is shared by the existing rule: over the feed each shed ate that month. */
   const allocate = useShortageAllocator();
 
-  const ledgerActions = (canCreate || canDaily) && (
-    <>
-      {canCreate && <Button size="sm" icon={<Plus size={14} />} onClick={() => setOpen(true)}>Add stock entry</Button>}
-      {canDaily && <Button size="sm" variant="outline" icon={<Wheat size={14} />} onClick={() => setFeedOpen(true)}>Feed given</Button>}
-    </>
+  /** The one booking this screen owns — feeding and formulas belong to the flock, not the shelf. */
+  const headerActions = canCreate && (
+    <Button size="sm" icon={<Plus size={14} />} onClick={() => setOpen(true)}>Add stock entry</Button>
   );
 
   const tabs = (
@@ -131,8 +124,7 @@ export function FeedStockScreen() {
 
   return (
     <Page withNav>
-      <Header title="Godown" subtitle="Central inventory · stock in KG"
-        action={<Button size="sm" icon={<FlaskConical size={14} />} onClick={() => nav('/feed/formulas')}>Formula</Button>} />
+      <Header title="Godown" subtitle="Central inventory · stock in KG" action={headerActions} />
 
       <div className="px-4 sm:px-0 mt-3 space-y-4">
         {tabs}
@@ -143,7 +135,6 @@ export function FeedStockScreen() {
             totals={ledgerSummary}
             godownValue={totals.value}
             canFinance={canFinance}
-            actions={ledgerActions}
             allocate={allocate}
             focusEntryId={focusEntryId}
           />
@@ -163,13 +154,6 @@ export function FeedStockScreen() {
                 tone="accent" size="sm"
               />
             </StatCell>
-            <StatCell><Stat label="Below reorder level" value={String(lowCount)} sub={`${fmtIN(GODOWN_LOW_KG)} kg rule`} tone={lowCount > 0 ? 'danger' : 'neutral'} size="sm" /></StatCell>
-          </StatStrip>
-
-          {/* Days of stock left: the same forecast the ingredient rows carry, read farm-wide. */}
-          <StatStrip className="border-t border-line-2">
-            <StatCell><Stat label={`Under ${COVERAGE_CRITICAL_DAYS} days`} value={String(bands.under3)} sub="coverage is critical" tone={bands.under3 ? 'danger' : 'neutral'} size="sm" /></StatCell>
-            <StatCell><Stat label={`Under ${COVERAGE_LOW_DAYS} days`} value={String(bands.under7)} sub="plan the next receipt" tone={bands.under7 ? 'warn' : 'neutral'} size="sm" /></StatCell>
             <StatCell>
               <Stat label="Tightest shelf" value={bands.lowest ? fmtDays(bands.lowest.days) : '—'}
                 sub={bands.lowest
@@ -210,22 +194,15 @@ export function FeedStockScreen() {
 
         <SearchField value={q} onChange={setQ} placeholder="Search ingredient" />
 
-        {(canCreate || canDaily) && (
-          <div className="grid grid-cols-2 gap-2">
-            {canCreate && <Button size="sm" block icon={<Plus size={15} />} className={canDaily ? '' : 'col-span-2'} onClick={() => setOpen(true)}>Add stock entry</Button>}
-            {canDaily && <Button size="sm" block variant="outline" icon={<Wheat size={15} />} className={canCreate ? '' : 'col-span-2'} onClick={() => setFeedOpen(true)}>Feed given (t)</Button>}
-          </div>
-        )}
-
         {rows.length === 0 ? (
           <EmptyState icon={<Package size={22} />} title="No ingredients found" description="Try a different search." />
         ) : (
           <>
-            <div className="flex items-center justify-between gap-3 px-0.5">
-              <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-faint shrink-0">
+            <div className="flex items-center justify-between gap-3 flex-wrap px-0.5">
+              <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-faint">
                 {`${rows.length} ingredient${rows.length === 1 ? '' : 's'}${canFinance ? ' · stock · avg · value' : ''}`}
               </p>
-              <div className="flex items-center gap-1.5 shrink-0" role="group" aria-label="Sort ingredients">
+              <div className="flex items-center gap-1.5" role="group" aria-label="Sort ingredients">
                 {[{ on: false, label: 'A–Z' }, { on: true, label: 'Lowest coverage' }].map(o => (
                   <button key={o.label} type="button" onClick={() => setSortByCoverage(o.on)} aria-pressed={sortByCoverage === o.on}
                     className={clsx('px-2.5 py-1 rounded-full font-mono text-[9.5px] font-semibold uppercase tracking-[0.1em] press',
@@ -291,8 +268,6 @@ export function FeedStockScreen() {
       </div>
 
       <AddStockDialog open={open} onClose={() => setOpen(false)} />
-
-      {feedOpen && <FeedGivenDialog onClose={() => setFeedOpen(false)} />}
     </Page>
   );
 }
