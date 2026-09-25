@@ -6,6 +6,7 @@ import { Page, ScreenTitle } from '@/components/ui/Header';
 import { Badge, Card, EmptyState, IconTile } from '@/components/ui/Card';
 import { ChipGroup, Field, SearchField } from '@/components/ui/Form';
 import { todayISO } from '@/lib/format';
+import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal } from '@/components/motion';
 import {
   DATE_PRESETS, REPORT_SECTIONS, reportHref, reportRange, rangeLabel, visibleReports,
   type DatePreset, type ReportDef, type ReportParams,
@@ -37,6 +38,7 @@ export function ReportsScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <ScreenTitle
         eyebrow="Records"
         title="Reports"
@@ -44,6 +46,7 @@ export function ReportsScreen() {
       />
 
       <div className="px-4 sm:px-0 mt-1 space-y-5">
+        <ScrollReveal>
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <p className="inline-flex items-center gap-1.5 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
@@ -67,6 +70,7 @@ export function ReportsScreen() {
             <SearchField className="sm:w-[220px] shrink-0" value={q} onChange={setQ} placeholder="Search reports" />
           </div>
         </Card>
+        </ScrollReveal>
 
         {list.length === 0 ? (
           <EmptyState
@@ -86,11 +90,13 @@ export function ReportsScreen() {
                 </p>
               </div>
               <p className="text-[12px] text-muted px-0.5 mt-0.5 mb-3 leading-snug">{section.blurb}</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+              <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                 {items.map(def => (
-                  <ReportCard key={def.id} def={def} onOpen={() => nav(reportHref(def, params))} />
+                  <StaggerItem key={def.id} as="div">
+                  <ReportCard def={def} onOpen={() => nav(reportHref(def, params))} />
+                  </StaggerItem>
                 ))}
-              </div>
+              </StaggerContainer>
             </section>
           );
         })}
@@ -105,6 +111,7 @@ export function ReportsScreen() {
           </div>
         )}
       </div>
+      </PageReveal>
     </Page>
   );
 }

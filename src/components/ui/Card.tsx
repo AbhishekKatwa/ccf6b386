@@ -1,20 +1,23 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 import clsx from 'clsx';
 import { TrendingDown, TrendingUp, Minus, CheckCircle2, Inbox } from 'lucide-react';
+import { HoverCard, SectionReveal, ScrollReveal } from '@/components/motion';
 
 /* ---------------- surfaces ---------------- */
 
-export function Card({ children, className, padded = true }: { children: ReactNode; className?: string; padded?: boolean }) {
-  return (
+export function Card({ children, className, padded = true, hover = false }: { children: ReactNode; className?: string; padded?: boolean; hover?: boolean }) {
+  const inner = (
     <div className={clsx('bg-card border border-line rounded-[18px] shadow-card', padded && 'p-4', className)}>
       {children}
     </div>
   );
+  return hover ? <HoverCard>{inner}</HoverCard> : inner;
 }
 
 /** Open, borderless grouping surface — use when a card would add noise. */
-export function Surface({ children, className }: { children: ReactNode; className?: string }) {
-  return <section className={clsx('rounded-[18px] bg-card border border-line shadow-card', className)}>{children}</section>;
+export function Surface({ children, className, reveal = false }: { children: ReactNode; className?: string; reveal?: boolean }) {
+  const inner = <section className={clsx('rounded-[18px] bg-card border border-line shadow-card', className)}>{children}</section>;
+  return reveal ? <SectionReveal>{inner}</SectionReveal> : inner;
 }
 
 export function SectionTitle({ children, right }: { children: ReactNode; right?: ReactNode }) {
@@ -265,14 +268,14 @@ export function EmptyState({ icon, title, description, action }: {
   icon?: ReactNode; title: string; description?: string; action?: ReactNode;
 }) {
   return (
-    <div className="rounded-[18px] border border-dashed border-line bg-card/60 px-6 py-10 flex flex-col items-center text-center gap-2 ap-fade-in">
-      <div className="w-12 h-12 rounded-full bg-sunk flex items-center justify-center text-muted mb-1">
+    <ScrollReveal className="rounded-[18px] border border-dashed border-line bg-card/60 px-6 py-10 flex flex-col items-center text-center gap-2">
+      <div className="w-12 h-12 rounded-full bg-sunk flex items-center justify-center text-muted mb-1 animate-[float_4s_ease-in-out_infinite]">
         {icon ?? <Inbox size={19} strokeWidth={1.75} />}
       </div>
       <p className="font-display text-[17px] font-semibold text-ink">{title}</p>
       {description && <p className="text-[13px] text-muted max-w-[300px] leading-relaxed">{description}</p>}
       {action && <div className="mt-3">{action}</div>}
-    </div>
+    </ScrollReveal>
   );
 }
 

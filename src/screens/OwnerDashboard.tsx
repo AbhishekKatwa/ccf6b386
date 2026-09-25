@@ -34,6 +34,7 @@ import {
 import { SyncPill } from '@/components/layout/AppShell';
 import { EGG_GRADES, EGG_GRADE_LABELS, EMPTY_GRADE_COUNTS, ROLE_LABELS } from '@/types';
 import type { EggGradeCounts, Shed } from '@/types';
+import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, AnimatedNumber, ChartReveal } from '@/components/motion';
 
 /**
  * The owner's command centre, read in ten seconds: TODAY, then what needs ATTENTION,
@@ -556,7 +557,9 @@ function TrendsPanel({ data }: { data: Data }) {
             subtitle={`${fmtDateShort(range.from)} – ${fmtDateShort(range.to)}`}
             height={150} loading={!settled} warnings={c.warnings}
             empty={blank(c.series[0].points) ? { title: c.emptyTitle, description: c.emptyText } : undefined}>
-            <TrendChart series={c.series} height={120} format={c.format} />
+            <ChartReveal>
+              <TrendChart series={c.series} height={120} format={c.format} />
+            </ChartReveal>
             <ChartLegend items={c.series.map(s => ({ label: s.label, color: s.color, dashed: s.dashed }))} />
             <p className="mt-1 text-[11px] text-muted">{c.foot}</p>
           </GraphCard>
@@ -664,6 +667,7 @@ export function OwnerDashboard() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <ScreenTitle
         eyebrow={`${greeting()} · ${fmtDateShort(today)}`}
         title="Farm control centre"
@@ -681,7 +685,7 @@ export function OwnerDashboard() {
         <AttentionButtons alerts={alerts.length} tasks={tasksOpen} />
       </div>
 
-      <div className="px-4 sm:px-0 mt-5 space-y-6">
+      <StaggerContainer as="section" className="px-4 sm:px-0 mt-5 space-y-6">
         {/* <div>
           <SectionTitle>Today</SectionTitle>
           <TodayStrip data={scoped} sheds={sheds} />
@@ -689,23 +693,24 @@ export function OwnerDashboard() {
 
         {/* <NeedsAttention alerts={alerts} /> */}
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <StaggerItem className="grid gap-4 lg:grid-cols-2">
           <FlockPanel data={scoped} />
           <EggsPanel data={scoped} sheds={sheds} />
-        </div>
+        </StaggerItem>
 
-        
 
-            {canFinance && <FinancePanel data={scoped} />}
 
-        <TrendsPanel data={scoped} />
+            {canFinance && <StaggerItem><FinancePanel data={scoped} /></StaggerItem>}
+
+        <StaggerItem><TrendsPanel data={scoped} /></StaggerItem>
 
         {/* <RecentActivity data={scoped} /> */}
-        <GodownPanel data={scoped} sheds={sheds} />
+        <StaggerItem><GodownPanel data={scoped} sheds={sheds} /></StaggerItem>
         <p className="text-[11px] text-faint leading-relaxed pb-2">
           Every figure on this page is the same reading the module screen gives, filtered to {company?.name ?? 'this company'} and to the role you are signed in as. A gap means no record; a figure marked unavailable means the data to derive it is not there. Detailed history stays on the screen that owns it.
         </p>
-      </div>
+      </StaggerContainer>
+      </PageReveal>
     </Page>
   );
 }

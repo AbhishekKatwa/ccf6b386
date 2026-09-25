@@ -1,6 +1,8 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
 import clsx from 'clsx';
 import { ChevronDown, Minus, Plus, Search, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { useReducedMotion } from '@/components/motion';
 
 type BtnVariant = 'primary' | 'ghost' | 'outline' | 'danger' | 'success';
 type BtnSize = 'sm' | 'md' | 'lg';
@@ -178,16 +180,35 @@ export function Toggle({ checked, onChange, label, description }: {
 export function SegmentedTabs<T extends string>({ value, onChange, options, scroll = false }: {
   value: T; onChange: (v: T) => void; options: { value: T; label: string; icon?: ReactNode }[]; scroll?: boolean;
 }) {
+  const reduced = useReducedMotion();
   return (
-    <div className={clsx('flex gap-1 bg-sunk rounded-full p-1', scroll ? 'overflow-x-auto no-scrollbar' : '')}>
+    <div className={clsx('relative flex gap-1 bg-sunk rounded-full p-1', scroll ? 'overflow-x-auto no-scrollbar' : '')}>
+      {/* Sliding active pill */}
+      <AnimatePresence>
+        {!reduced && (
+          <motion.span
+            layoutId="segmented-active"
+            initial={false}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute top-1 bottom-1 rounded-full bg-card shadow-card ring-1 ring-inset ring-brand/15 pointer-events-none"
+            style={{
+              left: `${options.findIndex(o => o.value === value) * (100 / options.length)}%`,
+              width: `${100 / options.length}%`,
+            }}
+            aria-hidden
+          />
+        )}
+      </AnimatePresence>
       {options.map(o => (
         <button
           key={o.value}
           onClick={() => onChange(o.value)}
           className={clsx(
-            'py-2 px-3.5 rounded-full text-[13px] font-semibold transition-all whitespace-nowrap flex items-center justify-center gap-1.5 press',
+            'relative z-10 py-2 px-3.5 rounded-full text-[13px] font-semibold transition-colors whitespace-nowrap flex items-center justify-center gap-1.5 press',
             scroll ? 'flex-none' : 'flex-1',
-            value === o.value ? 'bg-card text-brand shadow-card ring-1 ring-inset ring-brand/15' : 'text-muted hover:text-ink',
+            value === o.value ? 'text-brand' : 'text-muted hover:text-ink',
           )}
         >
           {o.icon}{o.label}

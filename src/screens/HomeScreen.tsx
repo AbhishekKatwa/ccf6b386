@@ -23,6 +23,7 @@ import { ROLE_LABELS, EGGS_PER_TRAY } from '@/types';
 import type { Batch } from '@/types';
 import { LaborHomeScreen } from '@/screens/LaborScreen';
 import { OwnerDashboard } from '@/screens/OwnerDashboard';
+import { PageReveal, StaggerContainer, StaggerItem, AnimatedNumber, ChartReveal, ScrollReveal } from '@/components/motion';
 
 type Attention = {
   id: string; icon: ReactNode; tone: 'danger' | 'warn' | 'accent' | 'brand';
@@ -179,6 +180,7 @@ function ManagerHome() {
 
   return (
     <Page withNav>
+      <PageReveal>
       {/* greeting */}
       <header className="px-4 sm:px-0 pt-5 pb-3 safe-top flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -208,9 +210,9 @@ function ManagerHome() {
           />
         </div>
       ) : (
-        <>
+        <StaggerContainer className="space-y-5">
           {/* live-now hero */}
-          <section className="px-4 sm:px-0 mt-2">
+          <StaggerItem className="px-4 sm:px-0">
             <div className="rounded-[22px] bg-brand text-white p-5 shadow-card relative overflow-hidden">
               <div className="absolute -top-16 -right-12 w-52 h-52 rounded-full bg-white/8 blur-2xl" aria-hidden />
               <div className="relative">
@@ -219,25 +221,25 @@ function ManagerHome() {
                   Live right now
                 </p>
                 <div className="flex items-end gap-2 mt-2">
-                  <span className="font-display text-[46px] leading-none font-semibold tnum tracking-tight">{fmtIN(totals.live)}</span>
+                  <AnimatedNumber value={totals.live} format={{ notation: 'standard', useGrouping: true }} suffix="" className="font-display text-[46px] leading-none font-semibold tracking-tight" />
                   <span className="text-white/70 text-[13px] mb-1.5">birds</span>
                 </div>
                 <div className="grid grid-flow-col auto-cols-fr divide-x divide-white/15 mt-5 -mx-1">
-                  {hasLayers && <HeroStat label="Eggs today" value={`${fmtIN(totals.eggsTotal)} tr`} />}
-                  <HeroStat label="Mortality today" value={fmtIN(totals.mortToday)} />
-                  <HeroStat label="Batches" value={fmtIN(myLive.length)} />
+                  {hasLayers && <HeroStat label="Eggs today" value={`${fmtIN(totals.eggsTotal)} tr`} rawValue={totals.eggsTotal} />}
+                  <HeroStat label="Mortality today" value={fmtIN(totals.mortToday)} rawValue={totals.mortToday} />
+                  <HeroStat label="Batches" value={fmtIN(myLive.length)} rawValue={myLive.length} />
                 </div>
               </div>
             </div>
-          </section>
+          </StaggerItem>
 
           {/* alerts & tasks, merged into one pair of count buttons */}
-          <section className="px-4 sm:px-0 mt-4">
+          <StaggerItem className="px-4 sm:px-0">
             <AttentionButtons alerts={canSeeAlerts ? alertCount : undefined} tasks={tasksOpen} />
-          </section>
+          </StaggerItem>
 
           {/* needs attention */}
-          <section className="px-4 sm:px-0 mt-5">
+          <StaggerItem className="px-4 sm:px-0">
             <SectionTitle right={<span className="font-mono text-[11px] text-muted tnum">{attention.length ? `${attention.length} open` : ''}</span>}>
               Needs attention
             </SectionTitle>
@@ -257,10 +259,10 @@ function ManagerHome() {
                 ))}
               </GroupList>
             )}
-          </section>
+          </StaggerItem>
 
           {/* trend + batches + activity */}
-          <div className="px-4 sm:px-0 mt-5 grid gap-4 lg:grid-cols-3">
+          <StaggerItem className="px-4 sm:px-0 grid gap-4 lg:grid-cols-3">
             <div className="lg:col-span-2 space-y-4">
               <Card>
                 <div className="flex items-center justify-between mb-3">
@@ -270,13 +272,15 @@ function ManagerHome() {
                   </div>
                   <Badge tone={hasLayers ? 'accent' : 'danger'}>{hasLayers ? <Egg size={12} /> : <Skull size={12} />} last 7 days</Badge>
                 </div>
-                <AreaTrend
-                  data={trendData}
-                  labels={week.labels}
-                  color={hasLayers ? CHART.accent : CHART.danger}
-                  height={132}
-                  format={(v) => fmtIN(v)}
-                />
+                <ChartReveal>
+                  <AreaTrend
+                    data={trendData}
+                    labels={week.labels}
+                    color={hasLayers ? CHART.accent : CHART.danger}
+                    height={132}
+                    format={(v) => fmtIN(v)}
+                  />
+                </ChartReveal>
               </Card>
 
               <div>
@@ -305,46 +309,53 @@ function ManagerHome() {
             </div>
 
             <div className="space-y-4">
-              <Card>
-                <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-3 flex items-center gap-1.5">
-                  <Activity size={13} /> Recent activity
-                </h3>
-                <ol className="relative">
-                  {recent.map((a, i) => {
-                    const who = users.find(u => u.id === a.byUserId)?.name.split(' ')[0] ?? 'System';
-                    const verb = VERB[a.action] ?? a.action.toLowerCase();
-                    const entity = ENTITY[a.entity] ?? a.entity.toLowerCase();
-                    const Icon = a.action === 'DELETE' ? Trash2 : a.action === 'UPDATE' ? Pencil : PlusCircle;
-                    const tone = a.action === 'DELETE' ? 'text-danger' : 'text-brand';
-                    return (
-                      <li key={a.id} className="relative flex gap-3 pb-3.5 last:pb-0">
-                        {i < recent.length - 1 && <span className="absolute left-[11px] top-6 bottom-0 w-px bg-line-2" aria-hidden />}
-                        <span className={`relative z-10 w-[23px] h-[23px] rounded-full bg-card border border-line flex items-center justify-center shrink-0 ${tone}`}>
-                          <Icon size={11} />
-                        </span>
-                        <div className="min-w-0 pt-0.5">
-                          <p className="text-[13px] text-ink leading-snug">
-                            <span className="font-semibold">{who}</span> <span className="text-muted">{verb}</span> <span className="font-medium">{entity}</span>
-                          </p>
-                          <p className="font-mono text-[10px] text-muted-2 mt-0.5 tnum">{fmtDateTime(a.at)}</p>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ol>
-              </Card>
+              <ScrollReveal>
+                <Card>
+                  <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-3 flex items-center gap-1.5">
+                    <Activity size={13} /> Recent activity
+                  </h3>
+                  <ol className="relative">
+                    {recent.map((a, i) => {
+                      const who = users.find(u => u.id === a.byUserId)?.name.split(' ')[0] ?? 'System';
+                      const verb = VERB[a.action] ?? a.action.toLowerCase();
+                      const entity = ENTITY[a.entity] ?? a.entity.toLowerCase();
+                      const Icon = a.action === 'DELETE' ? Trash2 : a.action === 'UPDATE' ? Pencil : PlusCircle;
+                      const tone = a.action === 'DELETE' ? 'text-danger' : 'text-brand';
+                      return (
+                        <li key={a.id} className="relative flex gap-3 pb-3.5 last:pb-0">
+                          {i < recent.length - 1 && <span className="absolute left-[11px] top-6 bottom-0 w-px bg-line-2" aria-hidden />}
+                          <span className={`relative z-10 w-[23px] h-[23px] rounded-full bg-card border border-line flex items-center justify-center shrink-0 ${tone}`}>
+                            <Icon size={11} />
+                          </span>
+                          <div className="min-w-0 pt-0.5">
+                            <p className="text-[13px] text-ink leading-snug">
+                              <span className="font-semibold">{who}</span> <span className="text-muted">{verb}</span> <span className="font-medium">{entity}</span>
+                            </p>
+                            <p className="font-mono text-[10px] text-muted-2 mt-0.5 tnum">{fmtDateTime(a.at)}</p>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </Card>
+              </ScrollReveal>
             </div>
-          </div>
-        </>
+          </StaggerItem>
+        </StaggerContainer>
       )}
+      </PageReveal>
     </Page>
   );
 }
 
-function HeroStat({ label, value }: { label: string; value: string }) {
+function HeroStat({ label, value, rawValue }: { label: string; value: string; rawValue?: number }) {
   return (
     <div className="px-3 first:pl-1 min-w-0">
-      <p className="font-display text-[20px] leading-6 font-semibold tnum truncate">{value}</p>
+      {rawValue !== undefined ? (
+        <AnimatedNumber value={rawValue} format={{ notation: 'standard', useGrouping: true }} className="font-display text-[20px] leading-6 font-semibold" />
+      ) : (
+        <p className="font-display text-[20px] leading-6 font-semibold tnum truncate">{value}</p>
+      )}
       <p className="font-mono text-[9px] uppercase tracking-[0.1em] text-white/55 mt-1 truncate">{label}</p>
     </div>
   );

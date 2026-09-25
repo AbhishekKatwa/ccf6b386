@@ -8,6 +8,7 @@ import { useCan, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Badge, Card, EmptyState, GroupList, IconTile, ListRow, Stat, StatCell, StatStrip } from '@/components/ui/Card';
 import { Button, SearchField, SegmentedTabs } from '@/components/ui/Form';
+import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal } from '@/components/motion';
 import { MedicineLedger } from '@/components/medicine/MedicineLedger';
 import type { MedicineRefs } from '@/components/medicine/MedicineLedger';
 import {
@@ -75,6 +76,7 @@ export function MedicinesScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <Header title="Medicines & Vaccines" subtitle="Central inventory · each item counted in its own unit"
         action={<div className="flex items-center gap-2">
           {canCreate && <Button size="sm" icon={<Plus size={14} />} onClick={() => setSheet('item')}>Add item</Button>}
@@ -92,6 +94,7 @@ export function MedicinesScreen() {
         )}
 
         {tab === 'stock' && (<>
+          <ScrollReveal>
           <Card padded={false}>
             <StatStrip>
               <StatCell><Stat label="Total items" value={fmtIN(t.items)}
@@ -111,6 +114,7 @@ export function MedicinesScreen() {
                 tone={t.expired ? 'danger' : t.expiring ? 'warn' : 'neutral'} size="sm" /></StatCell>
             </StatStrip>
           </Card>
+          </ScrollReveal>
 
           <div className="rounded-[18px] bg-brand-soft px-4 py-3">
             <button type="button" onClick={() => setWhyOpen(v => !v)} aria-expanded={whyOpen}
@@ -153,11 +157,12 @@ export function MedicinesScreen() {
               <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-faint px-0.5">
                 {`${rows.length} item${rows.length === 1 ? '' : 's'} · lowest stock first${canFinance ? ' · stock · avg · value' : ''}`}
               </p>
-              <GroupList>
+              <StaggerContainer>
                 {rows.map(r => {
                   const Icon = r.item.category === 'VACCINE' ? Syringe : Pill;
                   return (
-                    <ListRow key={r.item.id}
+                    <StaggerItem key={r.item.id} as="div">
+                    <ListRow
                       onClick={() => nav(`/medicines/item/${r.item.id}`)}
                       leading={<IconTile tone={r.qty <= 0 ? 'neutral' : r.low ? 'danger' : 'brand'}><Icon size={18} /></IconTile>}
                       title={r.item.name}
@@ -192,9 +197,10 @@ export function MedicinesScreen() {
                           <ChevronRight size={16} className="text-faint" />
                         </div>
                       )} />
+                    </StaggerItem>
                   );
                 })}
-              </GroupList>
+              </StaggerContainer>
             </>
           )}
         </>)}
@@ -204,6 +210,7 @@ export function MedicinesScreen() {
       {sheet === 'usage' && <MedicineUsageSheet medicineId={forEntry} onClose={() => setSheet(null)} />}
       {sheet === 'adjust' && <MedicineAdjustSheet medicineId={forEntry} onClose={() => setSheet(null)} />}
       {sheet === 'item' && <MedicineItemSheet onClose={() => setSheet(null)} />}
+      </PageReveal>
     </Page>
   );
 }

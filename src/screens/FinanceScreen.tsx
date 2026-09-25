@@ -14,7 +14,8 @@ import { Dialog } from '@/components/ui/Dialog';
 import { LedgerDayHeader } from '@/components/godown/StockLedger';
 import { GraphCard, GraphRange } from '@/components/charts/GraphCard';
 import { axisNum, BarSeries, DonutChart, HBarList, PairedBars, SERIES_COLORS, type HRow } from '@/components/charts/DataViz';
-import { medicineStockBoard } from '@/lib/medicines';
+import { PageReveal, ScrollReveal, ChartReveal } from '@/components/motion';
+import { medicineStockBoard, usageExpenseOf, valueMedicines } from '@/lib/medicines';
 import { unitQty } from '@/components/medicine/medicineMeta';
 import {
   AccountabilityDetail, EMPTY_PAYMENT, PaymentChips, PaymentFields, paymentDraftOf, paymentPatch,
@@ -82,6 +83,15 @@ const KIND_META: Record<TxnKind, { label: string; short: string; icon: typeof Tr
 
 const GODOWN_KEY = '__godown';
 const UNMAPPED_KEY = '__unmapped';
+
+/**
+ * One line of the ledger view. A money row stands as itself; a stock draw is the store's
+ * own usage row surfaced as the expense it is — the usage stays the single record of the
+ * charge, so the ledger and the P&L can never disagree and no second row is ever minted.
+ */
+type LedgerRow = FinanceTxn & {
+  stockUsage?: { shedId?: string; itemName: string; unit: string; qty: number; rate: number | null };
+};
 
 /** §16 — filter the ledger by how the money physically moved. */
 const CHANNEL_FILTERS: readonly { value: ChannelKey | 'all'; label: string }[] = [
@@ -393,7 +403,7 @@ export function FinanceScreen() {
     });
     if (acct.medicineExpense > 0) rows.push({
       id: 'medicine', label: 'Medicine drawn (from store)', value: acct.medicineExpense,
-      sub: 'derived from the stock issued to the sheds, each row at the rate booked on it — not a ledger row',
+      sub: 'each draw stands as its own derived line in the Ledger, at the rate booked on it — never a second charge',
       tone: 'danger',
     });
     if ((acct.shortageExpense ?? 0) > 0) rows.push({
@@ -456,24 +466,58 @@ export function FinanceScreen() {
 
   /* ---- ledger layer: the detailed list, its own filters ---- */
 
+  /**
+   * Every priced medicine or vaccine draw from the store, surfaced as the expense it is.
+   * The usage row stays the single record behind the charge — the P&L derives from these
+   * same rows, so the ledger and the P&L read one number and nothing is ever minted twice.
+   * Unpriced draws carry no amount and stay in the P&L warnings, not in a money column.
+   */
+  const usageTxns = useMemo<LedgerRow[]>(() => {
+    const valuation = valueMedicines(medicineStock);
+    const itemById = new Map(medicineItems.map(i => [i.id, i]));
+    const rows: LedgerRow[] = [];
+    for (const e of medicineStock) {
+      if (e.kind !== 'USAGE') continue;
+      const cost = usageExpenseOf(e, valuation);
+      if (cost === null) continue;
+      const item = itemById.get(e.medicineId);
+      rows.push({
+        id: e.id, companyId: e.companyId, batchId: e.batchId,
+        date: e.date, kind: 'EXPENSE', amount: cost,
+        category: item?.category === 'VACCINE' ? 'Vaccine' : 'Medicine',
+        remarks: [e.reason, e.remarks].filter(Boolean).join(' · ') || undefined,
+        createdBy: e.createdBy, createdAt: e.createdAt, synced: e.synced,
+        stockUsage: {
+          shedId: e.shedId, itemName: item?.name ?? 'Removed item', unit: item?.unit ?? '',
+          qty: e.qty, rate: e.ratePerUnit ?? (e.qty > 0 ? Number((cost / e.qty).toFixed(2)) : null),
+        },
+      });
+    }
+    return rows;
+  }, [medicineStock, medicineItems]);
+
   const filtered = useMemo(() => {
-    let l = latestFirst(finance);
+    let l: LedgerRow[] = latestFirst([...finance, ...usageTxns]);
     if (filter !== 'all') l = l.filter(x => x.kind === filter);
     if (direction !== 'all') l = l.filter(x => (direction === 'in' ? isInflow(x.kind) : !isInflow(x.kind)));
-    if (channel !== 'all') l = l.filter(x => carriesChannel(x, channel));
+    // Method asks how cash physically moved; a stock draw moved none, so it answers none.
+    if (channel !== 'all') l = l.filter(x => !x.stockUsage && carriesChannel(x, channel));
     if (batchFilter === GODOWN_KEY) l = l.filter(x => x.godown);
-    else if (batchFilter === UNMAPPED_KEY) l = l.filter(x => !x.batchId && !x.godown);
+    else if (batchFilter === UNMAPPED_KEY) l = l.filter(x => !x.batchId && !x.godown && !x.stockUsage);
     else if (batchFilter) l = l.filter(x => x.batchId === batchFilter);
-    if (shedFilter) l = l.filter(x => x.batchId && batchShed.get(x.batchId) === shedFilter);
+    if (shedFilter) l = l.filter(x => (x.stockUsage
+      ? x.stockUsage.shedId === shedFilter
+      : !!x.batchId && batchShed.get(x.batchId) === shedFilter));
     if (q.trim()) {
       const s = q.trim().toLowerCase();
       l = l.filter(x => x.category.toLowerCase().includes(s)
         || (x.counterparty ?? '').toLowerCase().includes(s)
         || (x.remarks ?? '').toLowerCase().includes(s)
-        || (x.reference ?? '').toLowerCase().includes(s));
+        || (x.reference ?? '').toLowerCase().includes(s)
+        || (x.stockUsage?.itemName ?? '').toLowerCase().includes(s));
     }
     return l;
-  }, [finance, filter, direction, channel, batchFilter, shedFilter, q, batchShed]);
+  }, [finance, usageTxns, filter, direction, channel, batchFilter, shedFilter, q, batchShed]);
 
   if (!canView) {
     return (
@@ -606,12 +650,14 @@ export function FinanceScreen() {
   };
 
   /** Where a row truly belongs: its shed via the batch, the godown, or honestly unmapped. */
-  const linkOf = (t: FinanceTxn) => {
+  const linkOf = (t: LedgerRow) => {
     if (t.batchId) {
       const shed = shedName.get(batchShed.get(t.batchId) ?? '');
       const batch = batchName.get(t.batchId);
       return [shed, batch].filter(Boolean).join(' / ') || 'Removed batch';
     }
+    // A stock draw names its own shed — it never needed a batch to be charged to one.
+    if (t.stockUsage?.shedId) return shedName.get(t.stockUsage.shedId) ?? 'Removed shed';
     return t.godown ? 'Godown' : 'Unmapped';
   };
 
@@ -644,6 +690,7 @@ export function FinanceScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <ScreenTitle eyebrow="Commerce" title="Finance" subtitle="Farm P&L, shed performance and godown accounting"
         action={canView ? (
           <div className="flex items-center gap-2">
@@ -669,6 +716,7 @@ export function FinanceScreen() {
 
         {tab === 'overview' && (<>
         {/* 1 · FARM FINANCIAL SUMMARY — the accrual view, reconciled line by line */}
+        <ScrollReveal>
         <div className="space-y-3">
           <Band
             label="Realised in this period"
@@ -774,6 +822,7 @@ export function FinanceScreen() {
             </div>
           </Card>
         </div>
+        </ScrollReveal>
 
 
           {/* 1b · MONEY IN / MONEY OUT BY HOW IT MOVED — same ledger money, never a second set of rows */}
@@ -1053,6 +1102,7 @@ export function FinanceScreen() {
         </Card>
 
         {/* 4 · INCOME & EXPENSE TREND (money ledger, cash timing) */}
+        <ChartReveal>
         <GraphCard
           title="Income vs expense over time"
           subtitle={`${periodLabel[period]} · ${pnlMode === 'WEEK' ? 'weekly' : pnlMode === 'QUARTER' ? 'quarterly' : 'monthly'} money in against money out, as recorded`}
@@ -1066,8 +1116,10 @@ export function FinanceScreen() {
         >
           <PairedBars buckets={trend.buckets} format={v => `₹${axisNum(v)}`} height={200} />
         </GraphCard>
+        </ChartReveal>
 
         {/* 5 · EXPENSE BREAKDOWN — reconciles to the farm total expense */}
+        <ChartReveal>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <GraphCard
             title="Expense breakdown" height={170}
@@ -1087,6 +1139,7 @@ export function FinanceScreen() {
               : <HBarList rows={revBreak.rows.map(r => ({ id: r.label, label: r.label, value: r.value, sub: r.share !== null ? `${Math.round(r.share * 100)}% of income` : undefined, tone: 'success' as const }))} format={v => `₹${axisNum(v)}`} caption={`Income: ${money(acct.income)}`} />}
           </GraphCard>
         </div>
+        </ChartReveal>
 
         {/* 6 · SHED-WISE P&L — the comparison and the drill-down */}
         <Card>
@@ -1469,7 +1522,9 @@ export function FinanceScreen() {
               <EmptyState icon={<Wallet size={22} />} title="No transactions" description="Finance entries matching these filters will appear here." />
             ) : (
               <GroupList>
-                {filtered.slice(0, 50).map(t => <TxnRow key={t.id} t={t} dense link={linkOf(t)} onOpen={() => setTxnDetail(t)} />)}
+                {filtered.slice(0, 50).map(t => <TxnRow key={t.id} t={t} dense link={linkOf(t)}
+                  /* A stock draw is the store's record, not an editable money row — it opens there, not here */
+                  onOpen={t.stockUsage ? undefined : () => setTxnDetail(t)} />)}
               </GroupList>
             )}
             {filtered.length > 50 && <p className="text-[11px] text-muted px-1">Showing the 50 most recent of {filtered.length}. Narrow the filters to see more.</p>}
@@ -1713,6 +1768,7 @@ export function FinanceScreen() {
           </div>
         )}
       </Dialog>
+      </PageReveal>
     </Page>
   );
 }
@@ -1938,25 +1994,30 @@ function FlowRow({ label, hint, value, tone, strong }: { label: string; hint: st
 
 /* ============================= TRANSACTION ROW ============================= */
 
-function TxnRow({ t, dense, link, onOpen }: { t: FinanceTxn; dense?: boolean; link?: string; onOpen?: () => void }) {
+function TxnRow({ t, dense, link, onOpen }: { t: LedgerRow; dense?: boolean; link?: string; onOpen?: () => void }) {
   const inFlow = isInflow(t.kind);
   const meta = KIND_META[t.kind];
   const Icon = meta.icon;
+  const u = t.stockUsage;
   return (
     <ListRow
       onClick={onOpen}
-      leading={<IconTile tone={inFlow ? 'success' : 'danger'} size={dense ? 30 : 34}><Icon size={15} /></IconTile>}
-      title={t.category}
+      leading={<IconTile tone={inFlow ? 'success' : 'danger'} size={dense ? 30 : 34}>{u ? <Pill size={15} /> : <Icon size={15} />}</IconTile>}
+      title={u ? `${t.category} · ${u.itemName}` : t.category}
       subtitle={
         <span className="font-mono text-[10.5px]">
-          {fmtDate(t.date)} · {meta.label}
+          {fmtDate(t.date)} · {u ? 'Stock draw' : meta.label}
           {t.counterparty ? ` · ${t.counterparty}` : ''}
           {link ? ` · ${link}` : ''}
           {onOpen ? ' · tap for details' : ''}
         </span>
       }
       /* §14 — how the money moved is a field on the row, not something to dig out later */
-      chips={<PaymentChips row={t} compact />}
+      chips={u ? (
+        <Badge tone="accent">
+          {fmtIN(u.qty)} {u.unit}{u.rate !== null ? ` × ${fmtMoney(u.rate, 2)}/${u.unit}` : ''} · derived from store
+        </Badge>
+      ) : <PaymentChips row={t} compact />}
       trailing={
         <span className={clsx('font-mono tnum font-display font-bold shrink-0', inFlow ? 'text-success' : 'text-danger', dense ? 'text-[13px]' : 'text-sm')}>
           {inFlow ? '+' : '−'}{fmtMoney(t.amount)}

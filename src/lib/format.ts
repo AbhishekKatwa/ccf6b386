@@ -71,15 +71,13 @@ export function daysBetween(fromISO: string, toISO: string): number {
 }
 
 /**
- * A flock age in days with its completed weeks beside it. Broilers are bought and sold by
- * day, vaccinations and lay onset are read by week, so a figure that says only one of them
- * always costs somebody a mental division. Below a week there is no completed week to
- * report, so the bracket stays out rather than reading "(0 wk)".
+ * A flock age in days with its completed weeks and remaining days beside it. Broilers are
+ * bought and sold by day, vaccinations and lay onset are read by week, so a figure that
+ * says only one of them always costs somebody a mental division. Below a week there is no
+ * completed week to report, so the bracket stays out rather than reading "(0 wk 3 d)".
  */
 export function ageDaysLabel(days: number): string {
-  const d = Math.max(0, days);
-  const w = Math.floor(d / 7);
-  return `Day ${d}${w ? ` (${w} wk)` : ''}`;
+  return `Day ${Math.max(0, Math.floor(days))}`;
 }
 
 export function ageLabel(placementISO: string, asOfISO = todayISO()) {

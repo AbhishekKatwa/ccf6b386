@@ -10,6 +10,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { GraphCard } from '@/components/charts/GraphCard';
 import { axisNum, ChartLegend, TrendChart, type VSeries } from '@/components/charts/DataViz';
 import { CHART } from '@/components/ui/Charts';
+import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, ChartReveal } from '@/components/motion';
 import { EMPTY_PAYMENT, PaymentFields, paymentPatch, type PaymentDraft } from '@/components/finance/PaymentFields';
 import { fmtDateShort, fmtIN, fmtMoney, todayISO } from '@/lib/format';
 import { TRADER_TXN_LABEL, txnSignedAmount } from '@/lib/calc';
@@ -201,6 +202,7 @@ export function TradersScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <ScreenTitle eyebrow="Trade & Finance" title="Trader Collections"
         subtitle="Money billed, collected and still due from traders."
         action={canManage ? (
@@ -211,6 +213,7 @@ export function TradersScreen() {
         ) : undefined} />
 
       <div className="px-4 sm:px-0 space-y-4">
+        <ScrollReveal>
         <Card>
           <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between sm:gap-10">
             <div className="min-w-0">
@@ -255,6 +258,7 @@ export function TradersScreen() {
             Outstanding covers every trader account to date; billed and collected cover the {rangeLabel.toLowerCase()}.
           </p>
         </Card>
+        </ScrollReveal>
 
         <div className="flex flex-wrap items-center justify-between gap-2.5">
           <div className="flex gap-0.5 bg-sunk rounded-full p-0.5 shrink-0" role="group" aria-label="Period">
@@ -288,9 +292,10 @@ export function TradersScreen() {
             {visibleDue.length === 0 ? (
               <Card><p className="text-[13px] text-muted">Nothing is outstanding on this list — every trader shown here is settled.</p></Card>
             ) : (
-              <GroupList>
+              <StaggerContainer>
                 {visibleDue.map(r => (
-                  <button key={r.traderId} onClick={() => nav(`/traders/${r.traderId}`)}
+                  <StaggerItem key={r.traderId} as="button">
+                  <button onClick={() => nav(`/traders/${r.traderId}`)}
                     className="w-full px-4 py-3 text-left press hover:bg-sunk/60">
                     <div className="flex items-start gap-3">
                       <Avatar name={r.name} size={34} tone="accent" />
@@ -316,8 +321,9 @@ export function TradersScreen() {
                       <ChevronRight size={16} className="text-muted-2 shrink-0 mt-1" />
                     </div>
                   </button>
+                  </StaggerItem>
                 ))}
-              </GroupList>
+              </StaggerContainer>
             )}
 
             {visibleSettled.length > 0 && (
@@ -325,9 +331,10 @@ export function TradersScreen() {
                 <SectionTitle right={<p className="font-mono text-[11px] text-muted tnum">{visibleSettled.length}</p>}>
                   Settled
                 </SectionTitle>
-                <GroupList>
+                <StaggerContainer>
                   {visibleSettled.map(r => (
-                    <button key={r.traderId} onClick={() => nav(`/traders/${r.traderId}`)}
+                    <StaggerItem key={r.traderId} as="button">
+                    <button onClick={() => nav(`/traders/${r.traderId}`)}
                       className="w-full px-4 py-2.5 text-left press hover:bg-sunk/60">
                       <div className="flex items-center gap-3">
                         <Avatar name={r.name} size={30} tone="brand" />
@@ -342,13 +349,15 @@ export function TradersScreen() {
                         <ChevronRight size={16} className="text-muted-2 shrink-0" />
                       </div>
                     </button>
+                    </StaggerItem>
                   ))}
-                </GroupList>
+                </StaggerContainer>
               </>
             )}
           </section>
         )}
 
+        <ChartReveal>
         <GraphCard
           title="Billed vs collected" height={252}
           subtitle={`Daily sales billed and payments received · ${fmtDateShort(range.from)} – ${fmtDateShort(range.to)}${collections.groupUsed === 'MONTH' ? ', grouped by calendar month' : ''}`}
@@ -369,6 +378,7 @@ export function TradersScreen() {
             );
           })()}
         </GraphCard>
+        </ChartReveal>
 
         {recent.length > 0 && (
           <section>
@@ -467,6 +477,7 @@ export function TradersScreen() {
           <Field label="Opening balance (₹, optional)" type="number" inputMode="decimal" value={form.openingBalance} onChange={e => setForm(f => ({ ...f, openingBalance: e.target.value }))} placeholder="e.g. 5000" className="font-mono" hint="Amount already owed by the trader" />
         </div>
       </Dialog>
+      </PageReveal>
     </Page>
   );
 }
