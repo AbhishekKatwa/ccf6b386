@@ -70,6 +70,10 @@ export type SalePaymentInput = PaymentRecording & { saleId: string };
  * inventory is what takes stock off the shelf and charges the flock, so a completion that
  * names its product and quantity writes exactly one linked usage (§11) — and one only,
  * because the same dose can never be deducted twice (§12).
+ *
+ * labourAmount and vaccinatorAmount are FinanceTxn EXPENSE rows for the human cost of
+ * administering the vaccine. They are separate from the medicine stock cost and appear
+ * in the Finance ledger under 'Vaccine Labour' and 'Vaccinator' categories respectively.
  */
 export type VaccinationCompletion = {
   completedDate: string;
@@ -78,6 +82,14 @@ export type VaccinationCompletion = {
   completionRemarks?: string;
   medicineId?: string;
   medicineQty?: number;
+  /** Direct vaccine cost when the dose was not drawn from the medicine store. */
+  vaccineAmount?: number;
+  /** Labour cost for the vaccination team (category: 'Vaccine Labour'). */
+  labourAmount?: number;
+  /** External vaccinator charges (category: 'Vaccinator'). */
+  vaccinatorAmount?: number;
+  /** Who the labour/vaccinator was paid to (counterparty on those Finance rows). */
+  labourCounterparty?: string;
 };
 
 /** A schedule template as the Owner edits it; company, id and audit fields are derived. */
@@ -1282,11 +1294,40 @@ export const useApp = create<AppState>()(persist(
         const batch = get().batches.find(b => b.id === batchId);
         if (!batch) return { ok: false, error: 'Batch not found' };
         if (batch.status === 'CLOSED') return { ok: false, error: 'Batch is already closed' };
+        const companyId = cid();
+        if (!companyId) return { ok: false, error: 'No company selected' };
         const full: BatchClosing = { ...closing, closedBy: get().session?.userId ?? 'system', closedAt: nowISO() };
+        // Bird sale income is a real financial transaction — it must flow through the Finance
+        // ledger so it appears in shed income, batch P&L and farm P&L exactly like any
+        // other income entry. Storing the amount on BatchClosing alone is a display note,
+        // not the financial record.
+        const saleRow: FinanceTxn | null =
+          closing.saleAmount && closing.saleAmount > 0
+            ? {
+                id: uid('fx'), companyId, batchId,
+                date: closing.date,
+                kind: 'INCOME',
+                amount: closing.saleAmount,
+                category: 'Bird Sale',
+                counterparty: closing.buyer || undefined,
+                remarks: closing.remarks || undefined,
+                // Payment accountability fields from the closing form
+                paymentMethod: closing.paymentMethod ?? undefined,
+                split: closing.split ?? undefined,
+                reference: closing.reference || undefined,
+                createdBy: get().session?.userId ?? 'system',
+                createdAt: nowISO(),
+                synced: get().online,
+              }
+            : null;
         set(s => ({
           batches: s.batches.map(b => b.id === batchId ? { ...b, status: 'CLOSED', closing: full, updatedAt: nowISO() } : b),
           sheds: s.sheds.map(sh => sh.id === batch.shedId ? { ...sh, status: 'IDLE', updatedAt: nowISO() } : sh),
-          audit: audit(s, 'Batch', batchId, 'UPDATE', 'status', batch.status, 'CLOSED'),
+          finance: saleRow ? [...s.finance, saleRow] : s.finance,
+          audit: [
+            ...(saleRow ? [auditRow(s, 'Finance', saleRow.id, `Bird Sale income ${fmtMoney(saleRow.amount)} on batch close`)] : []),
+            ...audit(s, 'Batch', batchId, 'UPDATE', 'status', batch.status, 'CLOSED'),
+          ].slice(0, 500),
         }));
         return { ok: true };
       },
@@ -1436,17 +1477,62 @@ export const useApp = create<AppState>()(persist(
           { field: 'completedDate', oldValue: null, newValue: date },
         ];
         const why = `Given by ${by}${lateBy ? ` · ${Math.abs(lateBy)} ${Math.abs(lateBy) === 1 ? 'day' : 'days'} ${lateBy > 0 ? 'late' : 'early'}` : ''}${issued ? ` · ${issued.entry.qty} drawn from the medicine store` : ''}`;
+
+        // Charges are persisted as ordinary finance rows linked to this vaccination;
+        // medicine not drawn from the store is also recorded here as a direct expense.
+        const labourCompanyId = cid() ?? item.companyId;
+        const createdBy = get().session?.userId ?? 'system';
+        const labourRows: FinanceTxn[] = [];
+        const linkedRows = get().finance.filter(t => t.refId === `vac-vaccine-${id}` || t.refId === `vac-labour-${id}` || t.refId === `vac-vaccinator-${id}`);
+        const vaccineAmount = numOf(input.vaccineAmount);
+        if (vaccineAmount > 0 && !issue) {
+          labourRows.push({
+            id: uid('fx'), companyId: labourCompanyId, batchId: item.batchId,
+            date, kind: 'EXPENSE', amount: money(vaccineAmount), category: 'Vaccine',
+            remarks: `Vaccine – ${item.vaccineName}`, refId: `vac-vaccine-${id}`,
+            createdBy, createdAt: nowISO(), synced: get().online,
+          });
+        }
+        if (input.labourAmount && input.labourAmount > 0) {
+          labourRows.push({
+            id: uid('fx'), companyId: labourCompanyId, batchId: item.batchId,
+            date,
+            kind: 'EXPENSE',
+            amount: money(input.labourAmount),
+            category: 'Vaccine Labour',
+            counterparty: input.labourCounterparty?.trim() || undefined,
+            remarks: `Vaccine labour – ${item.vaccineName}`,
+            refId: `vac-labour-${id}`,
+            createdBy, createdAt: nowISO(), synced: get().online,
+          });
+        }
+        if (input.vaccinatorAmount && input.vaccinatorAmount > 0) {
+          labourRows.push({
+            id: uid('fx'), companyId: labourCompanyId, batchId: item.batchId,
+            date,
+            kind: 'EXPENSE',
+            amount: money(input.vaccinatorAmount),
+            category: 'Vaccinator',
+            counterparty: input.labourCounterparty?.trim() || undefined,
+            remarks: `Vaccinator charges – ${item.vaccineName}`,
+            refId: `vac-vaccinator-${id}`,
+            createdBy, createdAt: nowISO(), synced: get().online,
+          });
+        }
+
         set(s => ({
           vaccinations: s.vaccinations.map(v => v.id === id ? { ...done, synced: s.online && v.synced } : v),
           medicineStock: issued ? [...s.medicineStock, issued.entry] : s.medicineStock,
+          finance: [...s.finance.filter(t => !linkedRows.some(linked => linked.id === t.id)), ...labourRows],
           // Both days stand on the row; the audit says which one was written, and names the
           // gap between them so a late dose reads as late in the history too (§8). The usage
           // is written down beside it as its own record, so a shelf count and a flock charge
           // stay readable apart even though one step booked both.
           audit: [
             ...(issued ? [auditRow(s, 'MedicineStock', issued.entry.id, issued.summary)] : []),
+            ...labourRows.map(r => auditRow(s, 'Finance', r.id, `${r.category} ${fmtMoney(r.amount)} – ${item.vaccineName}`)),
             ...auditChanges(s, 'Vaccination', id, changes, why),
-          ],
+          ].slice(0, 500),
         }));
         return { ok: true, expense: issued ? issued.expense : null, usageId: issued?.entry.id };
       },

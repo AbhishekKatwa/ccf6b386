@@ -474,12 +474,16 @@ const batchPnl: ReportDef['build'] = ctx => {
       const own = traces.filter(t => t.batchId === b.id);
       const uses = ctx.src.medicineStock.filter(e => e.kind === 'USAGE' && e.batchId === b.id && inRange(e.date, ctx.range));
       const costs = uses.map(e => usageExpenseOf(e, medVal));
+      const direct = total(txns.filter(t => !isInflow(t.kind) && !isInventoryPurchase(t)).map(t => t.amount)) ?? 0;
+      const directVaccine = total(txns.filter(t => t.kind === 'EXPENSE' && t.category === 'Vaccine').map(t => t.amount)) ?? 0;
+      const vaccineLabour = total(txns.filter(t => t.kind === 'EXPENSE' && t.category === 'Vaccine Labour').map(t => t.amount)) ?? 0;
+      const vaccinator = total(txns.filter(t => t.kind === 'EXPENSE' && t.category === 'Vaccinator').map(t => t.amount)) ?? 0;
       return {
         b,
         income: total(txns.filter(t => isInflow(t.kind)).map(t => t.amount)) ?? 0,
-        direct: total(txns.filter(t => !isInflow(t.kind) && !isInventoryPurchase(t)).map(t => t.amount)) ?? 0,
+        direct: direct - directVaccine - vaccineLabour - vaccinator,
         feed: total(own.filter(t => !t.missingFormula).map(t => t.cost)) ?? 0,
-        medicine: total(costs) ?? 0,
+        medicine: (total(costs) ?? 0) + directVaccine + vaccineLabour + vaccinator,
         unpriced: total(own.map(t => t.unpricedKg)) ?? 0,
         unpricedMedicine: costs.filter(c => c === null).length,
         live: liveBirdsOn(b, ctx.range.to, ctx.src.mortality),

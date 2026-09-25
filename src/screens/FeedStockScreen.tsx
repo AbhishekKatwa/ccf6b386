@@ -16,6 +16,7 @@ import { godownMovements, ledgerTotals, type Movement } from '@/lib/movements';
 import { useShortageAllocator } from '@/hooks/useShortageAllocator';
 import { useGodownPrices } from '@/hooks/useGodownPrices';
 import { useFeedCoverage } from '@/hooks/useFeedCoverage';
+import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal } from '@/components/motion';
 
 /**
  * The godown screen is the valuation's front page: every KG, average cost and stock
@@ -124,6 +125,7 @@ export function FeedStockScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <Header title="Godown" subtitle="Central inventory · stock in KG" action={headerActions} />
 
       <div className="px-4 sm:px-0 mt-3 space-y-4">
@@ -141,6 +143,7 @@ export function FeedStockScreen() {
         )}
 
         {tab === 'stock' && (<>
+        <ScrollReveal>
         <Card padded={false}>
           <StatStrip>
             <StatCell><Stat label="Total inventory" value={`${fmtIN(Number((totals.kg / 1000).toFixed(1)))} MT`} sub={`${totals.inStock} of ${movements.size} ingredients in stock`} tone="brand" size="sm" /></StatCell>
@@ -173,6 +176,7 @@ export function FeedStockScreen() {
             </p>
           )}
         </Card>
+        </ScrollReveal>
 
         <div className="rounded-[18px] bg-brand-soft px-4 py-3">
           <button type="button" onClick={() => setWhyOpen(v => !v)} aria-expanded={whyOpen}
@@ -212,13 +216,14 @@ export function FeedStockScreen() {
                 ))}
               </div>
             </div>
-            <GroupList>
+            <StaggerContainer as="ul">
               {rows.map(x => {
                 const status = stockStatus(x.closing);
                 const low = status !== 'NORMAL';
                 const critical = status === 'CRITICAL';
                 return (
-                  <ListRow key={x.ingredient}
+                  <StaggerItem key={x.ingredient} as="li">
+                  <ListRow
                     onClick={() => nav(`/feed/ingredient/${encodeURIComponent(x.ingredient)}`)}
                     leading={<IconTile tone={critical ? 'danger' : low ? 'accent' : 'brand'}><Package size={18} /></IconTile>}
                     title={x.ingredient}
@@ -251,9 +256,10 @@ export function FeedStockScreen() {
                       <ChevronRight size={16} className="text-faint mt-1 transition-colors group-hover:text-brand" />
                       </div>
                     } />
+                  </StaggerItem>
                 );
               })}
-            </GroupList>
+            </StaggerContainer>
           </>
         )}
 
@@ -268,6 +274,7 @@ export function FeedStockScreen() {
       </div>
 
       <AddStockDialog open={open} onClose={() => setOpen(false)} />
+      </PageReveal>
     </Page>
   );
 }

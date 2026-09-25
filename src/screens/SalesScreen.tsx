@@ -12,6 +12,7 @@ import { Badge, StatusBadge, EmptyState, GroupList, KpiCard, ListRow, SectionTit
 import { CHART } from '@/components/ui/Charts';
 import { GraphCard, GraphRange } from '@/components/charts/GraphCard';
 import { HBarList, TrendChart, type VPoint, type VSeries } from '@/components/charts/DataViz';
+import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, ChartReveal } from '@/components/motion';
 import { useApp, useCompanyData, useCan, type Result } from '@/store/app';
 import { fmtDate, fmtIN, fmtMoney, fmtPct, shiftDate, todayISO } from '@/lib/format';
 import { latestFirst } from '@/lib/order';
@@ -676,6 +677,7 @@ export function SalesScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <ScreenTitle
         eyebrow="Commerce" title="Egg Sales"
         subtitle={`Today · ${fmtDate(todayISO())}`}
@@ -688,6 +690,7 @@ export function SalesScreen() {
 
       <div className="px-4 sm:px-0 mt-1 flex flex-col gap-4">
         {/* The four questions, in the four largest numbers on the page. */}
+        <ScrollReveal>
         <section className="space-y-2">
           <div className={clsx('grid gap-2.5', canFinance ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2')}>
             <KpiCard label="Trays sold" value={fmtIN(scope.trays)} unit="trays"
@@ -731,6 +734,7 @@ export function SalesScreen() {
             </p>
           )}
         </section>
+        </ScrollReveal>
 
         {/* ---------------- the sales themselves: this page's reason for existing ---------------- */}
         <section>
@@ -766,11 +770,12 @@ export function SalesScreen() {
               description="No billed load carries every filter at once. Widen the dates or clear a filter."
               action={<Button size="sm" variant="outline" onClick={clearFilters}>Clear filters</Button>} />
           ) : (
-            <GroupList>
+            <StaggerContainer>
               {scope.views.map(v => {
                 const entry = v.entry;
                 return (
-                  <ListRow key={entry.id}
+                  <StaggerItem key={entry.id} as="div">
+                  <ListRow
                     onClick={() => nav(`/sales/entry/${entry.id}`)}
                     leading={<span className="w-9 h-9 rounded-[10px] bg-brand-soft text-brand-ink flex items-center justify-center shrink-0"><Truck size={16} /></span>}
                     title={<span className="flex items-center gap-2 min-w-0">{traderName(entry.traderId)}
@@ -796,17 +801,15 @@ export function SalesScreen() {
                       </div>
                     }
                   />
+                  </StaggerItem>
                 );
               })}
-              <p className="px-4 py-2.5 text-[11px] text-muted leading-snug">
-                Tap a sale for its grade split, its rate and the receipts booked against it.
-                A grade filter shows the trays and value of that grade alone; money is still the whole load’s.
-              </p>
-            </GroupList>
+              </StaggerContainer>
           )}
         </section>
 
         {/* ---------------- one chart, in the coin the question was asked ---------------- */}
+        <ChartReveal>
         <GraphCard
           title="Sales trend"
           subtitle={`${trend === 'value' ? 'What each day’s loads were billed for' : 'Trays billed each day'} · ${fmtDate(scope.from)} – ${fmtDate(scope.to)}`}
@@ -830,8 +833,10 @@ export function SalesScreen() {
           <TrendChart series={trendSeries} height={194}
             format={trend === 'value' ? v => fmtMoney(v) : v => `${fmtIN(v)} trays`} />
         </GraphCard>
+        </ChartReveal>
 
         {/* ---------------- who bought the eggs ---------------- */}
+        <ChartReveal>
         <GraphCard
           title="Sales by trader"
           subtitle={canFinance ? 'Who took the load, how many trays, and what they were billed.' : 'Who took the load, and how many trays they carried.'}
@@ -855,6 +860,7 @@ export function SalesScreen() {
               : 'Tap a trader to scope every figure on this screen to them.'}
           />
         </GraphCard>
+        </ChartReveal>
 
         {/* ---------------- the shed’s note of the van, quiet until asked for ---------------- */}
         <section className="space-y-2">
@@ -946,6 +952,7 @@ export function SalesScreen() {
       <ConfirmDialog open={!!deleteTarget} title="Delete this sale entry?"
         message="Its trader and finance ledger rows are removed with it, and the trays go back to the shed stock."
         confirmLabel="Delete" danger onConfirm={removeEntry} onCancel={() => setDeleteTarget(null)} />
+      </PageReveal>
     </Page>
   );
 }

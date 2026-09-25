@@ -7,6 +7,7 @@ import {
 } from '@/lib/permissions';
 import { AppShell } from '@/components/layout/AppShell';
 import { ToastHost } from '@/components/ui/Toast';
+import { MotionProvider } from '@/components/motion';
 import { LoginScreen } from '@/screens/LoginScreen';
 import { CompanySelectScreen } from '@/screens/CompanySelectScreen';
 import { AdminScreen } from '@/screens/AdminScreen';
@@ -20,7 +21,7 @@ import { BatchListScreen } from '@/screens/BatchListScreen';
 import { BatchDetailScreen } from '@/screens/BatchDetailScreen';
 import { BatchUsersScreen } from '@/screens/BatchUsersScreen';
 import { AssignBatchScreen } from '@/screens/AssignBatchScreen';
-import { EggsScreen } from '@/screens/EggsScreen';
+import { BatchEggsScreen } from '@/screens/BatchEggsScreen';
 import { FeedStockScreen } from '@/screens/FeedStockScreen';
 import { IngredientStockScreen } from '@/screens/IngredientStockScreen';
 import { MedicinesScreen } from '@/screens/MedicinesScreen';
@@ -43,6 +44,7 @@ import { ProfileScreen } from '@/screens/ProfileScreen';
 import { ContactScreen } from '@/screens/ContactScreen';
 import { LaborLogScreen } from '@/screens/LaborScreen';
 import { MortalityScreen } from '@/screens/MortalityScreen';
+import { EggsScreen } from '@/screens/EggsScreen';
 
 function useScrollReset() {
   const loc = useLocation();
@@ -99,9 +101,10 @@ function CompanyRoutes() {
       <Route path="/batches/:batchId" element={<RequireRole roles={OPS_ROLES}><BatchDetailScreen /></RequireRole>} />
       <Route path="/batches/:batchId/users" element={<RequireRole roles={['OWNER']}><BatchUsersScreen /></RequireRole>} />
       <Route path="/batches/:batchId/users/assign" element={<RequireRole roles={['OWNER']}><AssignBatchScreen /></RequireRole>} />
-      <Route path="/batches/:batchId/eggs" element={<RequireRole roles={OPS_ROLES}><EggsScreen /></RequireRole>} />
+      <Route path="/batches/:batchId/eggs" element={<RequireRole roles={OPS_ROLES}><BatchEggsScreen /></RequireRole>} />
       <Route path="/batches/:batchId/mortality" element={<RequireRole roles={OPS_ROLES}><MortalityScreen /></RequireRole>} />
       <Route path="/batches/:batchId/daily-report" element={<RequireRole roles={REPORT_ROLES}><DailyReportScreen /></RequireRole>} />
+      <Route path="/eggs" element={<RequireRole roles={OPS_ROLES}><EggsScreen /></RequireRole>} />
       <Route path="/feed" element={<RequireRole roles={GODOWN_ROLES}><FeedStockScreen /></RequireRole>} />
       <Route path="/feed/ingredient/:ingredient" element={<RequireRole roles={GODOWN_ROLES}><IngredientStockScreen /></RequireRole>} />
       <Route path="/feed/formulas" element={<RequireRole roles={FORMULA_VIEW_ROLES}><FeedFormulaScreen /></RequireRole>} />
@@ -111,7 +114,6 @@ function CompanyRoutes() {
       <Route path="/feed/formulas/:formulaId/history" element={<RequireRole roles={FORMULA_VIEW_ROLES}><FormulaHistoryScreen /></RequireRole>} />
       <Route path="/finance" element={<RequireRole roles={COMMERCE_ROLES}><FinanceScreen /></RequireRole>} />
       <Route path="/sales" element={<RequireRole roles={OPS_ROLES}><SalesScreen /></RequireRole>} />
-      <Route path="/sales/planner" element={<RequireRole roles={OPS_ROLES}><EggSalePlannerScreen /></RequireRole>} />
       <Route path="/sales/entry/:entryId" element={<RequireRole roles={OPS_ROLES}><SaleEntryDetailScreen /></RequireRole>} />
       <Route path="/tasks" element={<TasksScreen />} />
       <Route path="/vaccination" element={<VaccinationRedirect />} />
@@ -164,20 +166,20 @@ export default function App() {
 
   if (!session || !user) {
     return (
-      <>
+      <MotionProvider>
         <Routes>
           <Route path="/login" element={<LoginScreen />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
         <ToastHost />
-      </>
+      </MotionProvider>
     );
   }
 
   // Signed in but no company context yet.
   if (!session.companyId) {
     return (
-      <>
+      <MotionProvider>
         {user.role === 'MASTER_ADMIN' ? (
           <AppShell><MasterRoutes /></AppShell>
         ) : (
@@ -187,14 +189,14 @@ export default function App() {
           </Routes>
         )}
         <ToastHost />
-      </>
+      </MotionProvider>
     );
   }
 
   return (
-    <>
+    <MotionProvider>
       <AppShell><CompanyRoutes /></AppShell>
       <ToastHost />
-    </>
+    </MotionProvider>
   );
 }

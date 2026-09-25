@@ -6,19 +6,42 @@ import { Dialog } from '@/components/ui/Dialog';
 import {
   EMPTY_PAYMENT, PaymentFields, paymentPatch, type PaymentDraft,
 } from '@/components/finance/PaymentFields';
-import { isInflow } from '@/lib/accounting';
+import { CHICK_PURCHASE_CATEGORY, FINANCE_CATEGORIES, isInflow, INVENTORY_CATEGORIES } from '@/lib/accounting';
 import { todayISO } from '@/lib/format';
 
 export type MoneyKind = 'INCOME' | 'EXPENSE';
 
 /**
- * The heads a flock's own money takes here. Egg and bird sales arrive through a voucher and
- * feed/medicine purchases are godown stock, so neither is offered — this form is for what the
- * shed itself earned or spent and nobody else's record wrote.
+ * Category buckets for the batch money form. These come from the single authoritative
+ * FINANCE_CATEGORIES list in accounting.ts so the category on the Finance ledger row
+ * always matches what was shown in the UI.
+ *
+ * Inventory purchases (Feed Purchase, Medicine Purchase) are excluded here because they
+ * flow through the Godown and Medicine store, not through a flock's direct ledger entry.
+ * Chick Purchase and Egg Sale also belong to other dedicated workflows.
  */
+const EXCLUDED_FROM_BATCH_FORM = new Set([
+  ...INVENTORY_CATEGORIES,
+  CHICK_PURCHASE_CATEGORY,
+  'Egg Sale',
+]);
+
+const BATCH_INCOME_CATS = FINANCE_CATEGORIES.filter(c => {
+  // Income categories: things that earn money for the flock
+  const incomeKeywords = ['Sale', 'Income'];
+  const isIncomeCat = incomeKeywords.some(k => c.includes(k)) || c === 'Other';
+  return isIncomeCat && !EXCLUDED_FROM_BATCH_FORM.has(c);
+});
+
+const BATCH_EXPENSE_CATS = FINANCE_CATEGORIES.filter(c => {
+  // Expense categories: things that cost money for the flock
+  const incomeOnlyCats = new Set(['Egg Sale', 'Bird Sale', 'Manure Sale']);
+  return !EXCLUDED_FROM_BATCH_FORM.has(c) && !incomeOnlyCats.has(c);
+});
+
 const CATEGORIES: Record<MoneyKind, string[]> = {
-  INCOME: ['Manure Sale', 'Other'],
-  EXPENSE: ['Labour', 'Electricity', 'Transport', 'Maintenance', 'Other'],
+  INCOME: BATCH_INCOME_CATS.length ? BATCH_INCOME_CATS : ['Manure Sale', 'Bird Sale', 'Other'],
+  EXPENSE: BATCH_EXPENSE_CATS.length ? BATCH_EXPENSE_CATS : ['Medicine', 'Vaccine', 'Vaccine Labour', 'Vaccinator', 'Labour', 'Electricity', 'Transport', 'Maintenance', 'Miscellaneous', 'Other'],
 };
 
 /**

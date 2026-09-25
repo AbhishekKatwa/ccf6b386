@@ -7,7 +7,7 @@ import clsx from 'clsx';
 import { useApp, useCan, useCompanyData, useCurrentUser } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, Row, StatusBadge, EmptyState, Badge } from '@/components/ui/Card';
-import { Button, Field, TextArea } from '@/components/ui/Form';
+import { Button, Field, SelectField, TextArea } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
 import { fmtDate, fmtIN, fmtMoney, fmtPct, shiftDate, todayISO } from '@/lib/format';
 import { useBatchMetrics } from '@/hooks/useBatchMetrics';
@@ -65,7 +65,11 @@ export function BatchDetailScreen() {
   const wanted = params.get('tab') as TabId | null;
   const [tab, setTab] = useState<TabId>(wanted ?? 'overview');
   const [closeOpen, setCloseOpen] = useState(false);
-  const [cf, setCf] = useState({ date: todayISO(), finalBirds: '', buyer: '', amount: '', remarks: '' });
+  const [cf, setCf] = useState({
+    date: todayISO(), finalBirds: '', buyer: '',
+    saleQty: '', saleRatePerBird: '', saleAmount: '',
+    paymentMethod: '', reference: '', remarks: '',
+  });
   const [intakeOpen, setIntakeOpen] = useState(false);
   const [intake, setIntake] = useState('');
   const [medicineOpen, setMedicineOpen] = useState(false);
@@ -105,11 +109,13 @@ export function BatchDetailScreen() {
     const rows = data.finance.filter(f => f.batchId === batch.id);
     const inflows = rows.filter(f => f.kind === 'INCOME' || f.kind === 'SALE' || f.kind === 'PAYMENT_IN');
     const isEggSale = (f: typeof inflows[number]) => f.kind === 'SALE' || /egg/i.test(f.category ?? '');
+    const isBirdSale = (f: typeof inflows[number]) => /bird.?sale/i.test(f.category ?? '');
     const eggSales = inflows.filter(isEggSale).reduce((s, f) => s + f.amount, 0);
-    const otherIncome = inflows.filter(f => !isEggSale(f)).reduce((s, f) => s + f.amount, 0);
+    const birdSales = inflows.filter(f => !isEggSale(f) && isBirdSale(f)).reduce((s, f) => s + f.amount, 0);
+    const otherIncome = inflows.filter(f => !isEggSale(f) && !isBirdSale(f)).reduce((s, f) => s + f.amount, 0);
     // Inventory purchases and the payments that settle them are not this flock's expense.
     const direct = rows.filter(f => f.kind === 'EXPENSE' && !isInventoryPurchase(f)).reduce((s, f) => s + f.amount, 0);
-    return { eggSales, otherIncome, income: eggSales + otherIncome, direct };
+    return { eggSales, birdSales, otherIncome, income: eggSales + birdSales + otherIncome, direct };
   }, [batch, data.finance]);
 
   if (!batch || !m || !money) {
@@ -152,10 +158,20 @@ export function BatchDetailScreen() {
     const finalBirds = parseInt(cf.finalBirds, 10);
     if (!cf.date) return pushToast('error', 'Date required');
     if (!finalBirds || finalBirds < 0) return pushToast('error', 'Closing bird count required');
+    // Calculate sale amount: explicit entry wins; if qty+rate supplied, derive it.
+    const saleQty = parseInt(cf.saleQty, 10) || 0;
+    const saleRatePerBird = parseFloat(cf.saleRatePerBird) || 0;
+    const derived = saleQty > 0 && saleRatePerBird > 0 ? saleQty * saleRatePerBird : 0;
+    const saleAmount = cf.saleAmount !== '' ? parseFloat(cf.saleAmount) || 0
+      : derived > 0 ? derived : 0;
     const r = closeBatch(batch.id, {
       date: cf.date, finalBirds,
       buyer: cf.buyer || undefined,
-      amount: cf.amount != null && cf.amount !== '' ? parseFloat(cf.amount) : undefined,
+      saleAmount: saleAmount > 0 ? saleAmount : undefined,
+      saleQty: saleQty > 0 ? saleQty : undefined,
+      saleRatePerBird: saleRatePerBird > 0 ? saleRatePerBird : undefined,
+      paymentMethod: cf.paymentMethod as import('@/types').PaymentMethod | undefined || undefined,
+      reference: cf.reference || undefined,
       remarks: cf.remarks || undefined,
     });
     if (!r.ok) return pushToast('error', r.error ?? 'Failed');
@@ -185,7 +201,7 @@ export function BatchDetailScreen() {
     <Page withNav>
       <Header
         title={batch.code}
-        subtitle={`${isLayer ? 'Layer' : 'Broiler'} · ${batch.breed} · ${shed?.name ?? farm?.name ?? '—'} · ${m.age.dayLabel}`}
+        subtitle={`${isLayer ? 'Layer' : 'Broiler'} · ${batch.breed} · ${shed?.name ?? farm?.name ?? '—'} · Day ${m.ageDays}`}
         action={
           <div className="flex items-center gap-2">
             <StatusBadge status={batch.status} />
@@ -197,7 +213,7 @@ export function BatchDetailScreen() {
             )}
             {isActive && canClose && (
               <Button size="sm" variant="outline" icon={<Package size={14} />}
-                onClick={() => { setCf({ date: todayISO(), finalBirds: String(m.live), buyer: '', amount: '', remarks: '' }); setCloseOpen(true); }}>
+                onClick={() => { setCf({ date: todayISO(), finalBirds: String(m.live), buyer: '', saleQty: '', saleRatePerBird: '', saleAmount: '', paymentMethod: '', reference: '', remarks: '' }); setCloseOpen(true); }}>
                 <span className="hidden sm:inline">Close / sell</span>
               </Button>
             )}
@@ -210,7 +226,7 @@ export function BatchDetailScreen() {
         <Card padded={false} className="overflow-hidden">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-line-2 divide-y sm:divide-y-0">
             <Metric label="Live birds" value={fmtIN(m.live)} sub={`of ${fmtIN(batch.initialBirds)}`} tone="brand" />
-            <Metric label="Age" value={m.age.dayLabel} sub={`placed ${fmtDate(batch.placementDate)}`} />
+            <Metric label="Age" value={m.age.dayLabel} sub={`placed ${fmtDate(batch.placementDate)}`} noTruncate />
             <Metric label="Cum. mortality" value={fmtIN(m.cumMort)} sub={fmtPct(m.mortPct, 2)} tone="danger" />
             {isLayer ? (
               <>
@@ -300,7 +316,7 @@ export function BatchDetailScreen() {
                   <Row label="Closed" value={fmtDate(batch.closing.date)} />
                   <Row label="Closing birds" value={fmtIN(batch.closing.finalBirds)} />
                   {batch.closing.buyer && <Row label="Buyer" value={batch.closing.buyer} mono={false} />}
-                  {batch.closing.amount != null && <Row label="Sale amount" value={canFinance ? fmtMoney(batch.closing.amount) : '₹•••••'} />}
+                  {(batch.closing.saleAmount ?? batch.closing.amount) != null && <Row label="Sale amount" value={canFinance ? fmtMoney((batch.closing.saleAmount ?? batch.closing.amount)!) : '₹•••••'} />}
                   <Row label="Closed by" value={users.find(u => u.id === batch.closing!.closedBy)?.name ?? '—'} mono={false} />
                 </>
               )}
@@ -323,6 +339,7 @@ export function BatchDetailScreen() {
               <Card>
                 <SectionHead icon={<Wallet size={14} />} title="Income" />
                 <Row label="Egg sales" value={fmtMoney(money.eggSales)} success={money.eggSales > 0} />
+                <Row label="Bird sales" value={fmtMoney(money.birdSales)} success={money.birdSales > 0} />
                 <Row label="Extra income" value={fmtMoney(money.otherIncome)} success={money.otherIncome > 0} />
                 <p className="mt-2 text-[11.5px] text-muted leading-relaxed">
                   Money booked against {batch.code} in the finance ledger.{' '}
@@ -548,7 +565,7 @@ export function BatchDetailScreen() {
 
         {/* ===================== TRENDS ===================== */}
         {active === 'trends' && (
-          <BatchTrends batchId={batch.id} shedId={batch.shedId} isLayer={isLayer} today={m.today} />
+          <BatchTrends batchId={batch.id} shedId={batch.shedId} isLayer={isLayer} today={m.today} placementDate={batch.placementDate} />
         )}
       </div>
 
@@ -571,7 +588,66 @@ export function BatchDetailScreen() {
           <Field label="Closure date" type="date" value={cf.date} onChange={e => setCf(f => ({ ...f, date: e.target.value }))} />
           <Field label="Closing birds" type="number" inputMode="numeric" value={cf.finalBirds} onChange={e => setCf(f => ({ ...f, finalBirds: e.target.value }))} className="font-mono" />
           <Field label="Buyer (optional)" value={cf.buyer} onChange={e => setCf(f => ({ ...f, buyer: e.target.value }))} placeholder="e.g. Dhanraj Poultry" />
-          <Field label="Sale amount (₹, optional)" type="number" inputMode="decimal" value={cf.amount} onChange={e => setCf(f => ({ ...f, amount: e.target.value }))} className="font-mono" />
+
+          {/* Bird sale income — becomes a real Finance ledger row */}
+          <div className="rounded-[16px] border border-line bg-card px-4 py-3.5 space-y-3">
+            <div>
+              <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-muted">Bird sale income</p>
+              <p className="text-[11.5px] text-muted leading-relaxed mt-0.5">
+                Recorded as a Bird Sale income transaction in the Finance ledger — appears in shed income, batch P&amp;L and farm P&amp;L.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Birds sold (qty)" type="number" inputMode="numeric" value={cf.saleQty}
+                onChange={e => {
+                  const qty = parseInt(e.target.value, 10) || 0;
+                  const rate = parseFloat(cf.saleRatePerBird) || 0;
+                  setCf(f => ({ ...f, saleQty: e.target.value, saleAmount: qty > 0 && rate > 0 ? String(qty * rate) : f.saleAmount }));
+                }}
+                className="font-mono" placeholder="e.g. 10000" />
+              <Field label="Rate per bird (₹)" type="number" inputMode="decimal" value={cf.saleRatePerBird}
+                onChange={e => {
+                  const rate = parseFloat(e.target.value) || 0;
+                  const qty = parseInt(cf.saleQty, 10) || 0;
+                  setCf(f => ({ ...f, saleRatePerBird: e.target.value, saleAmount: qty > 0 && rate > 0 ? String(qty * rate) : f.saleAmount }));
+                }}
+                className="font-mono" placeholder="e.g. 100" />
+            </div>
+            <Field label="Total sale amount (₹)" type="number" inputMode="decimal" value={cf.saleAmount}
+              onChange={e => setCf(f => ({ ...f, saleAmount: e.target.value }))}
+              className="font-mono"
+              hint={
+                (() => {
+                  const qty = parseInt(cf.saleQty, 10) || 0;
+                  const rate = parseFloat(cf.saleRatePerBird) || 0;
+                  return qty > 0 && rate > 0 ? `${qty.toLocaleString('en-IN')} birds × ₹${rate}/bird = ₹${(qty * rate).toLocaleString('en-IN')}` : undefined;
+                })()
+              }
+              placeholder="Leave blank if no sale" />
+            {parseFloat(cf.saleAmount) > 0 && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <SelectField label="Payment method" value={cf.paymentMethod}
+                    onChange={e => setCf(f => ({ ...f, paymentMethod: e.target.value }))}
+                    options={[
+                      { value: '', label: 'Not recorded' },
+                      { value: 'CASH', label: 'Cash' },
+                      { value: 'UPI', label: 'UPI' },
+                      { value: 'PHONEPE', label: 'PhonePe' },
+                      { value: 'NEFT', label: 'NEFT' },
+                      { value: 'RTGS', label: 'RTGS' },
+                      { value: 'BANK_TRANSFER', label: 'Bank transfer' },
+                      { value: 'CHEQUE', label: 'Cheque' },
+                    ]}
+                  />
+                  <Field label="Reference / UTR" value={cf.reference}
+                    onChange={e => setCf(f => ({ ...f, reference: e.target.value }))}
+                    placeholder="e.g. receipt no." />
+                </div>
+              </>
+            )}
+          </div>
+
           <TextArea label="Remarks (optional)" rows={2} value={cf.remarks} onChange={e => setCf(f => ({ ...f, remarks: e.target.value }))} placeholder="Flock sold standing, cleaned shed…" />
         </div>
       </Dialog>
@@ -630,16 +706,19 @@ const TONE: Record<string, string> = {
   brand: 'text-brand', accent: 'text-accent-ink', danger: 'text-danger', success: 'text-success', ink: 'text-ink',
 };
 
-function Metric({ label, value, sub, tone = 'ink', action }: {
+function Metric({ label, value, sub, tone = 'ink', action, noTruncate }: {
   label: string; value: string; sub?: string; tone?: keyof typeof TONE | string;
   action?: { label: string; onClick: () => void };
+  noTruncate?: boolean;
 }) {
   return (
     <div className="px-3.5 py-3 min-w-0 sm:border-r sm:border-line-2 sm:last:border-r-0">
       <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-muted-2 truncate">{label}</p>
-      <p className={clsx('mt-1 font-display text-[19px] font-semibold tnum leading-none truncate', TONE[tone] ?? 'text-ink')}>{value}</p>
+      <p className={clsx('mt-1 font-display font-semibold tnum leading-none',
+        noTruncate ? 'text-[17px] break-words' : 'text-[19px] truncate',
+        TONE[tone] ?? 'text-ink')}>{value}</p>
       <div className="mt-1 flex items-center gap-1.5 min-w-0">
-        {sub && <p className="text-[11px] text-muted tnum truncate">{sub}</p>}
+        {sub && <p className={clsx('text-[11px] text-muted tnum', noTruncate ? 'break-words' : 'truncate')}>{sub}</p>}
         {action && (
           <button type="button" onClick={action.onClick}
             className="shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-brand press hover:underline">
@@ -691,17 +770,50 @@ function mortalityToday(mortality: { batchId: string; date: string; count: numbe
 
 /* ============================= trends ============================= */
 
-const WINDOW = 30;
+type TrendRange = '1D' | '7D' | '30D' | '90D' | 'ALL';
 
-/** This flock's own 30 days, drawn from the records the modules already write. */
-function BatchTrends({ batchId, shedId, isLayer, today }: { batchId: string; shedId: string; isLayer: boolean; today: string }) {
+const TREND_RANGES: { value: TrendRange; label: string }[] = [
+  { value: '1D', label: '1D' },
+  { value: '7D', label: '7D' },
+  { value: '30D', label: '30D' },
+  { value: '90D', label: '90D' },
+  { value: 'ALL', label: 'All' },
+];
+
+/** Build the list of dates for a trend range, clamped to the batch's own lifetime. */
+function trendDays(range: TrendRange, today: string, placementDate: string): string[] {
+  const batchStart = placementDate;
+  let from: string;
+  if (range === 'ALL') {
+    from = batchStart;
+  } else if (range === '1D') {
+    from = today;
+  } else {
+    const n = range === '7D' ? 7 : range === '30D' ? 30 : 90;
+    from = shiftDate(today, -(n - 1));
+    // Never go before the batch started
+    if (from < batchStart) from = batchStart;
+  }
+  const out: string[] = [];
+  let d = from;
+  while (d <= today) {
+    out.push(d);
+    d = shiftDate(d, 1);
+  }
+  return out;
+}
+
+/** This flock's own trend charts, drawn from the records the modules already write. */
+function BatchTrends({ batchId, shedId, isLayer, today, placementDate }: {
+  batchId: string; shedId: string; isLayer: boolean; today: string; placementDate: string;
+}) {
   const { eggs, saleEntries, eggWastages: wastages, mortality, feed } = useCompanyData();
+  const [range, setRange] = useState<TrendRange>('30D');
 
-  const days = useMemo(() => {
-    const out: string[] = [];
-    for (let i = WINDOW - 1; i >= 0; i--) out.push(shiftDate(today, -i));
-    return out;
-  }, [today]);
+  const days = useMemo(
+    () => trendDays(range, today, placementDate),
+    [range, today, placementDate],
+  );
 
   const series = useMemo(() => {
     const shedEggs = eggs.filter(e => e.shedId === shedId);
@@ -722,7 +834,10 @@ function BatchTrends({ batchId, shedId, isLayer, today }: { batchId: string; she
       grade ? (l.byGrade[grade] || 0) : Object.values(l.byGrade).reduce((s, n) => s + n, 0);
 
     // Normal stock runs forward: what was in hand before the window, plus each day's movement.
-    const opening = eggStockByGrade(shedId, eggs, saleEntries, wastages, shiftDate(days[0], -1)).GOOD.balance;
+    const windowStart = days[0];
+    const opening = windowStart
+      ? eggStockByGrade(shedId, eggs, saleEntries, wastages, shiftDate(windowStart, -1)).GOOD.balance
+      : 0;
     const collected = per(shedEggs, e => e.date, e => e.goodTrays);
     const dispatched = per(
       shedEntries.flatMap(e => e.lines.filter(l => l.shedId === shedId).map(l => ({ date: e.date, trays: lineTrays(l, 'GOOD') }))),
@@ -746,34 +861,59 @@ function BatchTrends({ batchId, shedId, isLayer, today }: { batchId: string; she
   }, [eggs, saleEntries, wastages, mortality, feed, shedId, batchId, days]);
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
-      {isLayer && (
-        <ChartCard title="Egg production" sub="Normal trays collected each day"
-          points={series.production} color={CHART.brand} />
-      )}
-      <ChartCard title={isLayer ? 'Egg sales' : 'Sales'} sub="Trays dispatched each day"
-        points={series.sales} color={CHART.teal} />
-      {isLayer && (
-        <ChartCard title="Breakage" sub="Damaged trays collected each day"
-          points={series.breakage} color={CHART.danger} />
-      )}
-      <ChartCard title="Mortality" sub="Birds lost each day"
-        points={series.mortality} color={CHART.danger} />
-      {isLayer && (
-        <ChartCard title="Normal egg stock" sub="Trays in hand at the end of each day"
-          points={series.stock} color={CHART.accent} />
-      )}
-      <ChartCard title="Feed consumption" sub="Tonnes given each day"
-        points={series.feed} color={CHART.success} format={v => `${v.toFixed(2)} t`} />
+    <div className="space-y-4">
+      {/* Range selector */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {TREND_RANGES.map(r => (
+          <button key={r.value} type="button" onClick={() => setRange(r.value)}
+            className={clsx(
+              'px-3 py-1.5 rounded-full text-[11.5px] font-semibold transition-colors press',
+              range === r.value
+                ? 'bg-brand text-white shadow-sm'
+                : 'bg-card border border-line text-muted hover:text-ink',
+            )}>
+            {r.label}
+          </button>
+        ))}
+        {days.length > 0 && (
+          <span className="font-mono text-[10.5px] text-muted ml-1">
+            {range === '1D' ? today : `${days[0]} – ${days[days.length - 1]}`}
+            {` · ${days.length} day${days.length === 1 ? '' : 's'}`}
+          </span>
+        )}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        {isLayer && (
+          <ChartCard title="Egg production" sub="Normal trays collected each day"
+            points={series.production} color={CHART.brand} range={range} />
+        )}
+        <ChartCard title={isLayer ? 'Egg sales' : 'Sales'} sub="Trays dispatched each day"
+          points={series.sales} color={CHART.teal} range={range} />
+        {isLayer && (
+          <ChartCard title="Breakage" sub="Damaged trays collected each day"
+            points={series.breakage} color={CHART.danger} range={range} />
+        )}
+        <ChartCard title="Mortality" sub="Birds lost each day"
+          points={series.mortality} color={CHART.danger} range={range} />
+        {isLayer && (
+          <ChartCard title="Normal egg stock" sub="Trays in hand at the end of each day"
+            points={series.stock} color={CHART.accent} range={range} />
+        )}
+        <ChartCard title="Feed consumption" sub="Tonnes given each day"
+          points={series.feed} color={CHART.success} format={v => `${v.toFixed(2)} t`} range={range} />
+      </div>
     </div>
   );
 }
 
-function ChartCard({ title, sub, points, color, format }: {
+function ChartCard({ title, sub, points, color, format, range }: {
   title: string; sub: string; points: VPoint[]; color: string;
   format?: (v: number) => string;
+  range: TrendRange;
 }) {
   const hasData = points.some(p => (p.value ?? 0) !== 0);
+  const label = range === '1D' ? 'today' : range === 'ALL' ? 'this batch' : `the last ${range.toLowerCase()}`;
   return (
     <Card>
       <p className="font-display text-[14px] font-semibold text-ink leading-tight">{title}</p>
@@ -782,7 +922,7 @@ function ChartCard({ title, sub, points, color, format }: {
         {hasData
           ? <TrendChart series={[{ id: title, label: title, color, points }]} height={150}
               format={format ? (v) => format(v) : undefined} />
-          : <p className="py-6 text-center text-[12px] text-muted">No record in the last {WINDOW} days</p>}
+          : <p className="py-6 text-center text-[12px] text-muted">No record for {label}</p>}
       </div>
     </Card>
   );

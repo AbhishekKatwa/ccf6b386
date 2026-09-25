@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import clsx from 'clsx';
 import { Button } from './Form';
+import { ModalTransition, BackdropTransition, useReducedMotion } from '@/components/motion';
 
 export function Dialog({ open, onClose, title, subtitle, children, footer }: {
   open: boolean; onClose: () => void; title: string; subtitle?: string; children: ReactNode; footer?: ReactNode;
 }) {
+  const reduced = useReducedMotion();
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -15,29 +17,35 @@ export function Dialog({ open, onClose, title, subtitle, children, footer }: {
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = ''; };
   }, [open, onClose]);
 
-  if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-ink/45 backdrop-blur-[2px] ap-fade" onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-[440px] bg-card rounded-t-[24px] sm:rounded-[22px] shadow-pop overflow-hidden ap-sheet-up sm:ap-rise"
-        role="dialog" aria-modal="true" aria-label={title}
-      >
-        <div className="flex justify-center pt-2.5 sm:hidden"><span className="w-9 h-1 rounded-full bg-line" /></div>
-        <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3">
-          <div className="min-w-0">
-            <h3 className="font-display text-[18px] font-semibold text-ink leading-tight">{title}</h3>
-            {subtitle && <p className="text-[12px] text-muted mt-0.5">{subtitle}</p>}
-          </div>
-          <button onClick={onClose} aria-label="Close"
-            className="w-8 h-8 rounded-full bg-sunk text-muted hover:text-ink flex items-center justify-center press shrink-0">
-            <X size={15} />
-          </button>
+    <>
+      <BackdropTransition open={open} onClick={onClose} blur={reduced ? 0 : 2} />
+      {open && (
+        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center pointer-events-none">
+          <ModalTransition open={open}>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="pointer-events-auto w-full sm:max-w-[440px] bg-card rounded-t-[24px] sm:rounded-[22px] shadow-pop overflow-hidden"
+              role="dialog" aria-modal="true" aria-label={title}
+            >
+              <div className="flex justify-center pt-2.5 sm:hidden"><span className="w-9 h-1 rounded-full bg-line" /></div>
+              <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3">
+                <div className="min-w-0">
+                  <h3 className="font-display text-[18px] font-semibold text-ink leading-tight">{title}</h3>
+                  {subtitle && <p className="text-[12px] text-muted mt-0.5">{subtitle}</p>}
+                </div>
+                <button onClick={onClose} aria-label="Close"
+                  className="w-8 h-8 rounded-full bg-sunk text-muted hover:text-ink flex items-center justify-center press shrink-0">
+                  <X size={15} />
+                </button>
+              </div>
+              <div className="px-5 pb-5 max-h-[68vh] overflow-y-auto">{children}</div>
+              {footer && <div className="px-5 py-3.5 border-t border-line-2 bg-card safe-bottom">{footer}</div>}
+            </div>
+          </ModalTransition>
         </div>
-        <div className="px-5 pb-5 max-h-[68vh] overflow-y-auto">{children}</div>
-        {footer && <div className="px-5 py-3.5 border-t border-line-2 bg-card safe-bottom">{footer}</div>}
-      </div>
-    </div>,
+      )}
+    </>,
     document.body,
   );
 }

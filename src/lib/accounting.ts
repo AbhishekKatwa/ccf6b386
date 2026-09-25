@@ -49,8 +49,12 @@ export const INVENTORY_CATEGORIES = new Set([FEED_PURCHASE_CATEGORY, MEDICINE_PU
 export const FINANCE_CATEGORIES = [
   'Egg Sale', 'Bird Sale', 'Manure Sale',
   FEED_PURCHASE_CATEGORY, MEDICINE_PURCHASE_CATEGORY, CHICK_PURCHASE_CATEGORY,
-  'Medicine', 'Labour', 'Electricity', 'Transport', 'Maintenance', 'Other',
+  'Medicine', 'Vaccine', 'Vaccine Labour', 'Vaccinator',
+  'Labour', 'Electricity', 'Transport', 'Maintenance', 'Miscellaneous', 'Other',
 ];
+
+/** Categories that represent vaccine-related labour charges (not medicine stock). */
+export const VACCINE_LABOUR_CATEGORIES = new Set(['Vaccine Labour', 'Vaccinator']);
 
 /**
  * Money paid for birds. A flock is never drawn out of a store, so nothing realises its cost

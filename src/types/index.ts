@@ -116,7 +116,18 @@ export interface BatchClosing {
   date: string;
   finalBirds: number;
   buyer?: string;
+  /** @deprecated Use saleAmount instead. Kept for migration compatibility. */
   amount?: number;
+  /** The bird sale income amount — persisted as a FinanceTxn on close. */
+  saleAmount?: number;
+  /** Quantity of birds sold in this closure. */
+  saleQty?: number;
+  /** Rate per bird (₹). */
+  saleRatePerBird?: number;
+  /** How the sale proceeds were received. */
+  paymentMethod?: PaymentMethod;
+  split?: PaymentSplit;
+  reference?: string;
   remarks?: string;
   closedBy: string;
   closedAt: string;

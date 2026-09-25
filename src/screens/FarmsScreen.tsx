@@ -10,6 +10,7 @@ import { STRUCTURE_ROLES } from '@/lib/permissions';
 import { normalizeMobile } from '@/lib/auth';
 import { ageLabel, fmtIN, todayISO } from '@/lib/format';
 import { eggStockByGrade, liveBirdsOn } from '@/lib/calc';
+import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal } from '@/components/motion';
 
 /** The farm picker's stand-in for a shed whose farm does not exist yet. */
 const NEW_FARM = '__new__';
@@ -83,13 +84,15 @@ export function FarmsScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <ScreenTitle eyebrow="Operations" title="Sheds"
         subtitle={`${sheds.length} sheds · ${liveBatches.length} live batches`}
         action={mayBuild
           ? <Button size="sm" icon={<Plus size={14} />} onClick={() => openSheet()}>Add shed</Button>
           : undefined} />
 
-      <div className="px-4 sm:px-0 space-y-4">
+      <StaggerContainer className="px-4 sm:px-0 space-y-4">
+        <StaggerItem>
         <Card padded={false} className="overflow-hidden">
           <StatStrip>
             <StatCell><Stat label="Sheds" value={fmtIN(sheds.length)} tone="brand" size="md" /></StatCell>
@@ -98,6 +101,7 @@ export function FarmsScreen() {
             <StatCell><Stat label="Capacity" value={fmtIN(capacity)} tone="neutral" size="md" /></StatCell>
           </StatStrip>
         </Card>
+        </StaggerItem>
 
         {groups.length === 0 ? (
           <EmptyState icon={<Building2 size={22} />}
@@ -109,7 +113,8 @@ export function FarmsScreen() {
               ? <Button onClick={() => openSheet()} icon={<Plus size={14} />}>Add shed</Button>
               : undefined} />
         ) : groups.map(({ farm, farmSheds }) => (
-          <div key={farm.id} className="space-y-2">
+          <ScrollReveal key={farm.id}>
+          <div className="space-y-2">
             <button onClick={() => nav(`/farms/${farm.id}`)}
               className="w-full flex items-center gap-2 px-0.5 text-left press group rounded-lg focus-visible:ring-2 ring-focus">
               <div className="min-w-0 flex-1">
@@ -160,8 +165,9 @@ export function FarmsScreen() {
               </GroupList>
             )}
           </div>
+          </ScrollReveal>
         ))}
-      </div>
+      </StaggerContainer>
 
       <Dialog open={open} onClose={() => setOpen(false)} title="Add shed"
         subtitle={needsFarm ? 'This shed also sets up the farm it stands on' : 'Pick the farm it stands on'}
@@ -187,6 +193,7 @@ export function FarmsScreen() {
             onChange={e => setShedForm(s => ({ ...s, capacity: e.target.value }))} placeholder="e.g. 25000" className="font-mono" />
         </div>
       </Dialog>
+      </PageReveal>
     </Page>
   );
 }

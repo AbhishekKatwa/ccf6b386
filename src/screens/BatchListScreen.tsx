@@ -7,6 +7,7 @@ import { Card, StatusBadge, EmptyState, IconTile } from '@/components/ui/Card';
 import { Button, SearchField, SegmentedTabs } from '@/components/ui/Form';
 import { fmtIN, fmtPct, todayISO } from '@/lib/format';
 import { cumulativeMortality, liveBirdsOn } from '@/lib/calc';
+import { PageReveal, StaggerContainer, StaggerItem } from '@/components/motion';
 
 function BatchRow({ batchId }: { batchId: string }) {
   const nav = useNavigate();
@@ -76,6 +77,7 @@ export function BatchListScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <Header title="Batches" subtitle={`${list.length} shown`}
         action={<Button size="sm" variant="outline" icon={<Plus size={14} />} onClick={() => nav('/farms')}>New</Button>} />
 
@@ -91,11 +93,12 @@ export function BatchListScreen() {
         {list.length === 0 ? (
           <EmptyState title="No batches found" description="Try a different filter, or create a new batch from a farm." />
         ) : (
-          <div className="space-y-2.5">
-            {list.map(b => <BatchRow key={b.id} batchId={b.id} />)}
-          </div>
+          <StaggerContainer className="space-y-2.5">
+            {list.map(b => <StaggerItem key={b.id}><BatchRow batchId={b.id} /></StaggerItem>)}
+          </StaggerContainer>
         )}
       </div>
+      </PageReveal>
     </Page>
   );
 }

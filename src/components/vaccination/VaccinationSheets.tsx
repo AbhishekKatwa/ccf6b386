@@ -136,6 +136,12 @@ export function VaccinationCompleteSheet({ p, onClose }: { p: VaccinationPositio
         : null;
   const charge = product && avg !== null && qty > 0 ? qty * avg : null;
 
+  // Each recorded amount is written to Finance as a linked expense row.
+  const [labour, setLabour] = useState({ vaccineAmount: '', amount: '', vaccinatorAmount: '', counterparty: '' });
+  const vaccineAmount = parseFloat(labour.vaccineAmount) || 0;
+  const labourAmt = parseFloat(labour.amount) || 0;
+  const vaccinatorAmt = parseFloat(labour.vaccinatorAmount) || 0;
+
   function submit() {
     const r = completeVaccination(p.item.id, {
       completedDate: form.completedDate,
@@ -144,11 +150,19 @@ export function VaccinationCompleteSheet({ p, onClose }: { p: VaccinationPositio
       completionRemarks: form.completionRemarks.trim() || undefined,
       medicineId: product && !alreadyDrawn ? product.id : undefined,
       medicineQty: product && !alreadyDrawn ? qty : undefined,
+      vaccineAmount: !product && vaccineAmount > 0 ? vaccineAmount : undefined,
+      labourAmount: labourAmt > 0 ? labourAmt : undefined,
+      vaccinatorAmount: vaccinatorAmt > 0 ? vaccinatorAmt : undefined,
+      labourCounterparty: labour.counterparty.trim() || undefined,
     });
     if (!r.ok) return pushToast('error', fail(r, 'Could not record this vaccination'));
-    pushToast('success', r.expense
-      ? `${p.item.vaccineName} recorded for ${p.batchCode} · ${fmtMoney(r.expense)} drawn from the store`
-      : `${p.item.vaccineName} recorded for ${p.batchCode}`);
+    const extra = [
+      r.expense ? `${fmtMoney(r.expense)} drawn from the store` : '',
+      !product && vaccineAmount > 0 ? `Vaccine ${fmtMoney(vaccineAmount)}` : '',
+      labourAmt > 0 ? `Vaccine Labour ${fmtMoney(labourAmt)}` : '',
+      vaccinatorAmt > 0 ? `Vaccinator ${fmtMoney(vaccinatorAmt)}` : '',
+    ].filter(Boolean).join(' · ');
+    pushToast('success', `${p.item.vaccineName} recorded for ${p.batchCode}${extra ? ` · ${extra}` : ''}`);
     onClose();
   }
 
@@ -201,8 +215,7 @@ export function VaccinationCompleteSheet({ p, onClose }: { p: VaccinationPositio
                 Draw from the medicine store
               </p>
               <p className="text-[11.5px] text-muted leading-relaxed mt-1">
-                Only giving a dose reduces stock — a scheduled line never does. Name the product here to
-                take it off the shelf and charge this flock.
+                Draw from the store to charge the flock at its stock rate, or record a direct vaccine expense below.
               </p>
             </div>
             <SelectField label="Product" value={draw.medicineId}
@@ -239,6 +252,66 @@ export function VaccinationCompleteSheet({ p, onClose }: { p: VaccinationPositio
             )}
           </div>
         )}
+
+        {!product && !alreadyDrawn && (
+          <Field label="Direct vaccine expense (₹)" type="number" min="0" inputMode="decimal"
+            value={labour.vaccineAmount}
+            onChange={e => setLabour(l => ({ ...l, vaccineAmount: e.target.value }))}
+            className="font-mono" hint="Use when the vaccine was not drawn from the medicine store"
+            placeholder="0" />
+        )}
+
+        {/* Vaccine labour and vaccinator charges — separate Finance ledger rows */}
+        <div className="rounded-[16px] border border-line bg-card p-3.5 space-y-3">
+          <div>
+            <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-muted">
+              Vaccination charges
+            </p>
+            <p className="text-[11.5px] text-muted leading-relaxed mt-1">
+              Human costs for this vaccination. Each charge lands separately in the Finance ledger
+              under its own category so they are individually identifiable in reports.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field
+              label="Vaccine Labour (₹)"
+              type="number" min="0" inputMode="decimal"
+              value={labour.amount}
+              onChange={e => setLabour(l => ({ ...l, amount: e.target.value }))}
+              className="font-mono"
+              hint="Labour team cost — category: Vaccine Labour"
+              placeholder="0"
+            />
+            <Field
+              label="Vaccinator Charges (₹)"
+              type="number" min="0" inputMode="decimal"
+              value={labour.vaccinatorAmount}
+              onChange={e => setLabour(l => ({ ...l, vaccinatorAmount: e.target.value }))}
+              className="font-mono"
+              hint="External vaccinator fee — category: Vaccinator"
+              placeholder="0"
+            />
+          </div>
+          {(labourAmt > 0 || vaccinatorAmt > 0) && (
+            <>
+              <Field
+                label="Party / paid to (optional)"
+                value={labour.counterparty}
+                onChange={e => setLabour(l => ({ ...l, counterparty: e.target.value }))}
+                placeholder="e.g. Dr. Ramesh Veterinary Services"
+              />
+              <div className="rounded-[10px] bg-sunk px-3 py-2">
+                <p className="font-mono text-[10px] text-muted leading-relaxed">
+                  {!product && vaccineAmount > 0 && <span className="block">Vaccine: {fmtMoney(vaccineAmount)} → Finance ledger</span>}
+                  {labourAmt > 0 && <span className="block">Vaccine Labour: {fmtMoney(labourAmt)} → Finance ledger</span>}
+                  {vaccinatorAmt > 0 && <span className="block">Vaccinator: {fmtMoney(vaccinatorAmt)} → Finance ledger</span>}
+                  {vaccineAmount + labourAmt + vaccinatorAmt > 0 && <span className="block font-semibold text-ink-2 mt-0.5">Total vaccine charges: {fmtMoney((!product ? vaccineAmount : 0) + labourAmt + vaccinatorAmt)}</span>}
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+
         <TextArea label="Remarks" rows={2} value={form.completionRemarks}
           onChange={e => setForm(f => ({ ...f, completionRemarks: e.target.value }))}
           placeholder="Reactions, birds missed, water batch…" />

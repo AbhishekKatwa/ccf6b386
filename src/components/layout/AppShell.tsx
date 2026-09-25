@@ -5,13 +5,15 @@ import {
   LayoutDashboard, ClipboardList, Warehouse, Layers, Wheat, FlaskConical, Handshake,
   Wallet, BarChart3, User, Phone, Menu, Building2,
   Wifi, WifiOff, RefreshCw, Feather, Receipt, ChevronDown, Check, History, LogOut, BellRing,
-  CalendarRange, Pill,
+  CalendarRange, Pill, Egg,
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { useApp, useCurrentUser } from '@/store/app';
 import { Avatar } from '@/components/ui/Card';
 import { ActionSheet, ConfirmDialog } from '@/components/ui/Dialog';
 import { FORMULA_VIEW_ROLES, MEDICINE_ROLES } from '@/lib/permissions';
 import { ROLE_LABELS, type Role } from '@/types';
+import { useReducedMotion } from '@/components/motion';
 
 interface NavItem { to: string; label: string; icon: ReactNode; end?: boolean; roles?: Role[] }
 interface NavGroup { title: string; items: NavItem[]; roles?: Role[] }
@@ -46,7 +48,7 @@ const GROUPS: NavGroup[] = [
     roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR', M],
     items: [
       { to: '/sales', label: 'Sales', end: true, icon: <Receipt size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR', M] },
-      { to: '/sales/planner', label: 'Egg Sale Planner', icon: <CalendarRange size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR', M] },
+      { to: '/eggs', label: 'Eggs', icon: <Egg size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR', M] },
       { to: '/traders', label: 'Traders', icon: <Handshake size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', M] },
       { to: '/finance', label: 'Finance', icon: <Wallet size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', M] },
     ],
@@ -207,6 +209,7 @@ function Sidebar() {
   const user = useCurrentUser();
   const signOut = useApp(s => s.signOut);
   const groups = user ? visibleGroups(user.role) : [];
+  const reduced = useReducedMotion();
   return (
     <aside className="hidden lg:flex flex-col w-[248px] shrink-0 border-r border-line bg-card/70 backdrop-blur min-h-screen sticky top-0">
       <div className="px-5 py-5"><BrandMark /></div>
@@ -220,11 +223,30 @@ function Sidebar() {
                 <NavLink
                   key={it.to} to={it.to} end={it.end}
                   className={({ isActive }) => clsx(
-                    'flex items-center gap-3 px-3 py-2 rounded-[10px] text-[13px] font-medium transition-colors',
-                    isActive ? 'bg-brand-soft text-brand-ink font-semibold ring-1 ring-brand/10' : 'text-ink-2 hover:bg-sunk',
+                    'relative flex items-center gap-3 px-3 py-2 rounded-[10px] text-[13px] font-medium transition-colors',
+                    isActive ? 'text-brand-ink font-semibold' : 'text-ink-2 hover:bg-sunk',
                   )}
                 >
-                  <span className="shrink-0">{it.icon}</span>{it.label}
+                  {({ isActive }) => (
+                    <>
+                      {/* Sliding active pill — layoutId shares across siblings so it glides between items */}
+                      <AnimatePresence>
+                        {isActive && (
+                          <motion.span
+                            layoutId="sidebar-active"
+                            initial={reduced ? false : { opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: reduced ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                            className="absolute inset-0 rounded-[10px] bg-brand-soft ring-1 ring-inset ring-brand/10"
+                            aria-hidden
+                          />
+                        )}
+                      </AnimatePresence>
+                      <span className="shrink-0 relative z-10">{it.icon}</span>
+                      <span className="relative z-10">{it.label}</span>
+                    </>
+                  )}
                 </NavLink>
               ))}
             </div>
@@ -255,6 +277,7 @@ function BottomNav({ onMore, onSignOut }: { onMore: () => void; onSignOut: () =>
   const isLabor = user?.role === 'FARM_LABOR';
   const showMore = user ? !isLabor : false;
   const cols = tabs.length + (showMore || isLabor ? 1 : 0);
+  const reduced = useReducedMotion();
   return (
     <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 safe-bottom">
       <div className="mx-auto max-w-[520px] px-3 pb-2">
@@ -263,14 +286,27 @@ function BottomNav({ onMore, onSignOut }: { onMore: () => void; onSignOut: () =>
             <NavLink
               key={t.to} to={t.to} end={t.end}
               className={({ isActive }) => clsx(
-                'flex flex-col items-center justify-center gap-1 py-2.5 transition-colors press',
+                'relative flex flex-col items-center justify-center gap-1 py-2.5 transition-colors press',
                 isActive ? 'text-brand' : 'text-muted',
               )}
             >
               {({ isActive }) => (
                 <>
-                  <span className={clsx('rounded-full px-3 py-0.5 transition-colors', isActive && 'bg-brand-soft')}>{t.icon}</span>
-                  <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.08em]">{t.label}</span>
+                  <AnimatePresence>
+                    {isActive && (
+                      <motion.span
+                        layoutId="bottom-nav-active"
+                        initial={reduced ? false : { opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        transition={{ duration: reduced ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                        className="absolute inset-1 rounded-full bg-brand-soft"
+                        aria-hidden
+                      />
+                    )}
+                  </AnimatePresence>
+                  <span className={clsx('relative z-10 rounded-full px-3 py-0.5', !isActive && 'transition-colors')}>{t.icon}</span>
+                  <span className="relative z-10 font-mono text-[9px] font-semibold uppercase tracking-[0.08em]">{t.label}</span>
                 </>
               )}
             </NavLink>
@@ -319,7 +355,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const moreActions = ([
     { icon: <Wheat size={16} />, label: 'Godown', hint: 'Feed inventory in KG', onClick: () => nav('/feed'), roles: ['OWNER', 'FARM_SUPERVISOR', M] },
     { icon: <Pill size={16} />, label: 'Medicines & Vaccines', hint: 'Central stock, ledger and flock usage', onClick: () => nav('/medicines'), roles: MEDICINE_ROLES },
-    { icon: <CalendarRange size={16} />, label: 'Egg Sale Planner', hint: 'Trays promised to traders, 5 days ahead', onClick: () => nav('/sales/planner'), roles: [...OPS, 'FINANCIAL_SUPERVISOR'] },
+    { icon: <CalendarRange size={16} />, label: 'Eggs', hint: 'Central Egg Stock and Planner', onClick: () => nav('/eggs'), roles: ['OWNER'] },
     
     { icon: <Handshake size={16} />, label: 'Traders', hint: 'Balances & collections', onClick: () => nav('/traders'), roles: MONEY },
     { icon: <Wallet size={16} />, label: 'Finance', hint: 'Money ledger & shed P&L', onClick: () => nav('/finance'), roles: MONEY },
