@@ -14,7 +14,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { LedgerDayHeader } from '@/components/godown/StockLedger';
 import { GraphCard, GraphRange } from '@/components/charts/GraphCard';
 import { axisNum, BarSeries, DonutChart, HBarList, PairedBars, SERIES_COLORS, type HRow } from '@/components/charts/DataViz';
-import { PageReveal, ScrollReveal, ChartReveal } from '@/components/motion';
+import { PageReveal, ScrollReveal, ChartReveal, StaggerContainer, StaggerItem } from '@/components/motion';
 import { medicineStockBoard, usageExpenseOf, valueMedicines } from '@/lib/medicines';
 import { unitQty } from '@/components/medicine/medicineMeta';
 import {
@@ -1465,16 +1465,16 @@ export function FinanceScreen() {
                 description="Money entries recorded in the selected period appear here, newest day first." />
             ) : (
               <>
-                <div className="bg-card border border-line rounded-[18px] shadow-card overflow-hidden">
+                <StaggerContainer className="bg-card border border-line rounded-[18px] shadow-card overflow-hidden">
                   {activityDays.map(g => (
-                    <div key={g.date}>
+                    <StaggerItem key={g.date}>
                       <LedgerDayHeader date={g.date} today={today} count={g.rows.length} />
                       <div className="divide-y divide-line-2">
                         {g.rows.map(t => <TxnRow key={t.id} t={t} dense link={linkOf(t)} onOpen={() => setTxnDetail(t)} />)}
                       </div>
-                    </div>
+                    </StaggerItem>
                   ))}
-                </div>
+                </StaggerContainer>
                 {recent.length > 40 && (
                   <p className="text-[11px] text-muted px-1">
                     The 40 newest of {recent.length} entries in this period.

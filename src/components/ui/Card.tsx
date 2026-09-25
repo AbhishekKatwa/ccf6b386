@@ -22,9 +22,9 @@ export function Surface({ children, className, reveal = false }: { children: Rea
 
 export function SectionTitle({ children, right }: { children: ReactNode; right?: ReactNode }) {
   return (
-    <div className="flex items-center justify-between mb-2 px-0.5">
-      <h3 className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{children}</h3>
-      {right}
+    <div className="flex items-center justify-between gap-3 mb-2 px-0.5">
+      <h3 className="min-w-0 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted truncate">{children}</h3>
+      {right && <div className="shrink-0">{right}</div>}
     </div>
   );
 }

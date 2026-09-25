@@ -7,6 +7,9 @@ import { eggGradeTotals, eggStockByGrade, gradeTotal, wasteTraysByGrade } from '
 import { EGG_GRADES, EGG_GRADE_LABELS, type EggCollection, type EggWastage, type SaleEntry, type Shed } from '@/types';
 import { Surface, SectionTitle, Stat, Row, Badge, EmptyState } from '@/components/ui/Card';
 import { SelectField } from '@/components/ui/Form';
+import { AnimatedNumber, ScrollReveal, StaggerContainer, StaggerItem } from '@/components/motion';
+
+const trayCount = (v: number) => <AnimatedNumber value={v} format={{ maximumFractionDigits: 0 }} />;
 
 /** A shed's stock snapshot for one date — derived, never stored. */
 type ShedStock = {
@@ -118,7 +121,7 @@ export function EggStockByShedScreen() {
     s === 'EMPTY' ? 'danger' : s === 'LOW' ? 'warn' : 'success';
 
   return (
-    <div className="space-y-5">
+    <div className="px-4 sm:px-0 space-y-5">
       {/* Filters */}
       <Surface className="p-3 flex flex-wrap items-end gap-3">
           <SelectField
@@ -138,16 +141,17 @@ export function EggStockByShedScreen() {
         </Surface>
 
         {/* Summary strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
-          <Stat label="Total stock" value={fmtIN(totals.totalStock)} sub="trays" />
-          <Stat label="Collected all time" value={fmtIN(totals.totalCollected)} sub="trays" />
-          <Stat label="Sold all time" value={fmtIN(totals.totalSold)} sub="trays" />
-          <Stat label="Produced today" value={fmtIN(totals.prodToday)} sub="trays" />
-          <Stat label="Dispatched today" value={fmtIN(totals.dispToday)} sub="trays" />
-          <Stat label="Damaged today" value={fmtIN(totals.dmgToday)} sub="trays" tone={totals.dmgToday > 0 ? 'danger' : undefined} />
-        </div>
+        <StaggerContainer className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2.5">
+          <StaggerItem key="totalStock"><Stat label="Total stock" value={trayCount(totals.totalStock)} sub="trays" /></StaggerItem>
+          <StaggerItem key="totalCollected"><Stat label="Collected all time" value={trayCount(totals.totalCollected)} sub="trays" /></StaggerItem>
+          <StaggerItem key="totalSold"><Stat label="Sold all time" value={trayCount(totals.totalSold)} sub="trays" /></StaggerItem>
+          <StaggerItem key="prodToday"><Stat label="Produced today" value={trayCount(totals.prodToday)} sub="trays" /></StaggerItem>
+          <StaggerItem key="dispToday"><Stat label="Dispatched today" value={trayCount(totals.dispToday)} sub="trays" /></StaggerItem>
+          <StaggerItem key="dmgToday"><Stat label="Damaged today" value={trayCount(totals.dmgToday)} sub="trays" tone={totals.dmgToday > 0 ? 'danger' : undefined} /></StaggerItem>
+        </StaggerContainer>
 
         {/* Shed-wise table */}
+        <ScrollReveal>
         <Surface className="overflow-hidden">
           <SectionTitle right={
             <button onClick={() => nav('/sales?tab=entries')}
@@ -180,9 +184,10 @@ export function EggStockByShedScreen() {
               </div>
 
               {/* Rows */}
-              <div className="divide-y divide-line-2">
+              <StaggerContainer className="divide-y divide-line-2">
                 {rows.map(r => (
-                  <button key={r.shedId} type="button"
+                  <StaggerItem key={r.shedId}>
+                  <button type="button"
                     onClick={() => nav(`/batches?q=${encodeURIComponent(r.shedName)}`)}
                     className="w-full text-left grid grid-cols-2 md:grid-cols-7 gap-x-2 gap-y-1 px-4 py-3 hover:bg-card press transition-colors">
                     <div className="font-medium text-sm truncate">{r.shedName}</div>
@@ -200,8 +205,9 @@ export function EggStockByShedScreen() {
                       Good {fmtIN(r.goodBalance)} · Broken {fmtIN(r.brokenBalance)} · Double {fmtIN(r.doubleBalance)} · Small {fmtIN(r.smallBalance)}
                     </div>
                   </button>
+                  </StaggerItem>
                 ))}
-              </div>
+              </StaggerContainer>
 
               <p className="px-4 pb-3 pt-1 text-[11px] text-muted">
                 Stock is derived from collections minus sale entries and wastage records. A load that left the shed but was not yet billed still counts as unsold.
@@ -209,9 +215,11 @@ export function EggStockByShedScreen() {
             </>
           )}
         </Surface>
+        </ScrollReveal>
 
         {/* Grade breakdown for the first visible shed (or all if single shed selected) */}
         {rows.length > 0 && (
+          <ScrollReveal>
           <Surface className="p-4">
             <SectionTitle>Grade breakdown</SectionTitle>
             <p className="text-[11px] text-muted mb-2">
@@ -228,6 +236,7 @@ export function EggStockByShedScreen() {
               })}
             </div>
           </Surface>
+          </ScrollReveal>
         )}
 
         <p className="text-[11px] text-faint leading-relaxed pb-2">

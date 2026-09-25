@@ -10,7 +10,8 @@ import { Dialog } from '@/components/ui/Dialog';
 import { GraphCard } from '@/components/charts/GraphCard';
 import { axisNum, ChartLegend, TrendChart, type VSeries } from '@/components/charts/DataViz';
 import { CHART } from '@/components/ui/Charts';
-import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, ChartReveal } from '@/components/motion';
+import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, ChartReveal, useReducedMotion } from '@/components/motion';
+import { motion } from 'motion/react';
 import { EMPTY_PAYMENT, PaymentFields, paymentPatch, type PaymentDraft } from '@/components/finance/PaymentFields';
 import { fmtDateShort, fmtIN, fmtMoney, todayISO } from '@/lib/format';
 import { TRADER_TXN_LABEL, txnSignedAmount } from '@/lib/calc';
@@ -35,11 +36,15 @@ const money = (v: number) => `₹${axisNum(v)}`;
 /** Collected against billed on one hairline — forest green on warm gold. */
 function Meter({ share, className }: { share: number | null; className?: string }) {
   const pct = share === null ? 0 : Math.max(0, Math.min(1, share)) * 100;
+  const reduced = useReducedMotion();
   return (
     <div className={clsx('h-1.5 w-full rounded-full bg-accent-soft overflow-hidden', className)}
       role="progressbar" aria-valuemin={0} aria-valuemax={100}
       aria-valuenow={share === null ? undefined : Math.round(pct)}>
-      <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
+      <motion.div className="h-full w-full rounded-full bg-brand origin-left"
+        initial={reduced ? false : { scaleX: 0 }}
+        animate={{ scaleX: pct / 100 }}
+        transition={{ duration: reduced ? 0 : 0.7, ease: [0.22, 1, 0.36, 1] }} />
     </div>
   );
 }
