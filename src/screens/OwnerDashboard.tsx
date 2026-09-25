@@ -35,6 +35,7 @@ import { SyncPill } from '@/components/layout/AppShell';
 import { EGG_GRADES, EGG_GRADE_LABELS, EMPTY_GRADE_COUNTS, ROLE_LABELS } from '@/types';
 import type { EggGradeCounts, Shed } from '@/types';
 import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, AnimatedNumber, ChartReveal } from '@/components/motion';
+import { SplineFarmScene } from '@/components/spline/SplineFarmScene';
 
 /**
  * The owner's command centre, read in ten seconds: TODAY, then what needs ATTENTION,
@@ -692,6 +693,8 @@ export function OwnerDashboard() {
         </div> */}
 
         {/* <NeedsAttention alerts={alerts} /> */}
+
+        <StaggerItem><SplineFarmScene /></StaggerItem>
 
         <StaggerItem className="grid gap-4 lg:grid-cols-2">
           <FlockPanel data={scoped} />
