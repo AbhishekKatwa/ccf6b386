@@ -55,7 +55,7 @@ export function TraderDetailScreen() {
   const updateTxn = useApp(s => s.updateTraderTxn);
   const pushToast = useApp(s => s.pushToast);
   const cashPeople = useApp(s => s.cashPeople);
-  const nextCashReceiptNo = useApp(s => s.nextCashReceiptNo);
+  const takeReceiptNo = useApp(s => s.takeReceiptNo);
   const canFinance = useCan('viewFinance');
   const canManage = useCan('manageTraders');
   const [sheet, setSheet] = useState<'payment' | 'rate' | 'actions' | null>(null);
@@ -424,7 +424,7 @@ export function TraderDetailScreen() {
                 hint="Reduces the outstanding balance by this amount" />
               <PaymentFields draft={pay} onChange={p => setPay(d => ({ ...d, ...p }))}
                 inflow people={people} heading="Payment"
-                onReceiptNo={() => setPay(d => ({ ...d, reference: nextCashReceiptNo(form.date) }))} />
+                onReceiptNo={() => { void takeReceiptNo('CR', form.date).then(no => { if (no) setPay(d => ({ ...d, reference: no })); }); }} />
               <Field label="Remarks" value={form.remarks} onChange={e => setForm(f => ({ ...f, remarks: e.target.value }))} />
               <p className="text-[11.5px] text-muted leading-snug px-1">
                 Record this against {trader.name} — you may be typing it for someone else’s collection, so the person who
@@ -520,7 +520,7 @@ export function TraderDetailScreen() {
               hint="The ledger re-derives the outstanding balance from this figure" />
             <PaymentFields draft={fix.pay} heading="Payment" inflow={fix.txn.kind === 'PAYMENT_IN'} people={people}
               onChange={patchFixPay}
-              onReceiptNo={() => setFix(f => f && { ...f, pay: { ...f.pay, reference: nextCashReceiptNo(f.txn.date) } })} />
+              onReceiptNo={() => { void takeReceiptNo('CR', fix.txn.date).then(no => { if (no) setFix(f => f && { ...f, pay: { ...f.pay, reference: no } }); }); }} />
             <TextArea label="Reason for the correction" rows={2} value={fix.reason}
               onChange={e => patchFix({ reason: e.target.value })}
               placeholder="e.g. the cashier's name was recorded against the wrong person" />

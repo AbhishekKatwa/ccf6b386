@@ -206,13 +206,13 @@ export function BatchDetailScreen() {
           <div className="flex items-center gap-2">
             <StatusBadge status={batch.status} />
             {user?.role === 'OWNER' && (
-              <Button size="sm" variant="outline" icon={<Users size={14} />}
+              <Button size="sm" variant="outline" icon={<Users size={14} />} aria-label="Assigned users" title="Assigned users"
                 onClick={() => nav(`/batches/${batch.id}/users`)}>
                 <span className="hidden sm:inline">Assigned users</span>
               </Button>
             )}
             {isActive && canClose && (
-              <Button size="sm" variant="outline" icon={<Package size={14} />}
+              <Button size="sm" variant="outline" icon={<Package size={14} />} aria-label="Close / sell batch" title="Close / sell batch"
                 onClick={() => { setCf({ date: todayISO(), finalBirds: String(m.live), buyer: '', saleQty: '', saleRatePerBird: '', saleAmount: '', paymentMethod: '', reference: '', remarks: '' }); setCloseOpen(true); }}>
                 <span className="hidden sm:inline">Close / sell</span>
               </Button>

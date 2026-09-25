@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Plus, Users, Power, LogIn, Check, MessageCircle, Inbox, ShieldCheck, ChevronDown, UserPlus } from 'lucide-react';
 import clsx from 'clsx';
@@ -7,11 +7,16 @@ import { Button, Field, SelectField, SegmentedTabs } from '@/components/ui/Form'
 import { Dialog } from '@/components/ui/Dialog';
 import { Avatar, Badge, EmptyState } from '@/components/ui/Card';
 import { useApp } from '@/store/app';
+import { dataService } from '@/services/dataService';
 import { COMPANY_ASSIGNABLE_ROLES, ROLE_LABELS, type Role } from '@/types';
 import { fmtDateTime } from '@/lib/format';
 import { DEMO_PASSWORD } from '@/data/seed';
 
 type Tab = 'companies' | 'users' | 'support';
+
+/** The sync engine can only carry a person whose id is a real auth row. Seed-era `u_*` ids have
+ *  no cloud account behind them, so an edit to one changes this device and nothing else. */
+const CLOUD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function AdminScreen() {
   const nav = useNavigate();
@@ -19,7 +24,6 @@ export function AdminScreen() {
   const users = useApp(s => s.users);
   const addCompany = useApp(s => s.addCompany);
   const toggleCompanyActive = useApp(s => s.toggleCompanyActive);
-  const createUser = useApp(s => s.createUser);
   const toggleUserActive = useApp(s => s.toggleUserActive);
   const updateUserCompanies = useApp(s => s.updateUserCompanies);
   const selectCompany = useApp(s => s.selectCompany);
@@ -38,6 +42,13 @@ export function AdminScreen() {
   const [form, setForm] = useState({ name: '', mobile: '', password: '', role: 'OWNER' as Role, companyIds: [] as string[] });
   const [formError, setFormError] = useState<string | null>(null);
 
+  /** Mobile is unique on both sides, so a seed row sharing one with a cloud row is the same
+   *  person twice — the list must not let an owner edit the half that cannot sync. */
+  const cloudMobiles = useMemo(
+    () => new Set(users.filter(u => CLOUD_ID.test(String(u.id))).map(u => u.mobile)),
+    [users],
+  );
+
   function submitCompany() {
     const name = newCompany.trim();
     if (!name) return;
@@ -48,9 +59,9 @@ export function AdminScreen() {
     setPickerCompanyId(company.id);
   }
 
-  function submitUser() {
+  async function submitUser() {
     setFormError(null);
-    const r = createUser(form);
+    const r = await dataService.users.create(form);
     if (!r.ok) return setFormError(r.error ?? 'Failed to create user');
     pushToast('success', `${form.name} created`);
     setForm({ name: '', mobile: '', password: '', role: 'OWNER', companyIds: [] });
@@ -146,27 +157,44 @@ export function AdminScreen() {
 
         {tab === 'users' && (
           <div className="space-y-2">
-            {users.map(u => (
+            {users.map(u => {
+              const localOnly = !CLOUD_ID.test(String(u.id));
+              const twin = localOnly && cloudMobiles.has(u.mobile);
+              return (
               <div key={u.id} className="flex items-center gap-3 bg-card border border-line rounded-[14px] px-4 py-3">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-[14px] font-semibold text-ink truncate">{u.name}</p>
                     {!u.active && <Badge tone="neutral">Off</Badge>}
+                    {localOnly && <Badge tone="warn">{twin ? 'Duplicate of cloud record' : 'Not in cloud'}</Badge>}
                   </div>
                   <p className="font-mono text-[11px] text-muted mt-0.5 tnum truncate">
                     {u.mobile} · {ROLE_LABELS[u.role]}
                     {u.role !== 'MASTER_ADMIN' && ` · ${u.companyIds.map(id => companies.find(c => c.id === id)?.name ?? '?').join(', ') || 'no company'}`}
                   </p>
+                  {localOnly && (
+                    <p className="text-[11px] text-warn mt-1">
+                      {twin
+                        ? `This person is already listed under their cloud account — edits here stay on this device.`
+                        : `No cloud account behind this record yet, so edits stay on this device.`}
+                    </p>
+                  )}
                 </div>
                 {u.role !== 'MASTER_ADMIN' && (
                   <Button size="sm" variant="ghost" onClick={() => setMapDialog(u.id)}>Map</Button>
                 )}
                 <Button size="sm" variant={u.active ? 'outline' : 'success'} icon={<Power size={14} />}
-                  onClick={() => { toggleUserActive(u.id); pushToast('success', u.active ? 'User deactivated' : 'User activated'); }}>
+                  onClick={() => {
+                    toggleUserActive(u.id);
+                    pushToast(localOnly ? 'info' : 'success', localOnly
+                      ? `${u.name} is not a cloud account — this change applies to this device only`
+                      : (u.active ? 'User deactivated' : 'User activated'));
+                  }}>
                   {u.active ? 'Off' : 'On'}
                 </Button>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
         {tab === 'support' && (

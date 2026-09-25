@@ -148,6 +148,7 @@ export function MedicineItemSheet({ item, onClose }: { item?: MedicineItem | nul
 
 export function MedicineReceiveSheet({ medicineId, onClose }: { medicineId?: string; onClose: () => void }) {
   const receiveMedicine = useApp(s => s.receiveMedicine);
+  const takeReceiptNo = useApp(s => s.takeReceiptNo);
   const pushToast = useApp(s => s.pushToast);
   const { items, valuation } = useMedicineValuation();
   const today = todayISO();
@@ -156,6 +157,7 @@ export function MedicineReceiveSheet({ medicineId, onClose }: { medicineId?: str
     medicineId: medicineId ?? usable[0]?.id ?? '', date: today,
     qty: '', ratePerUnit: '', supplier: '', lotNumber: '', expiryDate: '', remarks: '',
   });
+  const [busy, setBusy] = useState(false);
 
   const item = items.find(i => i.id === f.medicineId);
   const pos = item ? valuation.now(item.id) : null;
@@ -175,13 +177,20 @@ export function MedicineReceiveSheet({ medicineId, onClose }: { medicineId?: str
     avg: rate > 0 ? projectedAverage(pos.kg, pos.avg, qty, rate) : pos.avg,
   } : null;
 
-  function submit() {
+  async function submit() {
+    if (busy) return;
+    // The number comes from the receipt counter, asked for as this purchase is being booked, so
+    // two devices receiving stock on one day cannot be issued the same MED reference.
+    setBusy(true);
+    const no = await takeReceiptNo('MED', f.date);
+    setBusy(false);
+    if (!no) return;
     const r = receiveMedicine({
       medicineId: f.medicineId, date: f.date, qty,
       ratePerUnit: rate > 0 ? rate : undefined,
       supplier: f.supplier.trim(), lotNumber: f.lotNumber.trim() || undefined,
       expiryDate: f.expiryDate || undefined, remarks: f.remarks.trim() || undefined,
-    });
+    }, { purchaseRef: no });
     if (!r.ok) return pushToast('error', r.error ?? 'Could not receive this stock');
     pushToast('success', value !== null
       ? `${r.purchaseRef} booked · ${fmtMoney(value)} payable to ${f.supplier.trim()} — no money has left yet`
@@ -194,7 +203,7 @@ export function MedicineReceiveSheet({ medicineId, onClose }: { medicineId?: str
       subtitle="Stock in, and a payable to the supplier — money does not move here"
       footer={<div className="flex gap-2">
         <Button variant="outline" block onClick={onClose}>Cancel</Button>
-        <Button block onClick={submit} disabled={!!gate} icon={<ArrowDownToLine size={14} />}>Receive stock</Button>
+        <Button block onClick={submit} disabled={!!gate || busy} icon={<ArrowDownToLine size={14} />}>Receive stock</Button>
       </div>}>
       <div className="space-y-3">
         <SelectField label="Medicine / vaccine" value={f.medicineId}

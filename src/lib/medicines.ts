@@ -10,6 +10,7 @@
 import type { FeedStockEntry, MedicineItem, MedicineStockEntry, MedicineStockKind } from '@/types';
 import { daysBetween, fmtIN } from './format';
 import { blendPrice, valueGodown, type GodownValuation } from './valuation';
+import { receiptHighWater, receiptNo } from './receipts';
 
 /**
  * Medicine kinds carry the godown's directions under their own names: a receipt is an
@@ -49,14 +50,19 @@ export function projectedAverage(stockQty: number, stockAvg: number | null, rece
   return blendPrice(stockQty, stockAvg, receiptQty, receiptRate);
 }
 
-/** Stock receipts are numbered per company, in their own series so they never clash with feed. */
+/** The highest medicine receipt number this device holds for a company and day, or 0. */
+export function medicineReceiptHighWater(entries: MedicineStockEntry[], companyId: string, date: string): number {
+  return receiptHighWater(
+    entries.filter(e => e.companyId === companyId).map(e => e.purchaseRef), 'MED', date,
+  );
+}
+
+/**
+ * Stock receipts are numbered per company, in their own series so they never clash with feed.
+ * The device's own series again: the counter answers while it can be reached.
+ */
 export function nextMedicineRef(entries: MedicineStockEntry[], companyId: string, date: string): string {
-  const prefix = `MED-${date}-`;
-  const taken = entries
-    .filter(e => e.companyId === companyId && e.purchaseRef?.startsWith(prefix))
-    .map(e => Number.parseInt((e.purchaseRef ?? '').slice(prefix.length), 10))
-    .filter(n => Number.isFinite(n));
-  return `${prefix}${String((taken.length ? Math.max(...taken) : 0) + 1).padStart(3, '0')}`;
+  return receiptNo('MED', date, medicineReceiptHighWater(entries, companyId, date) + 1);
 }
 
 /* ============================= CURRENT STOCK ============================= */

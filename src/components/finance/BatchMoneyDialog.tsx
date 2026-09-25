@@ -53,7 +53,7 @@ export function BatchMoneyDialog({ kind: openedAs, batchId, subtitle, onClose }:
 }) {
   const addFinance = useApp(s => s.addFinance);
   const cashPeople = useApp(s => s.cashPeople);
-  const nextCashReceiptNo = useApp(s => s.nextCashReceiptNo);
+  const takeReceiptNo = useApp(s => s.takeReceiptNo);
   const pushToast = useApp(s => s.pushToast);
   const me = useCurrentUser();
 
@@ -109,7 +109,7 @@ export function BatchMoneyDialog({ kind: openedAs, batchId, subtitle, onClose }:
           onChange={patch => setPay(d => ({ ...d, ...patch }))}
           inflow={isInflow(kind)}
           people={people}
-          onReceiptNo={() => setPay(d => ({ ...d, reference: nextCashReceiptNo(form.date) }))}
+          onReceiptNo={() => { void takeReceiptNo('CR', form.date).then(no => { if (no) setPay(d => ({ ...d, reference: no })); }); }}
         />
         <p className="text-[11px] text-muted leading-relaxed">
           Recorded by <strong className="text-ink-2">{me?.name ?? 'you'}</strong> — the person who physically held

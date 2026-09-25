@@ -14,17 +14,20 @@ import type {
 } from '@/types';
 import { EGG_GRADE_LABELS, EGG_GRADES, EGGS_PER_TRAY, EMPTY_GRADE_COUNTS, FEED_INGREDIENTS, FEED_ROUNDS, MEDICINE_UNITS } from '@/types';
 import { DEFAULT_ROLE_PERMISSIONS, effectiveCan } from '@/lib/permissions';
-import { generateOtp, hashPassword, isOtpValid, normalizeMobile, verifyPassword } from '@/lib/auth';
+import { generateOtp, hashPassword, isOtpValid, normalizeMobile, validateUserDraft, verifyPassword } from '@/lib/auth';
 import { accountabilityError, cashPositionOf, openingEntryError } from '@/lib/cashflow';
+import { runtime } from '@/lib/runtime';
 import { FEED_PURCHASE_CATEGORY, MEDICINE_PURCHASE_CATEGORY } from '@/lib/accounting';
 import {
   batchOfShedOn, eggStockByGrade, entryAmount, entryTrays, ensureWalkInTraders, formulaDeduction, formulaForDate,
   formulaTotalKg, formulaUsage, gradeTotal, linesByGrade, loadBilled, loadCredit, loadPaid, ratePerEgg, saleOutstanding,
   traderBalance, walkInTrader,
 } from '@/lib/calc';
-import { daysBetween, fmtIN, fmtMoney, nowISO, todayISO, uid } from '@/lib/format';
-import { nextPurchaseRef, purchasePosition } from '@/lib/purchasing';
-import { asLedgerRow, medicineBasis, nextMedicineRef } from '@/lib/medicines';
+import { daysBetween, fmtIN, fmtMoney, newUuid, nowISO, todayISO, uid } from '@/lib/format';
+import { nextPurchaseRef, purchasePosition, purchaseReceiptHighWater } from '@/lib/purchasing';
+import { asLedgerRow, medicineBasis, medicineReceiptHighWater, nextMedicineRef } from '@/lib/medicines';
+import { receiptHighWater, receiptNo, type ReceiptScope } from '@/lib/receipts';
+import { allocateReceiptNo } from '@/services/supabase/receipts';
 import { bookingError, PLANNER_HORIZON, plannerWindow } from '@/lib/planner';
 import {
   seedAssignments, seedAudit, seedBatches, seedCompanies,
@@ -158,6 +161,8 @@ interface AppState {
   toggleCompanyActive: (id: string) => void;
   createUser: (input: {
     name: string; mobile: string; password: string; role: Role; companyIds: string[];
+    /** Supabase mode pre-mints the id (a uuid, because profiles.id IS auth.users.id). */
+    id?: string;
   }) => { ok: boolean; error?: string; user?: User };
   toggleUserActive: (id: string) => void;
   updateUserCompanies: (id: string, companyIds: string[]) => void;
@@ -236,7 +241,7 @@ interface AppState {
   updateEggWastage: (id: string, patch: Partial<EggWastageDraft>) => Result;
 
   /* godown ledger */
-  addFeedStock: (e: Omit<FeedStockEntry, 'id' | 'companyId' | 'createdAt' | 'createdBy' | 'synced'>, opts?: { allowNegative?: boolean }) => Result;
+  addFeedStock: (e: Omit<FeedStockEntry, 'id' | 'companyId' | 'createdAt' | 'createdBy' | 'synced'>, opts?: { allowNegative?: boolean; purchaseRef?: string }) => Result;
 
   /* global feed-ingredient catalogue — any signed-in user may register a new type */
   addIngredientType: (name: string) => Result & { added?: boolean };
@@ -249,7 +254,7 @@ interface AppState {
    * Book stock in. This raises inventory and a supplier payable and nothing else: no cash
    * leaves, no expense is written, and the average re-weights only because a rate came with it.
    */
-  receiveMedicine: (draft: MedicineReceiptDraft) => Result & { id?: string; purchaseRef?: string };
+  receiveMedicine: (draft: MedicineReceiptDraft, opts?: { purchaseRef?: string }) => Result & { id?: string; purchaseRef?: string };
   /**
    * Take stock out for a shed. One event, two consequences: inventory falls and the flock
    * carries the cost, valued at the average in force on that day and frozen on the row.
@@ -279,10 +284,15 @@ interface AppState {
    * answered with what changed, from what, to what, by whom and why.
    */
   updateFinance: (id: string, patch: Partial<Omit<FinanceTxn, 'id' | 'companyId' | 'createdAt' | 'createdBy' | 'synced' | 'refId'>>, reason?: string) => Result;
-  /** The next human-readable cash receipt number for a date, unique inside this company. */
-  nextCashReceiptNo: (date: string) => string;
-  /** The next stock receipt number for a date, issued when a purchase is booked. */
-  nextPurchaseNo: (date: string) => string;
+  /**
+   * The next reference in a receipt series (`CR` cash received, `PUR` feed bought in, `MED`
+   * medicine received) for one company and one day, claimed from the database counter so two
+   * devices raising a receipt at the same moment cannot be handed the same number. Ask when a
+   * record is being raised, or when someone deliberately takes a number for one — never while a
+   * screen renders, previews or hydrates. `''` means the counter refused; the reason is already
+   * on screen, and nothing may be booked against a made-up number.
+   */
+  takeReceiptNo: (scope: ReceiptScope, date: string) => Promise<string>;
   /**
    * Pay a godown receipt. This books the money that left and nothing else: the purchase keeps
    * its own quantity and rate, and several payments can settle it one after another.
@@ -544,8 +554,12 @@ function replaceLedger<T extends { refId?: string }>(list: T[], refId: string, r
  * Recompute every trader's balance from the ledger it belongs to. Called after any change
  * to either side, so the stored figure is a cache of the sum rather than a running total
  * that drifts the moment one write path disagrees with another.
+ *
+ * `stamp` is false when the caller is only healing the cache after a cloud merge: the
+ * database row did not change, so `updatedAt` must keep its own value — stamping it would
+ * offer the database a write nobody asked for and two signed-in devices would echo it.
  */
-function rebalanceTraders(traders: Trader[], txns: TraderTxn[]): Trader[] {
+export function rebalanceTraders(traders: Trader[], txns: TraderTxn[], stamp = true): Trader[] {
   const byTrader = new Map<string, TraderTxn[]>();
   for (const t of txns) {
     const own = byTrader.get(t.traderId);
@@ -553,7 +567,10 @@ function rebalanceTraders(traders: Trader[], txns: TraderTxn[]): Trader[] {
   }
   return traders.map(t => {
     const balance = traderBalance(t.openingBalance, byTrader.get(t.id) ?? []);
-    return balance === t.outstandingAmount ? t : { ...t, outstandingAmount: balance, updatedAt: nowISO() };
+    if (balance === t.outstandingAmount) return t;
+    return stamp
+      ? { ...t, outstandingAmount: balance, updatedAt: nowISO() }
+      : { ...t, outstandingAmount: balance };
   });
 }
 
@@ -654,6 +671,27 @@ function traderRows(entry: SaleEntry): TraderTxn[] {
     });
   }
   return rows;
+}
+
+/** A real Supabase identity: only these ids can be carried to the database. */
+const CLOUD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Replace every string in a save that is exactly one of `map`'s keys, returning copies so a
+ * slice still shared with the seed is never rewritten in place. Whole values only: a field
+ * holding a person's name, or an id that merely begins with a retired one, is left alone.
+ */
+function repointIds<T>(node: T, map: Map<string, string>): T {
+  if (Array.isArray(node)) return node.map(item => repointIds(item, map)) as unknown as T;
+  if (node && typeof node === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      out[k] = typeof v === 'string' ? map.get(v) ?? v : repointIds(v, map);
+    }
+    return out as unknown as T;
+  }
+  if (typeof node === 'string') return (map.get(node) ?? node) as unknown as T;
+  return node;
 }
 
 /**
@@ -770,6 +808,28 @@ function migrateSaved(saved: unknown, fromVersion = 0): AppState {
       const ref = numbered.get(e.id);
       return ref ? { ...e, purchaseRef: ref } : e;
     });
+  }
+
+  // v20 — one record per person. The seed shipped its people under `u_*` ids; Supabase gave the
+  // same person a uuid id, and the hydrate merge keeps both, so an owner saw Mohan Lal twice and
+  // could easily edit the copy that can never sync (pushUsers has to refuse a non-uuid id, the
+  // profiles key is a uuid column). Mobile is unique on both sides, so it is the join: the cloud
+  // row wins, and every reference this save holds to the retired id follows it. A seed person
+  // with no cloud twin is left exactly as it was — there is nothing here to fold it into.
+  const retired = new Map<string, string>();
+  const cloudByMobile = new Map<string, string>();
+  for (const u of merged.users) if (CLOUD_ID_RE.test(u.id)) cloudByMobile.set(u.mobile, u.id);
+  for (const u of merged.users) {
+    if (CLOUD_ID_RE.test(u.id)) continue;
+    const twin = cloudByMobile.get(u.mobile);
+    if (twin) retired.set(u.id, twin);
+  }
+  if (retired.size) {
+    merged.users = merged.users.filter(u => !retired.has(u.id));
+    for (const key of Object.keys(merged)) {
+      (merged as unknown as Record<string, unknown>)[key] =
+        repointIds((merged as unknown as Record<string, unknown>)[key], retired);
+    }
   }
 
   const session = merged.session;
@@ -1124,15 +1184,16 @@ export const useApp = create<AppState>()(persist(
         audit: audit(s, 'Company', id, 'UPDATE', 'active'),
       })),
 
-      createUser: ({ name, mobile, password, role, companyIds }) => {
+      createUser: ({ name, mobile, password, role, companyIds, id }) => {
         if (!can('manageUsers')) return { ok: false, error: 'You cannot manage users' };
-        const m = normalizeMobile(mobile);
-        if (m.length !== 10) return { ok: false, error: 'Enter a valid 10-digit mobile number' };
-        if (get().users.some(u => u.mobile === m)) return { ok: false, error: 'A user with this mobile already exists' };
-        if (password.length < 4) return { ok: false, error: 'Password must be at least 4 characters' };
-        if (role !== 'MASTER_ADMIN' && companyIds.length === 0) return { ok: false, error: 'Assign at least one company' };
+        const { mobile: m, error } = validateUserDraft(
+          { name, mobile, password, role, companyIds },
+          mm => get().users.some(u => u.mobile === mm),
+        );
+        if (error) return { ok: false, error };
         const user: User = {
-          id: uid('u'), name: name.trim(), mobile: m, passwordHash: hashPassword(password),
+          id: id ?? (runtime.cloud ? newUuid() : uid('u')),
+          name: name.trim(), mobile: m, passwordHash: hashPassword(password),
           role, companyIds: role === 'MASTER_ADMIN' ? [] : companyIds,
           initials: name.trim().split(/\s+/).slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('') || '?',
           active: true, createdAt: nowISO(), updatedAt: nowISO(),
@@ -2074,11 +2135,15 @@ export const useApp = create<AppState>()(persist(
           if (neg) return { ok: false, error: `Insufficient stock: ${neg}` };
         }
         // A purchase is a payable, so it names the supplier it is owed to. The receipt number is
-        // issued here rather than typed: two farms must not raise the same purchase number.
+        // issued here rather than typed: two farms must not raise the same purchase number. The
+        // form passes the one the counter gave it; without that, this device numbers the row.
         const namedSupplier = e.kind === 'FEED_IN' ? e.supplier?.trim() ?? '' : null;
         if (e.kind === 'FEED_IN' && !namedSupplier) return { ok: false, error: 'Record the supplier this stock was bought from' };
         const receipt: Partial<Pick<FeedStockEntry, 'supplier' | 'purchaseRef'>> = namedSupplier === null ? {}
-          : { supplier: namedSupplier, purchaseRef: nextPurchaseRef(get().feedStock, companyId, e.date) };
+          : {
+            supplier: namedSupplier,
+            purchaseRef: opts?.purchaseRef || nextPurchaseRef(get().feedStock, companyId, e.date),
+          };
         const entry: FeedStockEntry = {
           ...e, ...receipt, qtyKg, companyId, id: uid('fs'), createdBy: get().session?.userId ?? 'system',
           createdAt: nowISO(), synced: get().online,
@@ -2177,7 +2242,7 @@ export const useApp = create<AppState>()(persist(
         return { ok: true };
       },
 
-      receiveMedicine: (draft) => {
+      receiveMedicine: (draft, opts) => {
         const companyId = cid();
         if (!companyId) return { ok: false, error: 'No company selected' };
         if (!can('create')) return { ok: false, error: 'Your role cannot receive stock' };
@@ -2193,7 +2258,7 @@ export const useApp = create<AppState>()(persist(
         if (draft.expiryDate && draft.expiryDate < draft.date) {
           return { ok: false, error: 'The expiry date is before the day it arrived' };
         }
-        const purchaseRef = nextMedicineRef(get().medicineStock, companyId, draft.date);
+        const purchaseRef = opts?.purchaseRef || nextMedicineRef(get().medicineStock, companyId, draft.date);
         const entry: MedicineStockEntry = {
           id: uid('ms'), companyId, medicineId: item.id, date: draft.date, kind: 'RECEIPT', qty,
           ratePerUnit: rate ?? undefined, supplier, purchaseRef,
@@ -2445,28 +2510,37 @@ export const useApp = create<AppState>()(persist(
         return { ok: true };
       },
 
-      nextCashReceiptNo: (date) => {
+      /**
+       * The next reference in a receipt series, claimed from the database counter while it can be
+       * reached. Offline, the store numbers from its own high water instead — unique on this
+       * device and nothing more, which the caller is told rather than quietly assumed.
+       */
+      takeReceiptNo: async (scope, date) => {
         const companyId = cid();
         if (!companyId || !date) return '';
-        // Numbered per company and per day: two farms collecting cash on the same morning
-        // must not be handed the same receipt number.
-        const prefix = `CR-${date}-`;
-        const taken = (reference: string | undefined) => (reference?.startsWith(prefix)
-          ? Number.parseInt(reference.slice(prefix.length), 10) : NaN);
-        const used = [
-          ...get().finance.filter(t => t.companyId === companyId).map(t => taken(t.reference)),
-          ...get().traderTxns.filter(t => t.companyId === companyId).map(t => taken(t.reference)),
-          ...get().saleEntries.filter(e => e.companyId === companyId).map(e => taken(e.cashReference)),
-          ...get().cashHandovers.filter(h => h.companyId === companyId).map(h => taken(h.reference)),
-        ].filter(n => Number.isFinite(n));
-        const next = (used.length ? Math.max(...used) : 0) + 1;
-        return `${prefix}${String(next).padStart(3, '0')}`;
-      },
-
-      nextPurchaseNo: (date) => {
-        const companyId = cid();
-        if (!companyId || !date) return '';
-        return nextPurchaseRef(get().feedStock, companyId, date);
+        // The store's own fallback: the highest reference this device holds for the series. It
+        // also goes to the counter as a floor, so records numbered before the counter existed —
+        // or while this device was offline — are never numbered over.
+        const taken = scope === 'PUR' ? purchaseReceiptHighWater(get().feedStock, companyId, date)
+          : scope === 'MED' ? medicineReceiptHighWater(get().medicineStock, companyId, date)
+            // One CR series across the four tables a cash receipt can stand in, exactly so one
+            // collection cannot be handed two numbers by the screen that recorded it.
+            : receiptHighWater([
+              ...get().finance.filter(t => t.companyId === companyId).map(t => t.reference),
+              ...get().traderTxns.filter(t => t.companyId === companyId).map(t => t.reference),
+              ...get().saleEntries.filter(e => e.companyId === companyId).map(e => e.cashReference),
+              ...get().cashHandovers.filter(h => h.companyId === companyId).map(h => h.reference),
+            ], 'CR', date);
+        const local = () => receiptNo(scope, date, taken + 1);
+        if (!get().online) return local();
+        const a = await allocateReceiptNo(companyId, scope, date, taken);
+        if (a.kind === 'numbered') return a.ref;
+        if (a.kind === 'local') {
+          if (a.note) get().pushToast('info', a.note);
+          return local();
+        }
+        get().pushToast('error', `No receipt number: ${a.error}. Save again to retry.`);
+        return '';
       },
 
       recordPurchasePayment: (input) => {
@@ -2751,7 +2825,10 @@ export const useApp = create<AppState>()(persist(
     // the farm's own entry in Finance, dated the day the labour is paid.
     // v19: the day-lock concept is removed. Any locked-day rows an older save still holds
     // are dropped; no other data is affected and nothing is re-seeded.
-    version: 19,
+    // v20: a seed person who also exists in the cloud is folded into the cloud record (joined
+    // on their unique mobile) and every reference to the retired id is repointed, so an owner
+    // edits the one copy that actually syncs. No financial or operational row is removed.
+    version: 20,
     storage: createJSONStorage(() => localStorage),
     migrate: migrateSaved,
     partialize: (s) => {

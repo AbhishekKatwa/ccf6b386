@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Feather, ShieldCheck, Wifi, WifiOff, KeyRound, MessageSquareCode } from 'lucide-react';
 import { useApp } from '@/store/app';
+import { dataService } from '@/services/dataService';
 import { Button, Field, SegmentedTabs } from '@/components/ui/Form';
 import { ROLE_LABELS } from '@/types';
 import { DEMO_PASSWORD } from '@/data/seed';
@@ -10,9 +11,6 @@ type Mode = 'password' | 'otp';
 
 export function LoginScreen() {
   const nav = useNavigate();
-  const signInWithPassword = useApp(s => s.signInWithPassword);
-  const requestOtp = useApp(s => s.requestOtp);
-  const signInWithOtp = useApp(s => s.signInWithOtp);
   const users = useApp(s => s.users);
   const online = useApp(s => s.online);
 
@@ -25,50 +23,47 @@ export function LoginScreen() {
   const [loading, setLoading] = useState(false);
 
   function routeFor(userId: string) {
-    const u = users.find(x => x.id === userId);
+    // read fresh: cloud hydration replaces `users` in the same tick as sign-in
+    const u = useApp.getState().users.find(x => x.id === userId);
     if (!u) return '/';
     if (u.role === 'MASTER_ADMIN') return u.companyIds.length === 0 ? '/admin' : '/';
     if (u.companyIds.length === 1) return '/';
     return '/select-company';
   }
 
-  function finish(userId: string) {
-    nav(routeFor(userId), { replace: true });
+  /** The store session is the single finish line: both auth paths stamp it on success. */
+  function finishSignedIn() {
+    const id = useApp.getState().session?.userId ?? '';
+    nav(routeFor(id), { replace: true });
   }
 
-  function submitPassword() {
+  async function submitPassword() {
     setError(null); setLoading(true);
-    setTimeout(() => {
-      const r = signInWithPassword(mobile, password);
-      setLoading(false);
-      if (!r.ok) return setError(r.error ?? 'Sign in failed');
-      const u = users.find(x => x.mobile === mobile.replace(/\D/g, '').slice(-10));
-      finish(u?.id ?? '');
-    }, 250);
+    const r = await dataService.auth.signInWithPassword(mobile, password);
+    setLoading(false);
+    if (!r.ok) return setError(r.error ?? 'Sign in failed');
+    finishSignedIn();
   }
 
-  function sendOtp() {
+  async function sendOtp() {
     setError(null);
-    const r = requestOtp(mobile);
+    const r = await dataService.auth.requestOtp(mobile);
     if (!r.ok) return setError(r.error ?? 'Cannot send OTP');
     setSentOtp(r.code ?? null);
   }
 
-  function submitOtp() {
+  async function submitOtp() {
     setError(null); setLoading(true);
-    setTimeout(() => {
-      const r = signInWithOtp(mobile, otp);
-      setLoading(false);
-      if (!r.ok) return setError(r.error ?? 'Sign in failed');
-      const u = users.find(x => x.mobile === mobile.replace(/\D/g, '').slice(-10));
-      finish(u?.id ?? '');
-    }, 250);
+    const r = await dataService.auth.signInWithOtp(mobile, otp);
+    setLoading(false);
+    if (!r.ok) return setError(r.error ?? 'Sign in failed');
+    finishSignedIn();
   }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (mode === 'password') submitPassword();
-    else submitOtp();
+    if (mode === 'password') void submitPassword();
+    else void submitOtp();
   }
 
   function fill(m: string) {

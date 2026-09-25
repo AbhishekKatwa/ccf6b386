@@ -13,6 +13,7 @@ import type { FeedStockEntry, FinanceTxn, MedicineItem, MedicineStockEntry, Paym
 import { INVENTORY_CATEGORIES, isLivestockPurchase, isInflow } from './accounting';
 import { fin } from './analytics';
 import { asLedgerRow } from './medicines';
+import { receiptHighWater, receiptNo } from './receipts';
 
 const round = (n: number) => Number(n.toFixed(2));
 
@@ -204,13 +205,21 @@ export function unlinkedPurchasePayments(
 export const UNSUPPLIED = 'Supplier not recorded';
 
 /**
+ * The highest feed receipt number this device holds for a company and day. Only this browser's
+ * own rows: a number read here is what the counter is told to jump past, never what a receipt
+ * is finally given.
+ */
+export function purchaseReceiptHighWater(entries: FeedStockEntry[], companyId: string, date: string): number {
+  return receiptHighWater(
+    entries.filter(e => e.companyId === companyId).map(e => e.purchaseRef), 'PUR', date,
+  );
+}
+
+/**
  * Issue the next stock receipt number for a company and day. Numbered per company the way cash
- * receipts are, so two farms cannot be handed the same purchase number.
+ * receipts are, so two farms cannot be handed the same purchase number. This is the device's own
+ * series: while the counter can be reached, the store asks it instead (see takeReceiptNo).
  */
 export function nextPurchaseRef(entries: FeedStockEntry[], companyId: string, date: string): string {
-  const prefix = `PUR-${date}-`;
-  const taken = (ref: string | undefined) => (ref?.startsWith(prefix)
-    ? Number.parseInt(ref.slice(prefix.length), 10) : NaN);
-  const used = entries.filter(e => e.companyId === companyId).map(e => taken(e.purchaseRef)).filter(n => Number.isFinite(n));
-  return `${prefix}${String((used.length ? Math.max(...used) : 0) + 1).padStart(3, '0')}`;
+  return receiptNo('PUR', date, purchaseReceiptHighWater(entries, companyId, date) + 1);
 }

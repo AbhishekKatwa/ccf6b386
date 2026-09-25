@@ -29,6 +29,7 @@ export function AddStockDialog({ open, onClose, presetIngredient }: {
   const data = useCompanyData();
   const stock = data.feedStock;
   const addStock = useApp(s => s.addFeedStock);
+  const takeReceiptNo = useApp(s => s.takeReceiptNo);
   const catalog = useApp(s => s.ingredientCatalog);
   const addIngredientType = useApp(s => s.addIngredientType);
   const pushToast = useApp(s => s.pushToast);
@@ -40,6 +41,7 @@ export function AddStockDialog({ open, onClose, presetIngredient }: {
     supplier: '', qtyKg: '', ratePerKg: '', remarks: '',
   });
   const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
 
   /** The ingredient master: the global catalogue plus anything already in the ledger. */
   const knownIngredients = useMemo(() => {
@@ -98,7 +100,8 @@ export function AddStockDialog({ open, onClose, presetIngredient }: {
     : needsRate && hasQty && !hasRate ? 'Receipt rate needed — the godown average is built from it'
       : undefined;
 
-  function submit() {
+  async function submit() {
+    if (busy) return;
     const ingredient = form.ingredient.trim();
     if (!ingredient) return pushToast('error', 'Select an ingredient');
     if (!knownIngredients.some(i => i.toLowerCase() === ingredient.toLowerCase())) {
@@ -112,12 +115,23 @@ export function AddStockDialog({ open, onClose, presetIngredient }: {
     if (!isOutgoing && form.ratePerKg.trim() !== '' && !rated) return pushToast('error', 'Enter a rate above ₹0, or leave it empty');
     if (needsRate && !rated) return pushToast('error', 'Enter the receipt rate per kg — it is what prices this stock');
     if (isPurchase && !form.supplier.trim()) return pushToast('error', 'Record the supplier this stock was bought from');
+    // A purchase takes its number from the receipt counter, asked for at the moment it is being
+    // booked: two tablets buying feed on the same morning cannot be given the same one. The
+    // store has already said why when the answer is no, and the form is left as it stands.
+    let purchaseRef: string | undefined;
+    if (isPurchase) {
+      setBusy(true);
+      const no = await takeReceiptNo('PUR', form.date);
+      setBusy(false);
+      if (!no) return;
+      purchaseRef = no;
+    }
     const r = addStock({
       ingredient, date: form.date, kind: form.kind,
       qtyKg: qty, ratePerKg: !isOutgoing && rated ? rate : undefined,
       supplier: isPurchase ? form.supplier.trim() : undefined,
       remarks: form.remarks || undefined,
-    });
+    }, { purchaseRef });
     if (!r.ok) return pushToast('error', r.error ?? 'Failed');
     pushToast('success', isPurchase && purchaseValue !== null
       ? `Purchase booked · ${fmtMoney(purchaseValue)} payable to ${form.supplier.trim()} — no money has left yet`
@@ -132,7 +146,7 @@ export function AddStockDialog({ open, onClose, presetIngredient }: {
 
   return (
     <Dialog open={open} onClose={onClose} title="Add Stock Entry" subtitle="Central godown movement (KG)"
-      footer={<div className="flex gap-2"><Button variant="outline" block onClick={onClose}>Cancel</Button><Button block onClick={submit}>Save</Button></div>}>
+      footer={<div className="flex gap-2"><Button variant="outline" block onClick={onClose}>Cancel</Button><Button block onClick={submit} disabled={busy}>Save</Button></div>}>
       <div className="space-y-3">
         <SelectField label="Ingredient" value={form.ingredient} onChange={e => setForm(f => ({ ...f, ingredient: e.target.value }))}
           options={knownIngredients.map(i => ({ value: i, label: i }))} />

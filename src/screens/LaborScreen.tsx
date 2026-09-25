@@ -11,7 +11,7 @@ import { Page, ScreenTitle } from '@/components/ui/Header';
 import { Avatar, Badge, Card, EmptyState, IconTile, SectionTitle, StatusBadge } from '@/components/ui/Card';
 import { Button, Field, TextArea } from '@/components/ui/Form';
 import { ConfirmDialog, Dialog } from '@/components/ui/Dialog';
-import { fmtClock, fmtDate, fmtIN, greeting, timeOf, todayISO } from '@/lib/format';
+import { fmtClock, fmtDate, fmtIN, greeting, personName, timeOf, todayISO } from '@/lib/format';
 import { eggStockByGrade, gradeTotal } from '@/lib/calc';
 import { vaccinationDayLabel } from '@/lib/vaccination';
 import { useVaccinationSchedule } from '@/hooks/useVaccinations';
@@ -659,7 +659,7 @@ export function LaborLogScreen() {
         id: v.id, at: v.completedAt ?? v.updatedAt, icon: <Syringe size={17} />, tone: 'bg-brand-soft text-brand',
         title: `${v.vaccineName} given`,
         detail: v.scheduledDate === day.today ? 'Vaccination given as scheduled' : `Vaccination · scheduled ${fmtDate(v.scheduledDate)}`,
-        by: day.data.users.find(u => u.id === v.completedBy)?.name ?? v.completedBy,
+        by: personName(day.data.users, v.completedBy),
       });
     }
     for (const t of day.data.tasks.filter(x => x.date === day.today && x.assignedUserId === day.user?.id && x.status === 'COMPLETED')) {

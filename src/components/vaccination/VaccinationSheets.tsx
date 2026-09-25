@@ -5,7 +5,7 @@ import { useApp, useCompanyData, useCurrentUser } from '@/store/app';
 import { Badge, Card, Row, SectionTitle } from '@/components/ui/Card';
 import { Button, Field, SelectField, TextArea, Toggle } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
-import { ageDaysLabel, daysBetween, fmtDate, fmtMoney, todayISO } from '@/lib/format';
+import { ageDaysLabel, daysBetween, fmtDate, fmtMoney, personName, todayISO } from '@/lib/format';
 import { fmtScheduled, vaccinationDayLabel, type VaccinationPosition } from '@/lib/vaccination';
 import { medicineBasis } from '@/lib/medicines';
 import { useMedicineValuation } from '@/hooks/useMedicineValuation';
@@ -361,7 +361,7 @@ export function VaccinationDetailSheet({ p, canManage, canComplete, onComplete, 
 }) {
   const { users } = useCompanyData();
   // "Administered by" is a name as the worker recorded it, "cancelled by" is a user id: read either back.
-  const nameOf = (v?: string) => users.find(u => u.id === v || u.name === v)?.name ?? v ?? '—';
+  const nameOf = (v?: string) => personName(users, v);
   const done = p.state === 'COMPLETED';
   const off = p.state === 'CANCELLED';
   const open = !done && !off;

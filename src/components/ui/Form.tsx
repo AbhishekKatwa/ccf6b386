@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
+import type { ButtonHTMLAttributes, InputHTMLAttributes, KeyboardEvent as ReactKeyboardEvent, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
 import clsx from 'clsx';
 import { ChevronDown, Minus, Plus, Search, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -181,8 +181,22 @@ export function SegmentedTabs<T extends string>({ value, onChange, options, scro
   value: T; onChange: (v: T) => void; options: { value: T; label: string; icon?: ReactNode }[]; scroll?: boolean;
 }) {
   const reduced = useReducedMotion();
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    e.preventDefault();
+    const i = options.findIndex(o => o.value === value);
+    const next = e.key === 'ArrowRight'
+      ? options[(i + 1) % options.length]
+      : options[(i - 1 + options.length) % options.length];
+    onChange(next.value);
+  };
   return (
-    <div className={clsx('relative flex gap-1 bg-sunk rounded-full p-1', scroll ? 'overflow-x-auto no-scrollbar' : '')}>
+    <div
+      role="radiogroup"
+      aria-label="View"
+      onKeyDown={onKeyDown}
+      className={clsx('relative flex gap-1 bg-sunk rounded-full p-1', scroll ? 'overflow-x-auto no-scrollbar' : '')}
+    >
       {/* Sliding active pill */}
       <AnimatePresence>
         {!reduced && (
@@ -204,6 +218,9 @@ export function SegmentedTabs<T extends string>({ value, onChange, options, scro
       {options.map(o => (
         <button
           key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
           className={clsx(
             'relative z-10 py-2 px-3.5 rounded-full text-[13px] font-semibold transition-colors whitespace-nowrap flex items-center justify-center gap-1.5 press',

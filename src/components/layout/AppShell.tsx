@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, useSyncExternalStore, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import {
@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp, useCurrentUser } from '@/store/app';
+import { runtime } from '@/lib/runtime';
+import { cloudSyncStatus, retrySync, type CloudSyncStatus } from '@/services/supabase/engine';
 import { Avatar } from '@/components/ui/Card';
 import { ActionSheet, ConfirmDialog } from '@/components/ui/Dialog';
 import { FORMULA_VIEW_ROLES, MEDICINE_ROLES } from '@/lib/permissions';
@@ -111,10 +113,12 @@ function mobileTabs(role: Role): NavItem[] {
   return base.filter(t => allowed(t, role)).slice(0, 4);
 }
 
+const NO_CLOUD_SYNC: CloudSyncStatus = { pending: 0, errors: [] };
+const LOCAL_SYNC = { subscribe: () => () => { /* local mode: no engine to watch */ }, get: () => NO_CLOUD_SYNC };
+
 export function SyncPill({ compact = false }: { compact?: boolean }) {
   const online = useApp(s => s.online);
   const syncPending = useApp(s => s.syncPending);
-  const pushToast = useApp(s => s.pushToast);
   const mortality = useApp(s => s.mortality);
   const feed = useApp(s => s.feed);
   const eggs = useApp(s => s.eggs);
@@ -122,7 +126,21 @@ export function SyncPill({ compact = false }: { compact?: boolean }) {
   const saleEntries = useApp(s => s.saleEntries);
   const feedRounds = useApp(s => s.feedRounds);
   const vaccinations = useApp(s => s.vaccinations);
-  const pending = [...mortality, ...feed, ...eggs, ...saleLogs, ...saleEntries, ...feedRounds, ...vaccinations].filter(x => !x.synced).length;
+
+  // In cloud mode the badge is the engine's real queue: rows the database does not have
+  // yet, and its own sentence for the ones it refused. Tapping retries them — it never
+  // claims a sync the wire did not complete.
+  const cloud = runtime.cloud;
+  const status = useSyncExternalStore(
+    cloud ? cloudSyncStatus.subscribe : LOCAL_SYNC.subscribe,
+    cloud ? cloudSyncStatus.get : LOCAL_SYNC.get,
+  );
+  const legacyPending = [...mortality, ...feed, ...eggs, ...saleLogs, ...saleEntries, ...feedRounds, ...vaccinations]
+    .filter(x => !x.synced).length;
+  const pending = cloud ? status.pending : legacyPending;
+  const detail = cloud && status.errors.length
+    ? ` — ${status.errors.slice(0, 3).join(' · ')}`
+    : '';
 
   if (!online) {
     return (
@@ -133,9 +151,12 @@ export function SyncPill({ compact = false }: { compact?: boolean }) {
   }
   return (
     <button
-      onClick={() => { if (pending) { syncPending(); pushToast('success', `${pending} record${pending === 1 ? '' : 's'} synced`); } }}
-      className="inline-flex items-center gap-1.5 rounded-full bg-success-soft text-success px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] press"
-      title={pending ? `${pending} pending sync — tap to sync` : 'All synced'}
+      onClick={() => { if (pending && cloud) retrySync(); else if (pending) syncPending(); }}
+      className={clsx(
+        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] press',
+        cloud && status.errors.length ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success',
+      )}
+      title={pending ? `${pending} pending sync${detail} — tap to retry` : 'All synced'}
     >
       {pending ? <RefreshCw size={11} /> : <Wifi size={11} />}
       {compact ? (pending ? `${pending}` : 'Synced') : pending ? `${pending} to sync` : 'Synced'}

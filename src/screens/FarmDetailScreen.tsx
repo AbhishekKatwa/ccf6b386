@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { MapPin, Plus, ChevronRight, Building2, Phone } from 'lucide-react';
-import { useApp, useCompanyData, useVisibleSheds } from '@/store/app';
+import { useApp, useCompanyData } from '@/store/app';
+import { dataService } from '@/services/dataService';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, StatusBadge, EmptyState, IconTile, GroupList, ListRow, StatStrip, StatCell, Stat } from '@/components/ui/Card';
 import { Button, Field } from '@/components/ui/Form';
@@ -12,11 +13,10 @@ export function FarmDetailScreen() {
   const { farmId } = useParams();
   const nav = useNavigate();
   const { farms, batches } = useCompanyData();
-  const addShed = useApp(s => s.addShed);
   const pushToast = useApp(s => s.pushToast);
 
   const farm = farms.find(f => f.id === farmId);
-  const farmSheds = useVisibleSheds().filter(s => s.farmId === farmId);
+  const farmSheds = dataService.sheds.useList().filter(s => s.farmId === farmId);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [cap, setCap] = useState('');
@@ -27,7 +27,7 @@ export function FarmDetailScreen() {
     const c = parseInt(cap, 10);
     if (!name.trim()) return pushToast('error', 'Shed name is required');
     if (!c || c <= 0) return pushToast('error', 'Enter a valid capacity');
-    addShed({ farmId: farm!.id, name: name.trim(), capacity: c, status: 'IDLE' });
+    dataService.sheds.create({ farmId: farm!.id, name: name.trim(), capacity: c, status: 'IDLE' });
     pushToast('success', `Shed "${name}" created`);
     setOpen(false); setName(''); setCap('');
   }
