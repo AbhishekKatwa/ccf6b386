@@ -79,6 +79,24 @@ export function roleCan(role: Role, key: PermissionKey): boolean {
   return DEFAULT_ROLE_PERMISSIONS[role]?.[key] ?? false;
 }
 
+/**
+ * Whether a role may read a table at all — the SELECT verb a slice declares in the sync
+ * registry, which mirrors migration 003's own read policy.
+ *
+ * One function answers it because three callers must never disagree: the sync engine (a slice
+ * this session cannot read is left out of the queue entirely), the backup (what a person may
+ * carry out of the company), and the restore preview (what may come back in). `verb` is taken
+ * structurally so this file stays free of the sync layer.
+ */
+export function roleReadable(
+  role: Role | undefined,
+  verb: { readKey?: PermissionKey; readRoles?: readonly Role[] },
+): boolean {
+  if (!role) return false;
+  if (!verb.readKey && !verb.readRoles) return true;
+  return verb.readKey ? roleCan(role, verb.readKey) : verb.readRoles!.includes(role);
+}
+
 /* ============================= module role gates =============================
  * Shared by the router guards and the screens that list modules, so a module is
  * never offered where the user cannot open it (§14). */

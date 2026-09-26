@@ -6,6 +6,7 @@ import { Header, Page } from '@/components/ui/Header';
 import { Badge, Card, EmptyState, Row, Stat, StatCell, StatStrip } from '@/components/ui/Card';
 import { Button, SelectField } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
+import { PageReveal, StaggerContainer, StaggerItem } from '@/components/motion';
 import { FormulaTable } from '@/components/ui/FormulaTable';
 import { formulaCostPerTonne, formulaTotalKg, formulaUsage } from '@/lib/calc';
 import { useGodownPrices } from '@/hooks/useGodownPrices';
@@ -66,12 +67,14 @@ export function FormulaDetailScreen() {
   }
 
   return (
-    <Page>
+    <Page withNav>
+      <PageReveal>
       <Header title={formula.name} subtitle={`${shed?.name ?? 'Shed'} · V${formula.version} · ${formula.effectiveFrom ? fmtDate(formula.effectiveFrom) : '—'}`}
         backTo="/feed/formulas"
         action={<Badge tone={isActive ? 'success' : 'neutral'}>{isActive ? 'Active' : 'Inactive'}</Badge>} />
 
-      <div className="px-4 sm:px-0 mt-3 space-y-4 pb-6">
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4 pb-6">
+        <StaggerItem>
         <Card padded={false} className="overflow-hidden">
           <StatStrip>
             <StatCell><Stat label="Mix total" value={fmtIN(formulaTotalKg(formula.items), 2)} sub="kg" tone="neutral" size="sm" /></StatCell>
@@ -79,9 +82,13 @@ export function FormulaDetailScreen() {
             <StatCell><Stat label="Cost / tonne" value={canFinance ? fmtMoney(formulaCostPerTonne(formula, priceOf)) : '₹••••'} sub="at godown averages" tone="brand" size="sm" /></StatCell>
           </StatStrip>
         </Card>
+        </StaggerItem>
 
+        <StaggerItem>
         <FormulaTable formula={formula} showCosts={canFinance} priceOf={priceOf} />
+        </StaggerItem>
 
+        <StaggerItem>
         <Card>
           <Row label="Version" value={`V${formula.version} of ${versions}`} />
           <Row label="Status" value={isActive ? 'Active for new feed entries' : 'Kept for history'} mono={false} />
@@ -92,15 +99,19 @@ export function FormulaDetailScreen() {
           {formula.changeReason && <Row label="Change reason" value={formula.changeReason} mono={false} />}
           {live ? null : <Row label="Shed batch" value="No live batch" mono={false} />}
         </Card>
+        </StaggerItem>
 
         {!canManage && (
+          <StaggerItem>
           <div className="rounded-[18px] bg-sunk px-4 py-3">
             <p className="text-[12px] text-muted leading-relaxed">
               You have view access to formulas. Editing is limited to the Owner and supervisors assigned to {shed?.name ?? 'this shed'}.
             </p>
           </div>
+          </StaggerItem>
         )}
 
+        <StaggerItem>
         <div className="grid grid-cols-2 gap-2">
           <Button variant="outline" icon={<History size={15} />} onClick={() => nav(`/feed/formulas/${formula.id}/history`)}>History</Button>
           {canManage && (
@@ -117,9 +128,12 @@ export function FormulaDetailScreen() {
             </Button>
           )}
         </div>
+        </StaggerItem>
 
+        <StaggerItem>
         <Button block icon={<FlaskConical size={16} />} onClick={() => nav('/feed')}>View godown stock</Button>
-      </div>
+        </StaggerItem>
+      </StaggerContainer>
 
       <Dialog open={dupOpen} onClose={() => setDupOpen(false)} title="Duplicate formula"
         subtitle={`A copy of V${formula.version} as a new formula, inactive until you activate it`}
@@ -143,6 +157,7 @@ export function FormulaDetailScreen() {
           </p>
         </div>
       </Dialog>
+      </PageReveal>
     </Page>
   );
 }

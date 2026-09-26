@@ -14,7 +14,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { LedgerDayHeader } from '@/components/godown/StockLedger';
 import { GraphCard, GraphRange } from '@/components/charts/GraphCard';
 import { axisNum, BarSeries, DonutChart, HBarList, PairedBars, SERIES_COLORS, type HRow } from '@/components/charts/DataViz';
-import { PageReveal, ScrollReveal, ChartReveal, StaggerContainer, StaggerItem } from '@/components/motion';
+import { PageReveal, ScrollReveal, ChartReveal, StaggerContainer, StaggerItem, TabPanel } from '@/components/motion';
 import { medicineStockBoard, usageExpenseOf, valueMedicines } from '@/lib/medicines';
 import { unitQty } from '@/components/medicine/medicineMeta';
 import {
@@ -210,7 +210,7 @@ export function FinanceScreen() {
   const updateFinance = useApp(s => s.updateFinance);
   const addCashHandover = useApp(s => s.addCashHandover);
   const recordCashCount = useApp(s => s.recordCashCount);
-  const nextCashReceiptNo = useApp(s => s.nextCashReceiptNo);
+  const takeReceiptNo = useApp(s => s.takeReceiptNo);
   const recordPurchasePayment = useApp(s => s.recordPurchasePayment);
   const recordSalePayment = useApp(s => s.recordSalePayment);
   const cashPeople = useApp(s => s.cashPeople);
@@ -702,6 +702,7 @@ export function FinanceScreen() {
       <div className="px-4 sm:px-0 mt-3 space-y-5">
         {tabs}
 
+        <TabPanel id={tab} className="space-y-5">
         {tab !== 'ledger' && (
           /* period context row */
           <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1530,6 +1531,7 @@ export function FinanceScreen() {
             {filtered.length > 50 && <p className="text-[11px] text-muted px-1">Showing the 50 most recent of {filtered.length}. Narrow the filters to see more.</p>}
           </div>
         )}
+        </TabPanel>
       </div>
 
       {/* shed drill-down */}
@@ -1587,7 +1589,7 @@ export function FinanceScreen() {
             onChange={patch => setPay(d => ({ ...d, ...patch }))}
             inflow={isInflow(form.kind)}
             people={people}
-            onReceiptNo={() => setPay(d => ({ ...d, reference: nextCashReceiptNo(form.date) }))}
+            onReceiptNo={() => { void takeReceiptNo('CR', form.date).then(no => { if (no) setPay(d => ({ ...d, reference: no })); }); }}
           />
           <p className="text-[11px] text-muted leading-relaxed">
             Recorded by <strong className="text-ink-2">{nameOf.get(sessionUser ?? '') ?? 'you'}</strong> — the person who physically held
@@ -1625,7 +1627,7 @@ export function FinanceScreen() {
               inflow={isInflow(fixTxn.kind)}
               people={people}
               heading="Payment & custody"
-              onReceiptNo={() => setFixPay(d => ({ ...d, reference: nextCashReceiptNo(fixTxn.date) }))}
+              onReceiptNo={() => { void takeReceiptNo('CR', fixTxn.date).then(no => { if (no) setFixPay(d => ({ ...d, reference: no })); }); }}
             />
             <TextArea label="Reason for the correction" rows={2} value={fixReason} onChange={e => setFixReason(e.target.value)}
               placeholder="e.g. the cash was held by the supervisor, not the manager" />
@@ -1654,7 +1656,7 @@ export function FinanceScreen() {
             placeholder="Collection deposit, change float, wage payout" />
           <Field label="Reference" value={handover.reference} onChange={e => setHandover(h => ({ ...h, reference: e.target.value }))}
             placeholder="Optional slip or note number" className="font-mono text-[13px]"
-            suffix={<button type="button" onClick={() => setHandover(h => ({ ...h, reference: nextCashReceiptNo(h.date) }))}
+            suffix={<button type="button" onClick={() => { void takeReceiptNo('CR', handover.date).then(no => { if (no) setHandover(h => ({ ...h, reference: no })); }); }}
               className="text-[11px] font-semibold text-brand press whitespace-nowrap">Next no.</button>} />
           <p className="text-[11.5px] text-muted leading-relaxed">
             A handover changes custody, never the cash position: the money was already the farm&rsquo;s. That is why it does not appear in
@@ -1690,7 +1692,7 @@ export function FinanceScreen() {
       {payOpen && (
         <RecordPaymentDialog open onClose={() => setPayOpen(false)} target={payTarget}
           purchases={positions} receivables={receivables} people={people} recordedBy={recordedBy}
-          nextReceiptNo={(d) => nextCashReceiptNo(d)}
+          nextReceiptNo={(d) => takeReceiptNo('CR', d)}
           onPayPurchase={payPurchase} onReceiveSale={receiveSale} />
       )}
 

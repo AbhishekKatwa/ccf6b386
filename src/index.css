@@ -102,8 +102,17 @@ input[type="number"] { -moz-appearance: textfield; }
 /* hairline divider used between stacked rows */
 .hairline > * + * { border-top: 1px solid var(--color-line-2); }
 
-/* press feedback */
-.press { transition: transform .12s ease, opacity .12s ease; }
+/* press feedback — also the house transition for every control's hover states, so a
+   button, chip or row never snaps colour while its press animates */
+.press {
+  transition:
+    transform .12s ease,
+    opacity .12s ease,
+    background-color .15s ease,
+    border-color .15s ease,
+    color .15s ease,
+    box-shadow .15s ease;
+}
 .press:active { transform: scale(.97); }
 
 /* focus ring */
@@ -124,6 +133,10 @@ input[type="number"] { -moz-appearance: textfield; }
 
 @keyframes ap-fade { from { opacity: 0; } to { opacity: 1; } }
 .ap-fade { animation: ap-fade .18s ease-out both; }
+
+/* an empty state's glyph breathes on its own axis — one element, never a list */
+@keyframes ap-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+.ap-float { animation: ap-float 4s ease-in-out infinite; }
 
 @keyframes ap-pulse-soft { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
 .ap-pulse { animation: ap-pulse-soft 1.6s ease-in-out infinite; }

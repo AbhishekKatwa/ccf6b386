@@ -122,3 +122,34 @@ export function initials(name: string): string {
 export function uid(prefix = 'id'): string {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
+
+/**
+ * A v4 UUID, for the ids the database accepts as a `uuid` column. `crypto.randomUUID` only
+ * exists in a secure context, and a farm device usually opens the app over plain http on the
+ * LAN, so the same randomness is drawn through `getRandomValues`, which has no such gate.
+ */
+export function newUuid(): string {
+  const c = globalThis.crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  const b = new Uint8Array(16);
+  if (c?.getRandomValues) c.getRandomValues(b);
+  else for (let i = 0; i < b.length; i++) b[i] = Math.floor(Math.random() * 256);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const hex = Array.from(b, x => x.toString(16).padStart(2, '0'));
+  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+}
+
+/** An id this app no longer issues — a seed-era `u_*`, or a uuid whose auth row is gone. */
+const RETIRED_ID = /^(?:u_[a-z0-9]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+/**
+ * Read a "who" field back as a person. The field carries a user id when the app wrote it and
+ * the name a worker typed when they did, so both are matched. An id that resolves to nobody
+ * stays unattributed: an internal key must never reach the screen as if it were a name.
+ */
+export function personName(users: { id: string; name: string }[], value?: string | null): string {
+  if (!value) return '—';
+  return users.find(u => u.id === value || u.name === value)?.name
+    ?? (RETIRED_ID.test(value) ? '—' : value);
+}

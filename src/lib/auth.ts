@@ -33,3 +33,31 @@ export function isOtpValid(mobile: string, code: string): boolean {
 export function normalizeMobile(input: string): string {
   return input.replace(/\D/g, '').slice(-10);
 }
+
+export interface UserDraft {
+  name: string;
+  mobile: string;
+  password: string;
+  role: string;
+  companyIds: string[];
+}
+
+/**
+ * The one gate a new-user draft has to pass, plus the mobile it normalises to. Both the local
+ * write and the cloud pre-flight read it, because the cloud path writes auth.users *before* the
+ * profile row exists: a draft refused only locally would leave a login without a person.
+ */
+export function validateUserDraft(
+  draft: UserDraft,
+  isMobileTaken: (mobile: string) => boolean,
+): { mobile: string; error: string | null } {
+  const mobile = normalizeMobile(draft.mobile);
+  if (!draft.name.trim()) return { mobile, error: 'Enter the full name' };
+  if (mobile.length !== 10) return { mobile, error: 'Enter a valid 10-digit mobile number' };
+  if (isMobileTaken(mobile)) return { mobile, error: 'A user with this mobile already exists' };
+  if (draft.password.length < 4) return { mobile, error: 'Password must be at least 4 characters' };
+  if (draft.role !== 'MASTER_ADMIN' && draft.companyIds.length === 0) {
+    return { mobile, error: 'Assign at least one company' };
+  }
+  return { mobile, error: null };
+}

@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, MapPin, Building2, Plus } from 'lucide-react';
-import { useApp, useCompanyData, useCurrentUser, useVisibleSheds } from '@/store/app';
+import { useApp, useCompanyData, useCurrentUser } from '@/store/app';
+import { dataService } from '@/services/dataService';
 import { ScreenTitle, Page } from '@/components/ui/Header';
 import { Card, StatusBadge, EmptyState, GroupList, ListRow, IconTile, StatStrip, StatCell, Stat } from '@/components/ui/Card';
 import { Button, Field, SelectField } from '@/components/ui/Form';
@@ -26,11 +27,10 @@ export function FarmsScreen() {
   const user = useCurrentUser();
   const mayBuild = !!user && STRUCTURE_ROLES.includes(user.role);
   const addFarm = useApp(s => s.addFarm);
-  const addShed = useApp(s => s.addShed);
   const pushToast = useApp(s => s.pushToast);
 
   const { farms: allFarms, batches: allBatches, mortality, eggs, saleEntries, eggWastages } = useCompanyData();
-  const sheds = useVisibleSheds();
+  const sheds = dataService.sheds.useList();
   const shedsById = new Set(sheds.map(s => s.id));
   const batches = allBatches.filter(b => shedsById.has(b.shedId));
   const groups = allFarms
@@ -75,7 +75,7 @@ export function FarmsScreen() {
       targetFarmName = farm.name;
     }
 
-    if (!addShed({ farmId: targetFarmId, name: shedForm.name.trim(), capacity: cap, status: 'IDLE' })) {
+    if (!dataService.sheds.create({ farmId: targetFarmId, name: shedForm.name.trim(), capacity: cap, status: 'IDLE' })) {
       return pushToast('error', 'Select a company first');
     }
     pushToast('success', `Shed "${shedForm.name.trim()}" added to ${targetFarmName}`);

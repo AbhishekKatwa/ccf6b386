@@ -1,50 +1,78 @@
 import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
-import { useEffect, type ReactNode } from 'react';
-import { useApp, useCan, useCurrentUser, useVisibleSheds } from '@/store/app';
+import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from 'react';
+import { useApp, useCan, useCompanyAccess, useCurrentUser, useVisibleSheds } from '@/store/app';
 import type { PermissionKey, Role } from '@/types';
+import { contextIntact, isPlatformAdmin } from '@/lib/companyAccess';
+import { runtime } from '@/lib/runtime';
 import {
-  COMMERCE_ROLES, FORMULA_VIEW_ROLES, GODOWN_ROLES, MEDICINE_ROLES, OPS_ROLES, REPORT_ROLES,
+  COMMERCE_ROLES, FORMULA_VIEW_ROLES, GODOWN_ROLES, MEDICINE_ROLES, OPS_ROLES, REPORT_ROLES, STRUCTURE_ROLES,
 } from '@/lib/permissions';
 import { AppShell } from '@/components/layout/AppShell';
 import { ToastHost } from '@/components/ui/Toast';
 import { MotionProvider } from '@/components/motion';
+import { ErrorBoundary, ScreenFallback } from '@/components/ui/ErrorBoundary';
 import { LoginScreen } from '@/screens/LoginScreen';
 import { CompanySelectScreen } from '@/screens/CompanySelectScreen';
-import { AdminScreen } from '@/screens/AdminScreen';
-import { HomeScreen } from '@/screens/HomeScreen';
-import { OwnerDashboard } from '@/screens/OwnerDashboard';
-import { AlertsScreen } from '@/screens/AlertsScreen';
-import { FarmsScreen } from '@/screens/FarmsScreen';
-import { FarmDetailScreen } from '@/screens/FarmDetailScreen';
-import { ShedGate } from '@/screens/ShedDetailScreen';
-import { BatchListScreen } from '@/screens/BatchListScreen';
-import { BatchDetailScreen } from '@/screens/BatchDetailScreen';
-import { BatchUsersScreen } from '@/screens/BatchUsersScreen';
-import { AssignBatchScreen } from '@/screens/AssignBatchScreen';
-import { BatchEggsScreen } from '@/screens/BatchEggsScreen';
-import { FeedStockScreen } from '@/screens/FeedStockScreen';
-import { IngredientStockScreen } from '@/screens/IngredientStockScreen';
-import { MedicinesScreen } from '@/screens/MedicinesScreen';
-import { MedicineItemScreen } from '@/screens/MedicineItemScreen';
-import { FeedFormulaScreen } from '@/screens/FeedFormulaScreen';
-import { FormulaDetailScreen } from '@/screens/FormulaDetailScreen';
-import { FormulaEditorScreen } from '@/screens/FormulaEditorScreen';
-import { FormulaHistoryScreen } from '@/screens/FormulaHistoryScreen';
-import { FinanceScreen } from '@/screens/FinanceScreen';
-import { TradersScreen } from '@/screens/TradersScreen';
-import { TraderDetailScreen } from '@/screens/TraderDetailScreen';
-import { SalesScreen } from '@/screens/SalesScreen';
-import { EggSalePlannerScreen } from '@/screens/EggSalePlannerScreen';
-import { SaleEntryDetailScreen } from '@/screens/SaleEntryDetailScreen';
-import { TasksScreen } from '@/screens/TasksScreen';
-import { ReportsScreen } from '@/screens/ReportsScreen';
-import { ReportDetailScreen } from '@/screens/ReportDetailScreen';
-import { DailyReportScreen } from '@/screens/DailyReportScreen';
-import { ProfileScreen } from '@/screens/ProfileScreen';
-import { ContactScreen } from '@/screens/ContactScreen';
-import { LaborLogScreen } from '@/screens/LaborScreen';
-import { MortalityScreen } from '@/screens/MortalityScreen';
-import { EggsScreen } from '@/screens/EggsScreen';
+import { CompanyUnavailableScreen } from '@/screens/CompanyUnavailableScreen';
+
+/**
+ * Every module behind its own file: the sign-in path stays in the first bundle, and a person
+ * downloads only the screens they open. `screen()` keeps the named exports as they are, so no
+ * screen had to change for this.
+ */
+function screen<M extends Record<string, unknown>>(name: keyof M, loader: () => Promise<M>) {
+  return lazy(() => loader().then(m => ({ default: m[name] as ComponentType })));
+}
+
+const AdminScreen = screen('AdminScreen', () => import('@/screens/AdminScreen'));
+const HomeScreen = screen('HomeScreen', () => import('@/screens/HomeScreen'));
+const OwnerDashboard = screen('OwnerDashboard', () => import('@/screens/OwnerDashboard'));
+const AlertsScreen = screen('AlertsScreen', () => import('@/screens/AlertsScreen'));
+const TimelineScreen = screen('TimelineScreen', () => import('@/screens/TimelineScreen'));
+const UsersScreen = screen('UsersScreen', () => import('@/screens/UsersScreen'));
+const FarmsScreen = screen('FarmsScreen', () => import('@/screens/FarmsScreen'));
+const FarmDetailScreen = screen('FarmDetailScreen', () => import('@/screens/FarmDetailScreen'));
+const FarmLayoutScreen = screen('FarmLayoutScreen', () => import('@/screens/FarmLayoutScreen'));
+const ShedGate = screen('ShedGate', () => import('@/screens/ShedDetailScreen'));
+const BatchListScreen = screen('BatchListScreen', () => import('@/screens/BatchListScreen'));
+const BatchDetailScreen = screen('BatchDetailScreen', () => import('@/screens/BatchDetailScreen'));
+const BatchUsersScreen = screen('BatchUsersScreen', () => import('@/screens/BatchUsersScreen'));
+const AssignBatchScreen = screen('AssignBatchScreen', () => import('@/screens/AssignBatchScreen'));
+const BatchEggsScreen = screen('BatchEggsScreen', () => import('@/screens/BatchEggsScreen'));
+const FeedStockScreen = screen('FeedStockScreen', () => import('@/screens/FeedStockScreen'));
+const IngredientStockScreen = screen('IngredientStockScreen', () => import('@/screens/IngredientStockScreen'));
+const MedicinesScreen = screen('MedicinesScreen', () => import('@/screens/MedicinesScreen'));
+const MedicineItemScreen = screen('MedicineItemScreen', () => import('@/screens/MedicineItemScreen'));
+const FeedFormulaScreen = screen('FeedFormulaScreen', () => import('@/screens/FeedFormulaScreen'));
+const FormulaDetailScreen = screen('FormulaDetailScreen', () => import('@/screens/FormulaDetailScreen'));
+const FormulaEditorScreen = screen('FormulaEditorScreen', () => import('@/screens/FormulaEditorScreen'));
+const FormulaHistoryScreen = screen('FormulaHistoryScreen', () => import('@/screens/FormulaHistoryScreen'));
+const FinanceScreen = screen('FinanceScreen', () => import('@/screens/FinanceScreen'));
+const TradersScreen = screen('TradersScreen', () => import('@/screens/TradersScreen'));
+const TraderDetailScreen = screen('TraderDetailScreen', () => import('@/screens/TraderDetailScreen'));
+const SalesScreen = screen('SalesScreen', () => import('@/screens/SalesScreen'));
+const SaleEntryDetailScreen = screen('SaleEntryDetailScreen', () => import('@/screens/SaleEntryDetailScreen'));
+const TasksScreen = screen('TasksScreen', () => import('@/screens/TasksScreen'));
+const ReportsScreen = screen('ReportsScreen', () => import('@/screens/ReportsScreen'));
+const BackupScreen = screen('BackupScreen', () => import('@/screens/BackupScreen'));
+const ReportDetailScreen = screen('ReportDetailScreen', () => import('@/screens/ReportDetailScreen'));
+const DailyReportScreen = screen('DailyReportScreen', () => import('@/screens/DailyReportScreen'));
+const ProfileScreen = screen('ProfileScreen', () => import('@/screens/ProfileScreen'));
+const ContactScreen = screen('ContactScreen', () => import('@/screens/ContactScreen'));
+const LaborLogScreen = screen('LaborLogScreen', () => import('@/screens/LaborScreen'));
+const MortalityScreen = screen('MortalityScreen', () => import('@/screens/MortalityScreen'));
+const EggsScreen = screen('EggsScreen', () => import('@/screens/EggsScreen'));
+
+/** One screen at a time: the module is still in flight, and a screen that fails to draw keeps
+ *  the shell and its navigation standing so there is always a way out. */
+function Screen({ children }: { children: ReactNode }) {
+  const loc = useLocation();
+  return (
+    <ErrorBoundary resetKeys={[loc.pathname]}>
+      <Suspense fallback={<ScreenFallback />}>{children}</Suspense>
+    </ErrorBoundary>
+  );
+}
 
 function useScrollReset() {
   const loc = useLocation();
@@ -94,8 +122,11 @@ function CompanyRoutes() {
     <Routes>
       <Route path="/" element={<RootHome />} />
       <Route path="/alerts" element={<RequireRole roles={['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'MASTER_ADMIN']}><AlertsScreen /></RequireRole>} />
+      <Route path="/timeline" element={<RequireRole roles={OPS_ROLES}><TimelineScreen /></RequireRole>} />
+      <Route path="/users" element={<RequirePermission permission="manageUsers"><UsersScreen /></RequirePermission>} />
       <Route path="/farms" element={<RequireRole roles={OPS_ROLES}><FarmsScreen /></RequireRole>} />
       <Route path="/farms/:farmId" element={<RequireRole roles={OPS_ROLES}><FarmDetailScreen /></RequireRole>} />
+      <Route path="/farms/:farmId/layout" element={<RequireRole roles={STRUCTURE_ROLES}><FarmLayoutScreen /></RequireRole>} />
       <Route path="/sheds/:shedId" element={<RequireRole roles={OPS_ROLES}><RequireVisibleShed><ShedGate /></RequireVisibleShed></RequireRole>} />
       <Route path="/batches" element={<RequireRole roles={OPS_ROLES}><BatchListScreen /></RequireRole>} />
       <Route path="/batches/:batchId" element={<RequireRole roles={OPS_ROLES}><BatchDetailScreen /></RequireRole>} />
@@ -122,6 +153,8 @@ function CompanyRoutes() {
       <Route path="/log" element={<RequireRole roles={['FARM_LABOR']}><LaborLogScreen /></RequireRole>} />
       <Route path="/reports" element={<RequireRole roles={REPORT_ROLES}><ReportsScreen /></RequireRole>} />
       <Route path="/reports/:reportId" element={<RequireRole roles={REPORT_ROLES}><ReportDetailScreen /></RequireRole>} />
+      {/* Export is the report permission; the restore inside it is gated again on `delete`. */}
+      <Route path="/backup" element={<RequirePermission permission="exportReports"><BackupScreen /></RequirePermission>} />
       <Route path="/traders" element={<RequireRole roles={COMMERCE_ROLES}><TradersScreen /></RequireRole>} />
       <Route path="/traders/:traderId" element={<RequireRole roles={COMMERCE_ROLES}><TraderDetailScreen /></RequireRole>} />
       <Route path="/profile" element={<ProfileScreen />} />
@@ -149,8 +182,20 @@ export default function App() {
   const session = useApp(s => s.session);
   const company = useApp(s => s.companies.find(c => c.id === s.session?.companyId));
   const setOnline = useApp(s => s.setOnline);
+  const revalidateCompanyAccess = useApp(s => s.revalidateCompanyAccess);
+  const notice = useApp(s => s.accessNotice);
+  const access = useCompanyAccess();
   const user = useCurrentUser();
   useScrollReset();
+
+  // In cloud mode the store's own revalidation runs after every pull and reconcile. This
+  // covers the rest: a company switched off in this browser, a context that changed shape
+  // while the tab was closed, and the selector screens. The pull is what makes `companies`
+  // and `users` current, so revalidating before the first one would read a cache that has
+  // not yet been told about a company the person genuinely belongs to.
+  useEffect(() => {
+    if (runtime.cloud) revalidateCompanyAccess();
+  }, [session, user, company, revalidateCompanyAccess]);
 
   useEffect(() => {
     document.title = company ? `${company.name} · Poultry Management` : 'Poultry Farm Management';
@@ -176,12 +221,28 @@ export default function App() {
     );
   }
 
-  // Signed in but no company context yet.
+  // A context that no longer stands is not a dashboard with its buttons greyed out. Nothing
+  // below this line renders, so no protected data appears behind the reason (§5, §17), and the
+  // route that was opened by URL is simply never mounted.
+  const blocked = contextIntact(access)
+    ? (notice && !contextIntact(notice) ? notice : null)
+    : access;
+  if (blocked) {
+    return (
+      <MotionProvider>
+        <CompanyUnavailableScreen access={blocked} />
+        <ToastHost />
+      </MotionProvider>
+    );
+  }
+
+  // Signed in but no company context yet: the platform's own panel for a Master Admin, the
+  // selector for everybody else. Both are mounted without AppShell's company chrome.
   if (!session.companyId) {
     return (
       <MotionProvider>
-        {user.role === 'MASTER_ADMIN' ? (
-          <AppShell><MasterRoutes /></AppShell>
+        {isPlatformAdmin(user) ? (
+          <AppShell><Screen><MasterRoutes /></Screen></AppShell>
         ) : (
           <Routes>
             <Route path="/select-company" element={<CompanySelectScreen />} />
@@ -195,7 +256,7 @@ export default function App() {
 
   return (
     <MotionProvider>
-      <AppShell><CompanyRoutes /></AppShell>
+      <AppShell><Screen><CompanyRoutes /></Screen></AppShell>
       <ToastHost />
     </MotionProvider>
   );

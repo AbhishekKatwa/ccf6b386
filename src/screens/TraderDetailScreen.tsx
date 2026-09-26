@@ -13,6 +13,8 @@ import { Dialog } from '@/components/ui/Dialog';
 import { GraphCard, GraphRange } from '@/components/charts/GraphCard';
 import { axisNum, ChartLegend, TrendChart, type VSeries } from '@/components/charts/DataViz';
 import { CHART } from '@/components/ui/Charts';
+import { EASE, MOTION, Presence, StaggerContainer, StaggerItem, useReducedMotion } from '@/components/motion';
+import { motion } from 'motion/react';
 import { fmtMoney, fmtIN, fmtDate, fmtDateShort, fmtDateTime, todayISO } from '@/lib/format';
 import { batchOfShedOn, entryTrays, loadBilled, txnSignedAmount, traderBalance, TRADER_TXN_LABEL, traderLedger } from '@/lib/calc';
 import { fin, rangeOf, traderCollections, type Point, type RangeKey } from '@/lib/analytics';
@@ -55,7 +57,7 @@ export function TraderDetailScreen() {
   const updateTxn = useApp(s => s.updateTraderTxn);
   const pushToast = useApp(s => s.pushToast);
   const cashPeople = useApp(s => s.cashPeople);
-  const nextCashReceiptNo = useApp(s => s.nextCashReceiptNo);
+  const takeReceiptNo = useApp(s => s.takeReceiptNo);
   const canFinance = useCan('viewFinance');
   const canManage = useCan('manageTraders');
   const [sheet, setSheet] = useState<'payment' | 'rate' | 'actions' | null>(null);
@@ -64,6 +66,7 @@ export function TraderDetailScreen() {
   const [form, setForm] = useState({ date: todayISO(), amount: '', rate: '', remarks: '' });
   const [pay, setPay] = useState<PaymentDraft>(EMPTY_PAYMENT);
   const [fix, setFix] = useState<{ txn: TraderTxn; amount: string; reason: string; pay: PaymentDraft } | null>(null);
+  const reduced = useReducedMotion();
 
   /** The people who may stand recorded as having held this cash. */
   const people = useMemo(() => cashPeople(), [cashPeople, data.users]);
@@ -203,7 +206,8 @@ export function TraderDetailScreen() {
       <Header title={trader.name} subtitle={`+91 ${trader.mobile}`}
         action={canManage ? <Button size="sm" icon={<Wallet size={14} />} onClick={() => setSheet('payment')}>Record payment</Button> : undefined} />
 
-      <div className="px-4 sm:px-0 mt-3 space-y-4">
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4">
+        <StaggerItem>
         <Card>
           <div className="flex items-center gap-3">
             <Avatar name={trader.name} size={52} tone="accent" />
@@ -216,8 +220,10 @@ export function TraderDetailScreen() {
           </div>
           {trader.gstin && <div className="mt-3 pt-3 border-t border-line-2"><Row label="GSTIN" value={trader.gstin} /></div>}
         </Card>
+        </StaggerItem>
 
         {canFinance && (
+          <StaggerItem>
           <Card>
             <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
               <div className="min-w-0">
@@ -251,17 +257,21 @@ export function TraderDetailScreen() {
                 sub="opening + billed − received" />
             </div>
           </Card>
+          </StaggerItem>
         )}
 
         {canManage && (
+          <StaggerItem>
           <div className="flex gap-2">
             <Button block icon={<Wallet size={15} />} onClick={() => setSheet('payment')}>Record payment</Button>
             <Button variant="outline" icon={<MoreHorizontal size={15} />} aria-label="More ledger actions"
               onClick={() => setSheet('actions')}>More</Button>
           </div>
+          </StaggerItem>
         )}
 
         {canFinance && flow && series.length > 0 && (
+          <StaggerItem>
           <GraphCard
             title="Money flow" height={200}
             subtitle={`${fmtDateShort(range.from)} – ${fmtDateShort(range.to)} · ${flow.groupUsed === 'MONTH' ? 'grouped by calendar month' : 'day by day'}, from this trader’s rows`}
@@ -277,9 +287,11 @@ export function TraderDetailScreen() {
             <TrendChart series={series} height={190} format={chartMoney} />
             <ChartLegend items={series.map(s => ({ label: s.label, color: s.color, dashed: s.dashed }))} />
           </GraphCard>
+          </StaggerItem>
         )}
 
         {canFinance && worthPlotting(trend) && (
+          <StaggerItem>
           <GraphCard
             title="Balance trend" height={200}
             subtitle="Running balance after every ledger row, from the same replay as the balance above"
@@ -293,10 +305,20 @@ export function TraderDetailScreen() {
               Below the line means the farm is holding money for this trader rather than waiting to collect it.
             </p>
           </GraphCard>
+          </StaggerItem>
         )}
 
+        <StaggerItem>
         <div>
           <SectionTitle>Rate history</SectionTitle>
+          <Presence mode="wait">
+            <motion.div
+              key={rateHistory.length === 0 ? 'empty' : 'rows'}
+              initial={reduced ? false : { opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, transition: { duration: MOTION.micro.duration } }}
+              transition={reduced ? { duration: 0 } : { duration: MOTION.component.duration, ease: EASE }}
+            >
           {rateHistory.length === 0 ? (
             <EmptyState title="No rate history" description="A rate appears here when a load is billed or revised." />
           ) : (
@@ -310,10 +332,22 @@ export function TraderDetailScreen() {
               ))}
             </GroupList>
           )}
+            </motion.div>
+          </Presence>
         </div>
+        </StaggerItem>
 
+        <StaggerItem>
         <div>
           <SectionTitle>Transaction history</SectionTitle>
+          <Presence mode="wait">
+            <motion.div
+              key={list.length === 0 ? 'empty' : 'rows'}
+              initial={reduced ? false : { opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, transition: { duration: MOTION.micro.duration } }}
+              transition={reduced ? { duration: 0 } : { duration: MOTION.component.duration, ease: EASE }}
+            >
           {list.length === 0 ? (
             <EmptyState icon={<Egg size={22} />} title="No transactions"
               description="Egg sales appear here once a sale entry is recorded. Use Record payment for money that arrives against the account." />
@@ -393,8 +427,11 @@ export function TraderDetailScreen() {
               </p>
             </>
           )}
+            </motion.div>
+          </Presence>
         </div>
-      </div>
+        </StaggerItem>
+      </StaggerContainer>
 
       <Dialog open={sheet === 'actions'} onClose={() => setSheet(null)} title="Ledger actions" subtitle={trader.name}>
         <div className="space-y-2.5">
@@ -424,7 +461,7 @@ export function TraderDetailScreen() {
                 hint="Reduces the outstanding balance by this amount" />
               <PaymentFields draft={pay} onChange={p => setPay(d => ({ ...d, ...p }))}
                 inflow people={people} heading="Payment"
-                onReceiptNo={() => setPay(d => ({ ...d, reference: nextCashReceiptNo(form.date) }))} />
+                onReceiptNo={() => { void takeReceiptNo('CR', form.date).then(no => { if (no) setPay(d => ({ ...d, reference: no })); }); }} />
               <Field label="Remarks" value={form.remarks} onChange={e => setForm(f => ({ ...f, remarks: e.target.value }))} />
               <p className="text-[11.5px] text-muted leading-snug px-1">
                 Record this against {trader.name} — you may be typing it for someone else’s collection, so the person who
@@ -520,7 +557,7 @@ export function TraderDetailScreen() {
               hint="The ledger re-derives the outstanding balance from this figure" />
             <PaymentFields draft={fix.pay} heading="Payment" inflow={fix.txn.kind === 'PAYMENT_IN'} people={people}
               onChange={patchFixPay}
-              onReceiptNo={() => setFix(f => f && { ...f, pay: { ...f.pay, reference: nextCashReceiptNo(f.txn.date) } })} />
+              onReceiptNo={() => { void takeReceiptNo('CR', fix.txn.date).then(no => { if (no) setFix(f => f && { ...f, pay: { ...f.pay, reference: no } }); }); }} />
             <TextArea label="Reason for the correction" rows={2} value={fix.reason}
               onChange={e => patchFix({ reason: e.target.value })}
               placeholder="e.g. the cashier's name was recorded against the wrong person" />

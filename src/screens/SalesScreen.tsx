@@ -1041,7 +1041,7 @@ function SaleEntrySheet({ open, onClose, form, setForm, error, setError, editing
 }) {
   const data = useCompanyData();
   const cashPeople = useApp(s => s.cashPeople);
-  const nextCashReceiptNo = useApp(s => s.nextCashReceiptNo);
+  const takeReceiptNo = useApp(s => s.takeReceiptNo);
   const addTrader = useApp(s => s.addTrader);
   const pushToast = useApp(s => s.pushToast);
   const canAddTrader = useCan('manageTraders');
@@ -1312,7 +1312,7 @@ function SaleEntrySheet({ open, onClose, form, setForm, error, setError, editing
               <Field label="Receipt number" value={form.cashNo} placeholder="CR-2026-09-23-001"
                 onChange={e => set('cashNo', e.target.value)} className="font-mono text-[13px]"
                 hint="Numbered inside this company, one series per day"
-                suffix={<button type="button" onClick={() => set('cashNo', nextCashReceiptNo(form.date))}
+                suffix={<button type="button" onClick={() => { void takeReceiptNo('CR', form.date).then(no => { if (no) set('cashNo', no); }); }}
                   className="text-[11px] font-semibold text-brand press whitespace-nowrap">Next no.</button>} />
             </div>
           )}

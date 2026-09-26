@@ -5,6 +5,7 @@ import type { FeedFormula } from '@/types';
 import { Header, Page } from '@/components/ui/Header';
 import { Badge, Card, EmptyState, IconTile, ListRow, Stat, StatCell, StatStrip } from '@/components/ui/Card';
 import { GroupList } from '@/components/ui/Card';
+import { PageReveal } from '@/components/motion';
 import { formulaTotalKg, formulaUsage } from '@/lib/calc';
 import { fmtDate, fmtIN } from '@/lib/format';
 
@@ -34,7 +35,8 @@ export function FormulaHistoryScreen() {
   const usage = (v: FeedFormula) => formulaUsage(v, feed, feedFormulas).length;
 
   return (
-    <Page>
+    <Page withNav>
+      <PageReveal>
       <Header title="Formula history" subtitle={`${current.name} · ${shed?.name ?? 'Shed'}`}
         backTo={`/feed/formulas/${current.id}`} />
 
@@ -87,6 +89,7 @@ export function FormulaHistoryScreen() {
           </Card>
         )}
       </div>
+      </PageReveal>
     </Page>
   );
 }

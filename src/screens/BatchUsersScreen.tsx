@@ -6,6 +6,7 @@ import { Header, Page } from '@/components/ui/Header';
 import { Card, PermissionChip, EmptyState, Avatar, Badge } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Form';
 import { ConfirmDialog } from '@/components/ui/Dialog';
+import { StaggerContainer, StaggerItem } from '@/components/motion';
 import { ROLE_LABELS } from '@/types';
 
 export function BatchUsersScreen() {
@@ -34,7 +35,8 @@ export function BatchUsersScreen() {
       <Header title="Assigned users" subtitle={batch.code}
         action={canManage ? <Button size="sm" variant="outline" icon={<Plus size={14} />} onClick={() => nav(`/batches/${batch.id}/users/assign`)}>Add</Button> : undefined} />
 
-      <div className="px-4 sm:px-0 mt-3 space-y-3">
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-3">
+        <StaggerItem>
         <Card className="bg-brand-soft border-brand/10">
           <div className="flex items-start gap-2.5">
             <ShieldCheck size={16} className="text-brand mt-0.5 shrink-0" />
@@ -43,7 +45,9 @@ export function BatchUsersScreen() {
             </p>
           </div>
         </Card>
+        </StaggerItem>
 
+        <StaggerItem className="space-y-3">
         {list.length === 0 ? (
           <EmptyState icon={<ShieldCheck size={22} />} title="No users assigned"
             description="Grant access to managers, supervisors or employees for this batch."
@@ -79,13 +83,16 @@ export function BatchUsersScreen() {
             </Card>
           );
         })}
+        </StaggerItem>
 
+        <StaggerItem>
         {canManage && list.length > 0 && (
           <Button block variant="primary" icon={<Plus size={16} />} onClick={() => nav(`/batches/${batch.id}/users/assign`)}>
             Provide access
           </Button>
         )}
-      </div>
+        </StaggerItem>
+      </StaggerContainer>
 
       <ConfirmDialog open={!!toRevoke} title="Revoke access?" danger
         message="This user will immediately lose access to this batch. This action is audited."

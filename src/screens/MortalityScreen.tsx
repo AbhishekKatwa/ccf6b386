@@ -6,6 +6,7 @@ import { Header, Page } from '@/components/ui/Header';
 import { Card, EmptyState, StatStrip, StatCell, Stat, GroupList, Badge } from '@/components/ui/Card';
 import { Button, Field, TextArea } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
+import { StaggerContainer, StaggerItem } from '@/components/motion';
 import { BatchClosedNotice } from '@/components/ui/BatchClosedNotice';
 import { BarChart, CHART } from '@/components/ui/Charts';
 import { fmtIN, fmtPct, fmtDate, fmtDateShort, todayISO } from '@/lib/format';
@@ -79,7 +80,8 @@ export function MortalityScreen() {
   return (
     <Page withNav>
       <Header title="Mortality" subtitle={`${batch.code} · ${m.age.dayLabel}`} />
-      <div className="px-4 sm:px-0 mt-3 space-y-4">
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4">
+        <StaggerItem>
         <Card padded={false} className="overflow-hidden">
           <StatStrip>
             <StatCell><Stat label="Cumulative" value={fmtIN(m.cumMort)} tone="danger" size="md" /></StatCell>
@@ -87,18 +89,24 @@ export function MortalityScreen() {
             <StatCell><Stat label="Live birds" value={fmtIN(m.live)} sub={`of ${fmtIN(batch.initialBirds)}`} tone="brand" size="md" /></StatCell>
           </StatStrip>
         </Card>
+        </StaggerItem>
 
+        <StaggerItem>
         <Card>
           <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-3">Last 14 days</p>
           <BarChart data={chart.data} labels={chart.labels.filter((_, i) => i % 3 === 0)} color={CHART.danger} height={76} />
         </Card>
+        </StaggerItem>
 
-        {!isActive && <BatchClosedNotice code={batch.code} />}
+        {!isActive && <StaggerItem><BatchClosedNotice code={batch.code} /></StaggerItem>}
 
+        <StaggerItem>
         <div className="flex gap-2">
           {canCreate && isActive && <Button block variant="primary" icon={<Plus size={15} />} onClick={() => setOpen(true)}>Add entry</Button>}
         </div>
+        </StaggerItem>
 
+        <StaggerItem>
         {list.length === 0 ? (
           <EmptyState icon={<Skull size={22} />} title="No mortality recorded" description="Daily mortality entries will appear here." />
         ) : (
@@ -126,7 +134,8 @@ export function MortalityScreen() {
             ))}
           </GroupList>
         )}
-      </div>
+        </StaggerItem>
+      </StaggerContainer>
 
       <Dialog open={open} onClose={() => setOpen(false)} title="Add mortality entry" subtitle={batch.code}
         footer={<div className="flex gap-2"><Button variant="outline" block onClick={() => setOpen(false)}>Cancel</Button><Button variant="danger" block onClick={submit}>Save entry</Button></div>}>

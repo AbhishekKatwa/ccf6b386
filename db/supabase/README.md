@@ -29,6 +29,15 @@ not reused.
 | `003_auth_rls.sql` | one company-scoped policy set per table |
 | `004_functions.sql` | the write path: RPCs that do exactly what the store's actions do, and refuse in the same words |
 | `005_drop_day_lock.sql` | the cleanup for a database already at 000–004: the day-lock concept is gone from the app, so its table, guards and audit verbs come out |
+| `006_egg_wastages.sql` | the egg-wastage ledger (stock-only, no money): per-grade tray counts with reason, plus the rebuilt `v_egg_stock` view that subtracts discarded trays |
+| `007_cloud_auth.sql` | `public.create_login` (SECURITY DEFINER door for GoTrue user provisioning) and created_by-scoped DELETE policies on finance/trader/sale ledgers |
+| `008_receipt_allocator.sql` | `public.next_receipt_no` — PostgREST-visible SECURITY INVOKER wrapper around `app.next_receipt_no`, so the browser can ask the counter for the next CR/PUR/MED number |
+| `009_egg_stock_view_security.sql` | restores `security_invoker = true` and revokes anon access on `v_egg_stock`, which 006's rebuild had silently dropped |
+| `010_owner_user_creation.sql` | an OWNER may create a person in their own company: `create_login` grows to write profiles + company_users in one guarded transaction, and profiles gets one manager-passable INSERT policy behind an append-only trigger |
+| `011_ref_id_linkage.sql` | `finance_txns.ref_id` loses its sale_entries foreign key: the vaccine flow stamps its own `vac-*` link there, and like `purchase_id` the column is app-level bookkeeping that `replaceLedger()` and `deleteSaleEntry()` already handle |
+| `012_identity_id.sql` | `create_login` gives the new identity its own `gen_random_uuid()` instead of the caller's uuid, and re-keys the rows the old stamp left: one admin's second "create user" no longer dies on `identities_pkey` |
+| `013_company_lifecycle.sql` | *written, not yet applied* — company ACTIVE/INACTIVE enforced inside the RLS helpers, so a suspended company stops reading and writing as one rule instead of one policy per table |
+| `014_shed_geometry.sql` | the farm site plan: six nullable numeric columns on `sheds` (position, heading, metres) and a plot size on `farms`, all range-checked. The layout editor keeps its own defaults when they are null, so nothing needed back-filling |
 
 ## The rule behind 004
 

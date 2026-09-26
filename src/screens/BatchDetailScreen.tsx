@@ -27,6 +27,8 @@ import { useMedicineValuation } from '@/hooks/useMedicineValuation';
 import { MedicineLedgerSurface, type MedicineRefs } from '@/components/medicine/MedicineLedger';
 import { unitQty } from '@/components/medicine/medicineMeta';
 import { TrendChart, type VPoint } from '@/components/charts/DataViz';
+import { motion } from 'motion/react';
+import { MOTION, Presence, Pressable, TabPanel, useReducedMotion } from '@/components/motion';
 import { CHART } from '@/components/ui/Charts';
 import { MEDICINE_ROLES, FORMULA_VIEW_ROLES, VACCINATION_ROLES } from '@/lib/permissions';
 import type { EggGrade, EggGradeCounts } from '@/types';
@@ -130,6 +132,7 @@ export function BatchDetailScreen() {
   const kgPerTonne = formula ? formula.items.reduce((s, i) => s + i.kgPerTonne, 0) : 0;
   const costPerTonne = formula ? formulaCostPerTonne(formula, priceOf) : 0;
   const plannedIntake = batch.approximateFeedTonnesPerDay;
+  const reduced = useReducedMotion();
 
   /** NORMAL eggs only — small, broken and double are their own pools and never join this figure. */
   const normalToday = m.todaysEggs.byGrade.GOOD;
@@ -206,13 +209,13 @@ export function BatchDetailScreen() {
           <div className="flex items-center gap-2">
             <StatusBadge status={batch.status} />
             {user?.role === 'OWNER' && (
-              <Button size="sm" variant="outline" icon={<Users size={14} />}
+              <Button size="sm" variant="outline" icon={<Users size={14} />} aria-label="Assigned users" title="Assigned users"
                 onClick={() => nav(`/batches/${batch.id}/users`)}>
                 <span className="hidden sm:inline">Assigned users</span>
               </Button>
             )}
             {isActive && canClose && (
-              <Button size="sm" variant="outline" icon={<Package size={14} />}
+              <Button size="sm" variant="outline" icon={<Package size={14} />} aria-label="Close / sell batch" title="Close / sell batch"
                 onClick={() => { setCf({ date: todayISO(), finalBirds: String(m.live), buyer: '', saleQty: '', saleRatePerBird: '', saleAmount: '', paymentMethod: '', reference: '', remarks: '' }); setCloseOpen(true); }}>
                 <span className="hidden sm:inline">Close / sell</span>
               </Button>
@@ -239,10 +242,37 @@ export function BatchDetailScreen() {
             <Metric
               label="Approx. feed intake"
               value={plannedIntake == null ? 'Not set' : `${plannedIntake.toFixed(2)} t`}
-              sub={plannedIntake == null ? 'planning value' : 'per day · planning'}
-              action={canUpdate ? { label: plannedIntake == null ? 'Set' : 'Edit', onClick: openIntake } : undefined}
+              sub={plannedIntake == null ? 'the forecast needs it' : 'per day · planning'}
+              emphasis={plannedIntake == null}
+              action={canUpdate
+                ? { label: plannedIntake == null ? 'Add intake' : 'Edit', onClick: openIntake, primary: plannedIntake == null }
+                : undefined}
             />
           </div>
+
+          {/* An unset intake is not a neutral blank: it silently removes this flock from the
+              Godown's days-of-stock forecast, so the card says what the blank costs. */}
+          <Presence>
+            {plannedIntake == null && (
+              <motion.div key="intake-why"
+                initial={reduced ? false : { opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={reduced ? undefined : { opacity: 0, height: 0 }}
+                transition={reduced ? { duration: 0 } : MOTION.component}
+                className="overflow-hidden border-t border-accent/25 bg-accent-soft/30">
+                <div className="flex items-start gap-2 px-3.5 py-2.5">
+                  <Wheat size={14} className="mt-[1px] shrink-0 text-accent-ink" />
+                  <p className="min-w-0 flex-1 text-[11.5px] leading-relaxed text-ink-2">
+                    <span className="font-semibold text-ink">
+                      {canUpdate ? `Add ${batch.code}'s approximate intake to bring it into the feed forecast.` : `${batch.code} is outside the feed forecast.`}
+                    </span>{' '}
+                    Days of Godown stock are counted from this figure batch by batch — while it is
+                    empty, the godown plans against a flock that is not eating.
+                  </p>
+                </div>
+              </motion.div>
+            )}
+          </Presence>
         </Card>
 
         {/* ===================== tab strip ===================== */}
@@ -260,6 +290,7 @@ export function BatchDetailScreen() {
           </div>
         </div>
 
+        <TabPanel id={active} className="space-y-4">
         {/* ===================== OVERVIEW ===================== */}
         {active === 'overview' && (
           <div className="space-y-4">
@@ -567,6 +598,7 @@ export function BatchDetailScreen() {
         {active === 'trends' && (
           <BatchTrends batchId={batch.id} shedId={batch.shedId} isLayer={isLayer} today={m.today} placementDate={batch.placementDate} />
         )}
+        </TabPanel>
       </div>
 
       <Dialog open={medicineOpen} onClose={() => setMedicineOpen(false)}
@@ -706,25 +738,34 @@ const TONE: Record<string, string> = {
   brand: 'text-brand', accent: 'text-accent-ink', danger: 'text-danger', success: 'text-success', ink: 'text-ink',
 };
 
-function Metric({ label, value, sub, tone = 'ink', action, noTruncate }: {
+function Metric({ label, value, sub, tone = 'ink', action, noTruncate, emphasis }: {
   label: string; value: string; sub?: string; tone?: keyof typeof TONE | string;
-  action?: { label: string; onClick: () => void };
-  noTruncate?: boolean;
+  action?: { label: string; onClick: () => void; primary?: boolean };
+  noTruncate?: boolean; emphasis?: boolean;
 }) {
   return (
-    <div className="px-3.5 py-3 min-w-0 sm:border-r sm:border-line-2 sm:last:border-r-0">
-      <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-muted-2 truncate">{label}</p>
+    <div className={clsx('px-3.5 py-3 min-w-0 sm:border-r sm:border-line-2 sm:last:border-r-0',
+      emphasis && 'bg-accent-soft/45')}>
+      <p className={clsx('font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] truncate',
+        emphasis ? 'text-accent-ink' : 'text-muted-2')}>{label}</p>
       <p className={clsx('mt-1 font-display font-semibold tnum leading-none',
         noTruncate ? 'text-[17px] break-words' : 'text-[19px] truncate',
         TONE[tone] ?? 'text-ink')}>{value}</p>
-      <div className="mt-1 flex items-center gap-1.5 min-w-0">
+      <div className="mt-1.5 flex items-center gap-1.5 min-w-0">
         {sub && <p className={clsx('text-[11px] text-muted tnum', noTruncate ? 'break-words' : 'truncate')}>{sub}</p>}
-        {action && (
+        {action && (action.primary ? (
+          <Pressable scale={0.96} className="shrink-0">
+            <button type="button" onClick={action.onClick}
+              className="inline-flex items-center gap-1 rounded-[8px] bg-brand px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-white transition-colors hover:bg-brand-ink">
+              <Plus size={11} /> {action.label}
+            </button>
+          </Pressable>
+        ) : (
           <button type="button" onClick={action.onClick}
             className="shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-brand press hover:underline">
             {action.label}
           </button>
-        )}
+        ))}
       </div>
     </div>
   );

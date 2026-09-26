@@ -1,9 +1,8 @@
-import { useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { useSearchParams } from 'react-router-dom';
 import { Page, ScreenTitle } from '@/components/ui/Header';
 import { Surface } from '@/components/ui/Card';
 import { SegmentedTabs } from '@/components/ui/Form';
-import { PageReveal, ScrollReveal, useReducedMotion } from '@/components/motion';
+import { PageReveal, ScrollReveal, TabPanel } from '@/components/motion';
 import { EggStockByShedScreen } from './EggStockByShedScreen';
 import { EggSalePlannerScreen } from './EggSalePlannerScreen';
 
@@ -15,11 +14,21 @@ const TABS: { id: TabId; label: string }[] = [
 ];
 
 export function EggsScreen() {
-  const [activeTab, setActiveTab] = useState<TabId>('stock');
-  const reduced = useReducedMotion();
+  // The tab lives in the URL, so an alert or a search result can open the planner itself
+  // rather than the screen's default tab.
+  const [params, setParams] = useSearchParams();
+  const activeTab: TabId = params.get('tab') === 'planner' ? 'planner' : 'stock';
+
+  function selectTab(next: TabId) {
+    setParams(prev => {
+      const p = new URLSearchParams(prev);
+      p.set('tab', next);
+      return p;
+    }, { replace: true });
+  }
 
   return (
-    <Page>
+    <Page withNav>
       <PageReveal>
       <div className="space-y-5">
         <ScreenTitle
@@ -34,24 +43,16 @@ export function EggsScreen() {
               <SegmentedTabs
                 options={TABS.map(t => ({ value: t.id, label: t.label }))}
                 value={activeTab}
-                onChange={v => setActiveTab(v as TabId)}
+                onChange={v => selectTab(v as TabId)}
               />
             </Surface>
           </div>
         </ScrollReveal>
 
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeTab}
-            initial={reduced ? false : { opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={reduced ? undefined : { opacity: 0, y: -8 }}
-            transition={{ duration: reduced ? 0 : 0.3, ease: [0.22, 1, 0.36, 1] }}
-          >
-            {activeTab === 'stock' && <EggStockByShedScreen />}
-            {activeTab === 'planner' && <EggSalePlannerScreen />}
-          </motion.div>
-        </AnimatePresence>
+        <TabPanel id={activeTab}>
+          {activeTab === 'stock' && <EggStockByShedScreen />}
+          {activeTab === 'planner' && <EggSalePlannerScreen />}
+        </TabPanel>
       </div>
       </PageReveal>
     </Page>

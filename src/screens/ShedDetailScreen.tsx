@@ -6,6 +6,7 @@ import { Header, Page } from '@/components/ui/Header';
 import { Card, Row, StatusBadge, EmptyState, IconTile } from '@/components/ui/Card';
 import { Button, Field, SegmentedTabs } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
+import { StaggerContainer, StaggerItem } from '@/components/motion';
 import { fmtClock, fmtIN, fmtPct, todayISO } from '@/lib/format';
 import { eggStockTrays } from '@/lib/calc';
 import { useBatchMetrics } from '@/hooks/useBatchMetrics';
@@ -16,7 +17,9 @@ import { FEED_ROUNDS, FEED_ROUND_LABELS, type BirdType, type VaccinationDraft } 
 /** A shed with a live flock has no page of its own: the flock's operating view is the shed. */
 export function ShedGate() {
   const { shedId } = useParams();
-  const batches = useApp(s => s.batches);
+  // Read on this company's flocks only: a shed id carried in by URL belongs to another farm's
+  // numbering, and must not hand this session a redirect into it.
+  const { batches } = useCompanyData();
   const live = batches.find(b => b.shedId === shedId && b.status === 'ACTIVE');
   if (live) return <Navigate to={`/batches/${live.id}`} replace />;
   return <ShedDetailScreen />;
@@ -79,7 +82,8 @@ export function ShedDetailScreen() {
   return (
     <Page withNav>
       <Header title={shed.name} subtitle={farm?.name} />
-      <div className="px-4 sm:px-0 mt-3 space-y-4">
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4">
+        <StaggerItem>
         <Card>
           <div className="flex items-center gap-3 mb-3">
             <IconTile tone="brand" size={42}><Building2 size={19} /></IconTile>
@@ -92,9 +96,10 @@ export function ShedDetailScreen() {
           <Row label="Capacity" value={`${fmtIN(shed.capacity)} birds`} />
           <Row label="Live batch" value={live?.code ?? 'None'} mono={false} />
         </Card>
+        </StaggerItem>
 
         {live && m && (
-          <>
+          <StaggerItem>
             <Card>
               <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-1">Current batch · {live.code}</p>
               <Row label="Bird type" value={live.birdType} mono={false} />
@@ -118,25 +123,27 @@ export function ShedDetailScreen() {
               className="w-full bg-brand text-white rounded-[14px] py-3.5 font-display text-[15px] font-semibold flex items-center justify-center gap-2 press hover:bg-brand-2 shadow-card">
               Open batch detail <ChevronRight size={16} />
             </button>
-          </>
+          </StaggerItem>
         )}
 
         {!live && !canPlace && (
+          <StaggerItem>
           <EmptyState icon={<Building2 size={22} />} title="No live batch"
             description="This shed is idle. The Owner or Farm Supervisor can place the next batch." />
+          </StaggerItem>
         )}
 
         {canPlace && (
-          <>
+          <StaggerItem>
             <EmptyState icon={<Building2 size={22} />} title="Shed is idle"
               description={`No batch is running in ${shed.name}. The next batch here will be numbered ${nextBatchCode(shed.id)}.`}
               action={<Button icon={<Plus size={15} />} onClick={() => setOpen(true)}>Create batch</Button>} />
             <p className="text-[12px] text-muted leading-relaxed px-1">
               The batch stays linked to this shed. Daily entries start from the placement date.
             </p>
-          </>
+          </StaggerItem>
         )}
-      </div>
+      </StaggerContainer>
 
       {canPlace && (
         <Dialog open={open} onClose={() => setOpen(false)} title="Create batch"

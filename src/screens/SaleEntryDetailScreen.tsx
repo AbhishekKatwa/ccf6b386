@@ -13,6 +13,8 @@ import { batchOfShedOn, entryTrays, gradeTotal, loadBilled, ratePerEgg, saleOuts
 import { PaymentChips } from '@/components/finance/PaymentFields';
 import { EGG_GRADES, EGG_GRADE_LABELS } from '@/types';
 import { fmtDate, fmtIN, fmtMoney } from '@/lib/format';
+import { EASE, MOTION, Presence, StaggerContainer, StaggerItem, useReducedMotion } from '@/components/motion';
+import { motion } from 'motion/react';
 
 /** One sale entry as the trader ledger sees it: the load, the money on it, and its payments. */
 export function SaleEntryDetailScreen() {
@@ -23,6 +25,7 @@ export function SaleEntryDetailScreen() {
   const data = useCompanyData();
   const canFinance = useCan('viewFinance');
   const canEdit = useCan('createSaleEntries');
+  const reduced = useReducedMotion();
 
   const entry = data.saleEntries.find(e => e.id === entryId);
   /** The payment row the ledger was opened from, when it belongs to this entry. */
@@ -68,8 +71,9 @@ export function SaleEntryDetailScreen() {
     <Page withNav>
       <Header title={trader?.name ?? 'Sale entry'} subtitle={`${fmtDate(entry.date)} · ${fmtIN(trays)} trays`} onBack={back} />
 
-      <div className="px-4 sm:px-0 mt-3 space-y-4">
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4">
         {canFinance && (
+          <StaggerItem>
           <Card padded={false} className="overflow-hidden">
             <StatStrip>
               <StatCell><Stat label="Sale value" value={fmtMoney(billed)} tone="success" size="md" /></StatCell>
@@ -92,8 +96,10 @@ export function SaleEntryDetailScreen() {
               </div>
             )}
           </Card>
+          </StaggerItem>
         )}
 
+        <StaggerItem>
         <div>
           <SectionTitle>The load</SectionTitle>
           <Card>
@@ -148,7 +154,9 @@ export function SaleEntryDetailScreen() {
             )}
           </Card>
         </div>
+        </StaggerItem>
 
+        <StaggerItem>
         <div>
           <SectionTitle>From the sheds</SectionTitle>
           <GroupList>
@@ -179,9 +187,19 @@ export function SaleEntryDetailScreen() {
             <p className="text-[12px] text-muted mt-2">One figure agreed with the owner for the whole load.</p>
           )}
         </div>
+        </StaggerItem>
 
+        <StaggerItem>
         <div>
           <SectionTitle>Payments on this sale</SectionTitle>
+          <Presence mode="wait">
+            <motion.div
+              key={payments.length === 0 ? 'empty' : 'rows'}
+              initial={reduced ? false : { opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, transition: { duration: MOTION.micro.duration } }}
+              transition={reduced ? { duration: 0 } : { duration: MOTION.component.duration, ease: EASE }}
+            >
           {payments.length === 0 ? (
             <EmptyState icon={<ReceiptText size={22} />} title="No payment booked yet"
               description="The whole load is still with the trader. Payments appear here when they are received against this sale." />
@@ -214,15 +232,21 @@ export function SaleEntryDetailScreen() {
               {money(due)} is still with the trader. When it arrives, Finance records a payment in against this load — the billing above stays as saved.
             </p>
           )}
+            </motion.div>
+          </Presence>
         </div>
+        </StaggerItem>
 
         {entry.remarks && (
+          <StaggerItem>
           <div>
             <SectionTitle>Remarks</SectionTitle>
             <Card><p className="text-[13px] text-ink-2 leading-relaxed">{entry.remarks}</p></Card>
           </div>
+          </StaggerItem>
         )}
 
+        <StaggerItem className="space-y-4">
         <p className="font-mono text-[11px] text-faint tnum">
           Recorded {fmtDate(entry.createdAt)}{entry.updatedAt ? ` · last corrected ${fmtDate(entry.updatedAt)}` : ''}
         </p>
@@ -238,7 +262,8 @@ export function SaleEntryDetailScreen() {
             All sale entries <ChevronRight size={14} />
           </button>
         </div>
-      </div>
+        </StaggerItem>
+      </StaggerContainer>
     </Page>
   );
 }

@@ -49,7 +49,7 @@ export function RecordPaymentDialog({ open, onClose, target, purchases, receivab
   receivables: Receivable[];
   people: { id: string; name: string }[];
   recordedBy: string;
-  nextReceiptNo: (date: string) => string;
+  nextReceiptNo: (date: string) => Promise<string>;
   onPayPurchase: (input: PurchasePaymentInput) => Result;
   onReceiveSale: (input: SalePaymentInput) => Result;
 }) {
@@ -220,7 +220,7 @@ export function RecordPaymentDialog({ open, onClose, target, purchases, receivab
 
         <PaymentFields draft={pay} onChange={p => setPay(d => ({ ...d, ...p }))} inflow={!paying} people={people}
           heading={paying ? 'Payment & custody' : 'Receipt & custody'}
-          onReceiptNo={() => setPay(d => ({ ...d, reference: nextReceiptNo(draft.date) }))} />
+          onReceiptNo={() => { void nextReceiptNo(draft.date).then(no => { if (no) setPay(d => ({ ...d, reference: no })); }); }} />
 
         {Number.isFinite(amount) && amount > 0 && due !== null && (
           <div className="flex items-center gap-2">

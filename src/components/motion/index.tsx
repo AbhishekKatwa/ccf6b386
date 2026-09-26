@@ -4,7 +4,7 @@
  * Design goals (per master spec §2, §34, §39):
  *   - Premium, calm, fast, confident. Never flashy or distracting.
  *   - Every animation communicates hierarchy, causality, feedback or state.
- *   - Micro 100-180ms · Hover 150-220ms · Modal 200-300ms · Page 300-450ms · Chart 400-700ms.
+ *   - Micro 100-200ms · Component 200-350ms · Page/section 300-600ms.
  *   - Respects prefers-reduced-motion globally via useReducedMotion.
  *   - GPU-friendly: transform + opacity only; no layout-thrashing properties.
  *
@@ -13,7 +13,7 @@
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  motion, AnimatePresence, useSpring, useTransform, useMotionValue, useInView,
+  motion, AnimatePresence, useAnimationControls, useSpring, useTransform, useMotionValue, useInView,
   type Variants, type Transition, type HTMLMotionProps,
 } from 'motion/react';
 import clsx from 'clsx';
@@ -47,17 +47,44 @@ export function useMotionTransition(fast: Transition, slow?: Transition): Transi
   return reduced ? { duration: 0.01 } : (slow ?? fast);
 }
 
+/* ============================= TIMING TOKENS ============================= */
+
+/** The single easing curve every tier resolves to — a settle, never a bounce. */
+export const EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+
+/**
+ * The three motion tiers. Pick the tier by what moves, not by taste:
+ *   micro     — buttons, icons, hover, focus, toggles           (L1, 100-200ms)
+ *   component — cards, drawers, modals, tabs, list items, charts (L2, 200-350ms)
+ *   page      — page and section entrances                       (L3, 300-600ms)
+ * Nothing outside these three numbers should appear in a transition. The exception is a
+ * distance-driven move — a layout pill or a pointer-following tilt — which takes a spring
+ * (INDICATOR_SPRING below) because the travel is measured, not timed.
+ */
+export const MOTION = {
+  micro:     { duration: 0.16, ease: EASE },
+  component: { duration: 0.26, ease: EASE },
+  page:      { duration: 0.42, ease: EASE },
+} as const satisfies Record<string, Transition>;
+
+/**
+ * The one transition a shared-layout pill uses when it travels between controls. A spring,
+ * because a measured distance is not a fixed duration: short hops settle quickly, long ones
+ * keep the same feel. Stiffness high and damping near-critical so it glides without bouncing.
+ */
+export const INDICATOR_SPRING: Transition = { type: 'spring', stiffness: 400, damping: 34, mass: 0.8 };
+
 /* ============================= SHARED VARIANTS ============================= */
 
 export const pageVariants: Variants = {
   hidden: { opacity: 0, y: 8 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.38, ease: [0.22, 1, 0.36, 1] } },
-  exit: { opacity: 0, y: -6, transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } },
+  visible: { opacity: 1, y: 0, transition: MOTION.page },
+  exit: { opacity: 0, y: -6, transition: MOTION.component },
 };
 
 export const sectionVariants: Variants = {
   hidden: { opacity: 0, y: 12, scale: 0.985 },
-  visible: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.42, ease: [0.22, 1, 0.36, 1] } },
+  visible: { opacity: 1, y: 0, scale: 1, transition: MOTION.page },
 };
 
 export const staggerContainer: Variants = {
@@ -67,31 +94,31 @@ export const staggerContainer: Variants = {
 
 export const staggerItem: Variants = {
   hidden: { opacity: 0, y: 10, scale: 0.985 },
-  visible: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.32, ease: [0.22, 1, 0.36, 1] } },
+  visible: { opacity: 1, y: 0, scale: 1, transition: MOTION.component },
 };
 
 export const modalVariants: Variants = {
   hidden: { opacity: 0, scale: 0.97, y: 8 },
-  visible: { opacity: 1, scale: 1, y: 0, transition: { duration: 0.26, ease: [0.22, 1, 0.36, 1] } },
-  exit: { opacity: 0, scale: 0.97, y: 8, transition: { duration: 0.18, ease: [0.22, 1, 0.36, 1] } },
+  visible: { opacity: 1, scale: 1, y: 0, transition: MOTION.component },
+  exit: { opacity: 0, scale: 0.97, y: 8, transition: MOTION.micro },
 };
 
 export const drawerVariants: Variants = {
   hidden: { y: '100%' },
   visible: { y: 0, transition: { type: 'spring', stiffness: 320, damping: 32 } },
-  exit: { y: '100%', transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } },
+  exit: { y: '100%', transition: MOTION.component },
 };
 
 export const backdropVariants: Variants = {
   hidden: { opacity: 0 },
-  visible: { opacity: 1, transition: { duration: 0.22 } },
-  exit: { opacity: 0, transition: { duration: 0.18 } },
+  visible: { opacity: 1, transition: MOTION.component },
+  exit: { opacity: 0, transition: MOTION.micro },
 };
 
 export const fadeScale: Variants = {
   hidden: { opacity: 0, scale: 0.98 },
-  visible: { opacity: 1, scale: 1, transition: { duration: 0.28, ease: [0.22, 1, 0.36, 1] } },
-  exit: { opacity: 0, scale: 0.98, transition: { duration: 0.18 } },
+  visible: { opacity: 1, scale: 1, transition: MOTION.component },
+  exit: { opacity: 0, scale: 0.98, transition: MOTION.micro },
 };
 
 /* ============================= PAGE / SECTION REVEAL ============================= */
@@ -170,7 +197,7 @@ export function ScrollReveal({ children, className, once = true, margin }: {
       ref={ref}
       initial={reduced ? false : { opacity: 0, y: 16 }}
       animate={inView ? { opacity: 1, y: 0 } : undefined}
-      transition={{ duration: reduced ? 0 : 0.45, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: reduced ? 0 : 0.45, ease: EASE }}
       className={className}
     >
       {children}
@@ -181,42 +208,60 @@ export function ScrollReveal({ children, className, once = true, margin }: {
 /* ============================= ANIMATED NUMBER ============================= */
 
 /**
+ * A count-up asks for its formatter on every frame the spring runs, and constructing one is far
+ * dearer than using it. There are only a handful of option shapes in the whole app, so they are
+ * built once and shared.
+ */
+const numberFormats = new Map<string, Intl.NumberFormat>();
+
+function formatterFor(locale: string | undefined, format: Intl.NumberFormatOptions) {
+  const key = `${locale ?? ''}|${JSON.stringify(format)}`;
+  let f = numberFormats.get(key);
+  if (!f) {
+    f = new Intl.NumberFormat(locale, format);
+    numberFormats.set(key, f);
+  }
+  return f;
+}
+
+/**
  * Count-up/down between numeric values. Settles quickly (~600ms spring).
  * Only re-animates when `value` changes by more than `threshold` (avoids jitter on small updates).
  * Formats with Intl.NumberFormat so currency/compact notation stays consistent.
  */
-export function AnimatedNumber({ value, format, prefix = '', suffix = '', threshold = 0.5, className }: {
+export function AnimatedNumber({ value, format, prefix = '', suffix = '', threshold = 0.5, locale, className }: {
   value: number; format?: Intl.NumberFormatOptions; prefix?: string; suffix?: string;
-  threshold?: number; className?: string;
+  threshold?: number; locale?: string; className?: string;
 }) {
   const reduced = useReducedMotion();
   const prev = useRef(value);
   const mv = useMotionValue(prev.current);
   const spring = useSpring(mv, { stiffness: 260, damping: 28, mass: 0.6 });
-  const display = useTransform(spring, n => {
-    const v = Math.round(n * 100) / 100;
+  // `locale` lets a figure count up in the same grouping the screen prints it with (₹ en-IN vs default).
+  const show = (n: number) => {
     try {
-      return format ? new Intl.NumberFormat(undefined, format).format(v) : String(v);
+      return format ? formatterFor(locale, format).format(n) : String(n);
     } catch {
-      return String(v);
+      return String(n);
     }
-  });
-  const [text, setText] = useState(prefix + (format ? new Intl.NumberFormat(undefined, format).format(value) : String(value)) + suffix);
+  };
+  const display = useTransform(spring, n => show(Math.round(n * 100) / 100));
+  const [text, setText] = useState(prefix + show(value) + suffix);
 
   useEffect(() => {
     if (Math.abs(value - prev.current) < threshold) {
-      setText(prefix + (format ? new Intl.NumberFormat(undefined, format).format(value) : String(value)) + suffix);
+      setText(prefix + show(value) + suffix);
       prev.current = value;
       return;
     }
     prev.current = value;
     if (reduced) {
-      setText(prefix + (format ? new Intl.NumberFormat(undefined, format).format(value) : String(value)) + suffix);
+      setText(prefix + show(value) + suffix);
       mv.set(value);
       return;
     }
     mv.set(value);
-  }, [value, format, prefix, suffix, threshold, reduced, mv]);
+  }, [value, format, locale, prefix, suffix, threshold, reduced, mv]);
 
   useEffect(() => {
     if (reduced) return;
@@ -235,7 +280,7 @@ export function HoverCard({ children, className, lift = -2, shadowOnHover = true
   return (
     <motion.div
       whileHover={disabled || reduced ? undefined : { y: lift, boxShadow: shadowOnHover ? '0 8px 24px -12px rgba(0,0,0,.12)' : undefined }}
-      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+      transition={MOTION.micro}
       className={className}
     >
       {children}
@@ -252,7 +297,7 @@ export function Pressable({ children, className, scale = 0.98, disabled, ...prop
     <motion.div
       {...props}
       whileTap={disabled || reduced ? undefined : { scale }}
-      transition={{ duration: 0.12 }}
+      transition={MOTION.micro}
       className={className}
     >
       {children}
@@ -276,7 +321,7 @@ export function TabIndicator({ active, className }: { active: boolean; className
           initial={reduced ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: reduced ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+          transition={reduced ? { duration: 0 } : INDICATOR_SPRING}
           className={clsx('absolute inset-0 rounded-full bg-card shadow-card ring-1 ring-inset ring-brand/15', className)}
           aria-hidden
         />
@@ -382,7 +427,7 @@ export function SuccessCheck({ size = 18, className }: { size?: number; classNam
         stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
         initial={reduced ? false : { pathLength: 0 }}
         animate={{ pathLength: 1 }}
-        transition={{ duration: reduced ? 0 : 0.32, ease: [0.22, 1, 0.36, 1] }}
+        transition={reduced ? { duration: 0 } : MOTION.component}
       />
     </svg>
   );
@@ -390,13 +435,19 @@ export function SuccessCheck({ size = 18, className }: { size?: number; classNam
 
 export function ErrorShake({ children, trigger, className }: { children: ReactNode; trigger: unknown; className?: string }) {
   const reduced = useReducedMotion();
-  // Re-animate when trigger changes by keying the wrapper externally; here we just expose a stable mount.
+  const controls = useAnimationControls();
+  const seen = useRef(trigger);
+  // Every new rejection shakes, including a repeat of the same message. Keying the wrapper
+  // would work too, but it remounts the form and drops the field the user is standing in.
+  useEffect(() => {
+    if (seen.current === trigger) return;
+    seen.current = trigger;
+    if (trigger && !reduced) void controls.start({ x: [0, -4, 4, -3, 3, 0], transition: MOTION.component });
+  }, [trigger, reduced, controls]);
   return (
     <motion.div
       className={className}
-      animate={reduced ? undefined : { x: [0, -4, 4, -3, 3, 0] }}
-      transition={{ duration: 0.32, ease: 'easeOut' }}
-      key={String(trigger)}
+      animate={controls}
     >
       {children}
     </motion.div>
@@ -405,19 +456,41 @@ export function ErrorShake({ children, trigger, className }: { children: ReactNo
 
 /* ============================= CHART REVEAL ============================= */
 
+/**
+ * Mount-time draw signal for the parts of a chart (bars, a ring, a distribution row).
+ * `show` flips true once the container has entered view — and is true from the start under
+ * reduced motion, so a figure can never be left hidden by an animation that never ran.
+ * Pair with `initial={reduced ? false : hiddenState}`, exactly like the primitives here.
+ */
+export function useReveal(margin = '-40px 0px') {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true, margin: margin as never });
+  const reduced = useReducedMotion();
+  // Fail open: an observer that never reports — a document the browser does not paint, a
+  // container it never intersects — must not leave a chart's bars at zero scale. A figure the
+  // user cannot see is a data fault, not a missed animation.
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    // A figure already drawn needs no rescue: the timer exists only for the observer that
+    // never reports, so every chart on a long page would otherwise hold one for 900ms.
+    if (reduced || inView) return;
+    const t = setTimeout(() => setSettled(true), 900);
+    return () => clearTimeout(t);
+  }, [inView, reduced]);
+  return { ref, show: reduced || inView || settled, reduced } as const;
+}
+
 /** Generic clip-path reveal for any chart container. Children draw normally; the mask wipes left→right. */
 export function ChartReveal({ children, className, duration = 0.6, delay = 0 }: {
   children: ReactNode; className?: string; duration?: number; delay?: number;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const inView = useInView(ref, { once: true, margin: '-40px 0px' });
-  const reduced = useReducedMotion();
+  const { ref, show, reduced } = useReveal();
   return (
     <motion.div
       ref={ref}
       initial={reduced ? false : { clipPath: 'inset(0 100% 0 0)' }}
-      animate={inView ? { clipPath: 'inset(0 0% 0 0)' } : undefined}
-      transition={{ duration: reduced ? 0 : duration, ease: [0.22, 1, 0.36, 1], delay }}
+      animate={show ? { clipPath: 'inset(0 0% 0 0)' } : undefined}
+      transition={{ duration: reduced ? 0 : duration, ease: EASE, delay }}
       className={className}
     >
       {children}
@@ -439,7 +512,7 @@ export function ParallaxLayer({ children, offset = 20, className }: {
       ref={ref}
       initial={reduced ? false : { y: offset }}
       animate={inView ? { y: 0 } : undefined}
-      transition={{ duration: reduced ? 0 : 0.7, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: reduced ? 0 : 0.7, ease: EASE }}
       className={className}
     >
       {children}
@@ -480,4 +553,27 @@ export function TiltCard({ children, className, maxDeg = 3, disabled }: {
 /** Convenience: wraps children in AnimatePresence so exit animations fire. */
 export function Presence({ children, mode = 'wait' }: { children: ReactNode; mode?: 'sync' | 'wait' | 'popLayout' }) {
   return <AnimatePresence mode={mode}>{children}</AnimatePresence>;
+}
+
+/**
+ * One tab body, replaced rather than patched: pass the active tab as `id` and put every
+ * conditional panel inside it. The outgoing body lifts away before the incoming one rises, so
+ * a tab switch reads as one gesture instead of a content swap.
+ */
+export function TabPanel({ id, children, className }: { id: string; children: ReactNode; className?: string }) {
+  const reduced = useReducedMotion();
+  return (
+    <Presence mode="wait">
+      <motion.div
+        key={id}
+        initial={reduced ? false : { opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={reduced ? undefined : { opacity: 0, y: -8 }}
+        transition={reduced ? { duration: 0 } : MOTION.component}
+        className={className}
+      >
+        {children}
+      </motion.div>
+    </Presence>
+  );
 }

@@ -10,7 +10,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { GraphCard } from '@/components/charts/GraphCard';
 import { axisNum, ChartLegend, TrendChart, type VSeries } from '@/components/charts/DataViz';
 import { CHART } from '@/components/ui/Charts';
-import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, ChartReveal, useReducedMotion } from '@/components/motion';
+import { MOTION, PageReveal, StaggerContainer, StaggerItem, ScrollReveal, ChartReveal, useReducedMotion } from '@/components/motion';
 import { motion } from 'motion/react';
 import { EMPTY_PAYMENT, PaymentFields, paymentPatch, type PaymentDraft } from '@/components/finance/PaymentFields';
 import { fmtDateShort, fmtIN, fmtMoney, todayISO } from '@/lib/format';
@@ -44,7 +44,7 @@ function Meter({ share, className }: { share: number | null; className?: string 
       <motion.div className="h-full w-full rounded-full bg-brand origin-left"
         initial={reduced ? false : { scaleX: 0 }}
         animate={{ scaleX: pct / 100 }}
-        transition={{ duration: reduced ? 0 : 0.7, ease: [0.22, 1, 0.36, 1] }} />
+        transition={reduced ? { duration: 0 } : MOTION.page} />
     </div>
   );
 }
@@ -71,7 +71,7 @@ export function TradersScreen() {
   const addTxn = useApp(s => s.addTraderTxn);
   const pushToast = useApp(s => s.pushToast);
   const cashPeople = useApp(s => s.cashPeople);
-  const nextCashReceiptNo = useApp(s => s.nextCashReceiptNo);
+  const takeReceiptNo = useApp(s => s.takeReceiptNo);
   const canManage = useCan('manageTraders');
   const canFinance = useCan('viewFinance');
   const [q, setQ] = useState('');
@@ -299,7 +299,7 @@ export function TradersScreen() {
             ) : (
               <StaggerContainer>
                 {visibleDue.map(r => (
-                  <StaggerItem key={r.traderId} as="button">
+                  <StaggerItem key={r.traderId}>
                   <button onClick={() => nav(`/traders/${r.traderId}`)}
                     className="w-full px-4 py-3 text-left press hover:bg-sunk/60">
                     <div className="flex items-start gap-3">
@@ -338,7 +338,7 @@ export function TradersScreen() {
                 </SectionTitle>
                 <StaggerContainer>
                   {visibleSettled.map(r => (
-                    <StaggerItem key={r.traderId} as="button">
+                    <StaggerItem key={r.traderId}>
                     <button onClick={() => nav(`/traders/${r.traderId}`)}
                       className="w-full px-4 py-2.5 text-left press hover:bg-sunk/60">
                       <div className="flex items-center gap-3">
@@ -467,7 +467,7 @@ export function TradersScreen() {
             hint="Reduces the outstanding balance by this amount" />
           <PaymentFields draft={pay} onChange={p => setPay(d => ({ ...d, ...p }))}
             inflow people={people} heading="Payment"
-            onReceiptNo={() => setPay(d => ({ ...d, reference: nextCashReceiptNo(payForm.date) }))} />
+            onReceiptNo={() => { void takeReceiptNo('CR', payForm.date).then(no => { if (no) setPay(d => ({ ...d, reference: no })); }); }} />
           <Field label="Remarks" value={payForm.remarks} onChange={e => setPayForm(f => ({ ...f, remarks: e.target.value }))} />
         </div>
       </Dialog>

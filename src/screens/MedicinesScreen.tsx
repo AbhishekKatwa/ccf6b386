@@ -8,7 +8,7 @@ import { useCan, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Badge, Card, EmptyState, GroupList, IconTile, ListRow, Stat, StatCell, StatStrip } from '@/components/ui/Card';
 import { Button, SearchField, SegmentedTabs } from '@/components/ui/Form';
-import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal } from '@/components/motion';
+import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, TabPanel } from '@/components/motion';
 import { MedicineLedger } from '@/components/medicine/MedicineLedger';
 import type { MedicineRefs } from '@/components/medicine/MedicineLedger';
 import {
@@ -88,6 +88,7 @@ export function MedicinesScreen() {
           { value: 'ledger', label: 'Stock Ledger', icon: <SlidersHorizontal size={13} /> },
         ]} />
 
+        <TabPanel id={tab} className="space-y-4">
         {tab === 'ledger' && (
           <MedicineLedger entries={entries} refs={refs} valuation={valuation} canFinance={canFinance}
             actions={actions} focusEntryId={focusEntryId} today={today} />
@@ -204,6 +205,7 @@ export function MedicinesScreen() {
             </>
           )}
         </>)}
+        </TabPanel>
       </div>
 
       {sheet === 'receive' && <MedicineReceiveSheet medicineId={forEntry} onClose={() => setSheet(null)} />}

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { motion, type Variants } from 'motion/react';
 import {
   ArrowDownToLine, ChevronRight, HandCoins, PackageSearch, Pill, Receipt, SlidersHorizontal, Syringe,
 } from 'lucide-react';
@@ -8,6 +9,7 @@ import { useCan, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Badge, Card, EmptyState, IconTile, KPI, SectionTitle, StatusBadge, type Tone } from '@/components/ui/Card';
 import { Button, SegmentedTabs } from '@/components/ui/Form';
+import { MOTION, PageReveal, Presence, StaggerContainer, StaggerItem, useReducedMotion } from '@/components/motion';
 import { BarsMini, CHART, ChartCard } from '@/components/ui/Charts';
 import {
   MedicineLedgerSurface, expiryLine,
@@ -42,6 +44,13 @@ const dotClass: Record<Tone, string> = {
   danger: 'bg-danger', warn: 'bg-warn', neutral: 'bg-line',
 };
 
+/** The tab bodies take the stage one at a time: a quick lift out, a settled entrance in. */
+const tabBodyVariants: Variants = {
+  hidden: { opacity: 0, y: 8 },
+  visible: { opacity: 1, y: 0, transition: MOTION.component },
+  exit: { opacity: 0, y: -6, transition: MOTION.micro },
+};
+
 export function MedicineItemScreen() {
   const { id = '' } = useParams();
   const nav = useNavigate();
@@ -54,6 +63,7 @@ export function MedicineItemScreen() {
   const purchaseOf = usePurchaseLookup();
   const [tab, setTab] = useState<ItemTab>('overview');
   const [sheet, setSheet] = useState<'receive' | 'usage' | 'adjust' | 'item' | null>(null);
+  const reduced = useReducedMotion();
 
   const item = items.find(i => i.id === id);
   const own = useMemo(() => entries.filter(e => e.medicineId === id).sort(ledgerOrder), [entries, id]);
@@ -124,12 +134,14 @@ export function MedicineItemScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <Header title={item.name}
         subtitle={canFinance ? 'Stock history and valuation · medicine store' : 'Stock history · medicine store'}
         backTo="/medicines"
         action={canEdit ? <Button size="sm" variant="outline" onClick={() => setSheet('item')}>Change</Button> : undefined} />
 
-      <div className="px-4 sm:px-0 mt-3 space-y-4">
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4">
+        <StaggerItem>
         <div className="flex items-start gap-3">
           <IconTile tone={r && r.qty > 0 ? 'brand' : 'neutral'} size={44}><Icon size={20} /></IconTile>
           <div className="min-w-0 flex-1">
@@ -151,8 +163,10 @@ export function MedicineItemScreen() {
             {r && r.qty <= 0 && <Badge tone="neutral">Out of stock</Badge>}
           </div>
         </div>
+        </StaggerItem>
 
         {/* §15 · only figures the ledger can actually produce */}
+        <StaggerItem>
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
           <KPI label="Current stock" value={unitQty(r?.qty ?? 0, unit)} tone={r && r.low ? 'danger' : 'brand'}
             sub={`Reorder level ${unitQty(item.lowStockThreshold, unit)}`} />
@@ -171,21 +185,30 @@ export function MedicineItemScreen() {
           <KPI label="Earliest expiry" tone={expiry.state === 'EXPIRED' ? 'danger' : expiry.state === 'EXPIRING' ? 'warn' : 'neutral'}
             value={expiry.date ? fmtDate(expiry.date) : '—'} sub={expiryLine(expiry.state, expiry.date)} />
         </div>
+        </StaggerItem>
 
         {canCreate && (
+          <StaggerItem>
           <div className="grid grid-cols-3 gap-2">
             <Button size="sm" block icon={<ArrowDownToLine size={15} />} onClick={() => setSheet('receive')}>Receive</Button>
             <Button size="sm" block variant="outline" icon={<Syringe size={15} />} onClick={() => setSheet('usage')}>Record usage</Button>
             <Button size="sm" block variant="outline" icon={<SlidersHorizontal size={15} />} onClick={() => setSheet('adjust')}>Correction</Button>
           </div>
+          </StaggerItem>
         )}
 
+        <StaggerItem>
         <SegmentedTabs<ItemTab> value={tab} onChange={setTab} options={[
           { value: 'overview', label: 'Overview', icon: <PackageSearch size={13} /> },
           { value: 'history', label: 'Stock History', icon: <Receipt size={13} /> },
         ]} />
+        </StaggerItem>
 
-        {tab === 'overview' && (<>
+        <StaggerItem>
+        <Presence mode="wait">
+          <motion.div key={tab} variants={tabBodyVariants}
+            initial={reduced ? false : 'hidden'} animate="visible" exit={reduced ? undefined : 'exit'}>
+          {tab === 'overview' && (<>
           {/* opening + received − used ± corrections = what stands today */}
           <Card>
             <SectionTitle>Stock movement</SectionTitle>
@@ -345,7 +368,11 @@ export function MedicineItemScreen() {
           </p>
           <MedicineLedgerSurface entries={own} refs={refs} valuation={valuation} canFinance={canFinance} today={today} />
         </>)}
-      </div>
+          </motion.div>
+        </Presence>
+        </StaggerItem>
+      </StaggerContainer>
+      </PageReveal>
 
       {sheet === 'receive' && <MedicineReceiveSheet medicineId={item.id} onClose={() => setSheet(null)} />}
       {sheet === 'usage' && <MedicineUsageSheet medicineId={item.id} onClose={() => setSheet(null)} />}

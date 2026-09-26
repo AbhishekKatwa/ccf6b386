@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type {
-  AuditEntry, Batch, BatchAssignment, BatchClosing, CashCount, CashHandover, Company,
+  AuditAction, AuditEntry, Batch, BatchAssignment, BatchClosing, CashCount, CashHandover, Company,
   EggCollection, EggGradeCounts, Farm, FarmTask, FeedConsumption,
   EggSaleBooking, EggSaleBookingDraft,
   FeedFormula, FeedFormulaItem, FeedRoundLog, FeedStockEntry, FinanceTxn, FormulaInput, EggGrade,
@@ -13,18 +13,30 @@ import type {
   MedicineItem, MedicineItemDraft, MedicineReceiptDraft, MedicineStockEntry, MedicineUsageDraft, MedicineAdjustmentDraft,
 } from '@/types';
 import { EGG_GRADE_LABELS, EGG_GRADES, EGGS_PER_TRAY, EMPTY_GRADE_COUNTS, FEED_INGREDIENTS, FEED_ROUNDS, MEDICINE_UNITS } from '@/types';
-import { DEFAULT_ROLE_PERMISSIONS, effectiveCan } from '@/lib/permissions';
-import { generateOtp, hashPassword, isOtpValid, normalizeMobile, verifyPassword } from '@/lib/auth';
+import { DEFAULT_ROLE_PERMISSIONS, effectiveCan, roleReadable } from '@/lib/permissions';
+import { personBlock, roleChangeError } from '@/lib/team';
+import { generateOtp, hashPassword, isOtpValid, normalizeMobile, validateUserDraft, verifyPassword } from '@/lib/auth';
 import { accountabilityError, cashPositionOf, openingEntryError } from '@/lib/cashflow';
+import { companyAccessOf, contextIntact, isPlatformAdmin, operableCompanyId, operableCompanies, type CompanyAccess } from '@/lib/companyAccess';
+import { runtime } from '@/lib/runtime';
 import { FEED_PURCHASE_CATEGORY, MEDICINE_PURCHASE_CATEGORY } from '@/lib/accounting';
 import {
   batchOfShedOn, eggStockByGrade, entryAmount, entryTrays, ensureWalkInTraders, formulaDeduction, formulaForDate,
   formulaTotalKg, formulaUsage, gradeTotal, linesByGrade, loadBilled, loadCredit, loadPaid, ratePerEgg, saleOutstanding,
   traderBalance, walkInTrader,
 } from '@/lib/calc';
-import { daysBetween, fmtIN, fmtMoney, nowISO, todayISO, uid } from '@/lib/format';
-import { nextPurchaseRef, purchasePosition } from '@/lib/purchasing';
-import { asLedgerRow, medicineBasis, nextMedicineRef } from '@/lib/medicines';
+import { daysBetween, fmtIN, fmtMoney, newUuid, nowISO, todayISO, uid } from '@/lib/format';
+import { nextPurchaseRef, purchasePosition, purchaseReceiptHighWater } from '@/lib/purchasing';
+import { isUuid } from '@/services/supabase/rows';
+import { asLedgerRow, medicineBasis, medicineReceiptHighWater, nextMedicineRef } from '@/lib/medicines';
+import { receiptHighWater, receiptNo, type ReceiptScope } from '@/lib/receipts';
+import { allocateReceiptNo } from '@/services/supabase/receipts';
+import { COLUMNS, PRIMARY_KEYS } from '@/services/supabase/columns.gen';
+import { SLICES, rowId, type SliceDef } from '@/services/supabase/registry';
+import {
+  NOT_COMPANY_DATA, SLICE_LABELS, buildBackup, validateBackup,
+  type BackupFile, type BackupProfile, type RestorePlan, type Validation,
+} from '@/lib/backup';
 import { bookingError, PLANNER_HORIZON, plannerWindow } from '@/lib/planner';
 import {
   seedAssignments, seedAudit, seedBatches, seedCompanies,
@@ -33,7 +45,13 @@ import {
   seedTraderTxns, seedTraders, seedUsers, seedVaccinations, seedVaccinationTemplates,
 } from '@/data/seed';
 
-interface Toast { id: string; kind: 'success' | 'error' | 'info'; message: string }
+/**
+ * A notice reads as a title and, when there is something to do about it, one line under it —
+ * the shape every normalized database error already carries (§17).
+ */
+interface Toast { id: string; kind: 'success' | 'error' | 'info'; message: string; detail?: string }
+/** How long a toast stands before it removes itself. The host draws its progress line from this. */
+export const TOAST_TTL_MS = 3200;
 /** What every guarded write action answers with: the row landed, or the reason it did not. */
 export type Result = { ok: boolean; error?: string };
 /** Formula writes report the saved version id so the UI can route to it. */
@@ -139,6 +157,9 @@ interface AppState {
   cashCounts: CashCount[];
   audit: AuditEntry[];
   session: Session | null;
+  /** Why the working company context was taken away, once. Derived again on every read, so
+   *  it is a notice rather than a fact — and it is never persisted. */
+  accessNotice: CompanyAccess | null;
   online: boolean;
   toasts: Toast[];
 
@@ -148,9 +169,14 @@ interface AppState {
   signInWithOtp: (mobile: string, code: string) => Result;
   selectCompany: (companyId: string) => Result;
   signOut: () => void;
+  /** Re-read the three things a cached save cannot be trusted for — the person still exists,
+   *  still holds this membership, and this company still stands — and drop the context if not.
+   *  Run after every pull, so a deactivation made elsewhere reaches a browser that is open. */
+  revalidateCompanyAccess: () => void;
+  clearAccessNotice: () => void;
 
   setOnline: (v: boolean) => void;
-  pushToast: (kind: Toast['kind'], message: string) => void;
+  pushToast: (kind: Toast['kind'], message: string, detail?: string) => void;
   dismissToast: (id: string) => void;
 
   /* master admin — companies & users */
@@ -158,15 +184,25 @@ interface AppState {
   toggleCompanyActive: (id: string) => void;
   createUser: (input: {
     name: string; mobile: string; password: string; role: Role; companyIds: string[];
+    /** Supabase mode pre-mints the id (a uuid, because profiles.id IS auth.users.id). */
+    id?: string;
   }) => { ok: boolean; error?: string; user?: User };
   toggleUserActive: (id: string) => void;
   updateUserCompanies: (id: string, companyIds: string[]) => void;
+  /** Change one person's role inside the active company. Guarded, audited, never self-applied. */
+  updateUserRole: (id: string, role: Role) => Result;
+  /** Switch a person's access to this company off or back on. Their records stand either way. */
+  setUserActive: (id: string, active: boolean) => Result;
+  /** Whether this session may change this person, and which company the change belongs to. */
+  personOf: (id: string) => { error: string } | { user: User; companyId: string };
 
   /* company structure */
   addFarm: (f: Omit<Farm, 'id' | 'companyId' | 'createdAt' | 'updatedAt'>) => Farm | null;
   updateFarm: (id: string, patch: Partial<Farm>) => void;
   addShed: (s: Omit<Shed, 'id' | 'companyId' | 'createdAt' | 'updatedAt'>) => Shed | null;
   updateShed: (id: string, patch: Partial<Shed>) => void;
+  /** Remove a shed. The database refuses while a batch points at it, so the store does too. */
+  deleteShed: (id: string) => Result;
 
   /**
    * Place a batch, optionally with the vaccination schedule it starts on. The schedule is
@@ -236,7 +272,7 @@ interface AppState {
   updateEggWastage: (id: string, patch: Partial<EggWastageDraft>) => Result;
 
   /* godown ledger */
-  addFeedStock: (e: Omit<FeedStockEntry, 'id' | 'companyId' | 'createdAt' | 'createdBy' | 'synced'>, opts?: { allowNegative?: boolean }) => Result;
+  addFeedStock: (e: Omit<FeedStockEntry, 'id' | 'companyId' | 'createdAt' | 'createdBy' | 'synced'>, opts?: { allowNegative?: boolean; purchaseRef?: string }) => Result;
 
   /* global feed-ingredient catalogue — any signed-in user may register a new type */
   addIngredientType: (name: string) => Result & { added?: boolean };
@@ -249,7 +285,7 @@ interface AppState {
    * Book stock in. This raises inventory and a supplier payable and nothing else: no cash
    * leaves, no expense is written, and the average re-weights only because a rate came with it.
    */
-  receiveMedicine: (draft: MedicineReceiptDraft) => Result & { id?: string; purchaseRef?: string };
+  receiveMedicine: (draft: MedicineReceiptDraft, opts?: { purchaseRef?: string }) => Result & { id?: string; purchaseRef?: string };
   /**
    * Take stock out for a shed. One event, two consequences: inventory falls and the flock
    * carries the cost, valued at the average in force on that day and frozen on the row.
@@ -279,10 +315,15 @@ interface AppState {
    * answered with what changed, from what, to what, by whom and why.
    */
   updateFinance: (id: string, patch: Partial<Omit<FinanceTxn, 'id' | 'companyId' | 'createdAt' | 'createdBy' | 'synced' | 'refId'>>, reason?: string) => Result;
-  /** The next human-readable cash receipt number for a date, unique inside this company. */
-  nextCashReceiptNo: (date: string) => string;
-  /** The next stock receipt number for a date, issued when a purchase is booked. */
-  nextPurchaseNo: (date: string) => string;
+  /**
+   * The next reference in a receipt series (`CR` cash received, `PUR` feed bought in, `MED`
+   * medicine received) for one company and one day, claimed from the database counter so two
+   * devices raising a receipt at the same moment cannot be handed the same number. Ask when a
+   * record is being raised, or when someone deliberately takes a number for one — never while a
+   * screen renders, previews or hydrates. `''` means the counter refused; the reason is already
+   * on screen, and nothing may be booked against a made-up number.
+   */
+  takeReceiptNo: (scope: ReceiptScope, date: string) => Promise<string>;
   /**
    * Pay a godown receipt. This books the money that left and nothing else: the purchase keeps
    * its own quantity and rate, and several payments can settle it one after another.
@@ -310,6 +351,21 @@ interface AppState {
   addTask: (t: Omit<FarmTask, 'id' | 'companyId' | 'createdAt' | 'updatedAt' | 'createdBy' | 'synced'>) => FarmTask | null;
   updateTask: (id: string, patch: Partial<FarmTask>) => void;
   deleteTask: (id: string) => void;
+
+  /* backup — one company's records, out as a file and back in under explicit confirmation */
+  /**
+   * The whole of this company's data as one JSON file, as far as this role may see it. Money a
+   * role cannot read is left out rather than refused, and no credential is ever carried: a
+   * person's record is not part of a company's books.
+   */
+  exportCompanyBackup: () => { ok: true; file: BackupFile; omitted: { slice: string; reason: string }[] } | Result;
+  /**
+   * What restoring a candidate file would do, said before anything is written. The file is read
+   * against the live company: identity, schema, references, duplicates and the row-by-row diff.
+   */
+  checkBackupFile: (json: unknown) => Validation;
+  /** Apply a plan the person has already seen and confirmed. Nothing is deleted to make room. */
+  restoreCompanyBackup: (plan: RestorePlan, summary: string) => Result;
 
   syncPending: () => void;
   resetDemo: () => void;
@@ -345,6 +401,43 @@ function auditRow(state: AppState, entity: string, entityId: string, summary: st
     byUserId: state.session?.userId ?? 'system', at: nowISO(),
   };
 }
+
+/**
+ * One row for a step rather than a record: a backup leaving the company, a restore starting,
+ * ending or failing. The trail is the same table with the same authorship, so an export is
+ * answered in exactly the place an edit is.
+ */
+function auditStep(
+  state: AppState, action: AuditAction, entity: string, entityId: string,
+  summary: string, reason?: string,
+): AuditEntry {
+  return {
+    id: uid('au'), companyId: state.session?.companyId ?? undefined,
+    entity, entityId, action, newValue: summary, reason,
+    byUserId: state.session?.userId ?? 'system', at: nowISO(),
+  };
+}
+/**
+ * The store's persist version, in one place: a backup has to say which shape it was written in,
+ * and the reader compares against the same number.
+ */
+export const PERSIST_VERSION = 21;
+
+/**
+ * What a company's data is, taken straight from the sync registry rather than described again.
+ *
+ * `SLICES` is already the list the database and this browser agree on, so a backup that rides it
+ * can never drift from what syncs. Two entries are dropped: `supportMessages` is a conversation
+ * with the vendor rather than the farm's books, and `ingredientCatalog` is global to the
+ * platform with no company on it at all.
+ */
+const BACKUP_PROFILE: BackupProfile = {
+  slices: SLICES.filter(s => !NOT_COMPANY_DATA.has(s.slice)),
+  columns: COLUMNS,
+  primaryKeys: PRIMARY_KEYS,
+  idOf: rowId,
+};
+
 function auditChanges(
   state: AppState,
   entity: string, entityId: string,
@@ -541,11 +634,24 @@ function replaceLedger<T extends { refId?: string }>(list: T[], refId: string, r
 }
 
 /**
+ * The highest number this device has been shown for a company, series and day since it booted,
+ * keyed `company|scope|day`. A reference is claimed when a form displays it and only becomes a
+ * fact when the row saves, so two receipts written on one offline afternoon would otherwise be
+ * handed the same number from the saved high water alone. Gaps are the price, exactly as they
+ * are at the counter. Nothing persists here: a reload's floor is the saved rows themselves.
+ */
+const receiptClaims = new Map<string, number>();
+
+/**
  * Recompute every trader's balance from the ledger it belongs to. Called after any change
  * to either side, so the stored figure is a cache of the sum rather than a running total
  * that drifts the moment one write path disagrees with another.
+ *
+ * `stamp` is false when the caller is only healing the cache after a cloud merge: the
+ * database row did not change, so `updatedAt` must keep its own value — stamping it would
+ * offer the database a write nobody asked for and two signed-in devices would echo it.
  */
-function rebalanceTraders(traders: Trader[], txns: TraderTxn[]): Trader[] {
+export function rebalanceTraders(traders: Trader[], txns: TraderTxn[], stamp = true): Trader[] {
   const byTrader = new Map<string, TraderTxn[]>();
   for (const t of txns) {
     const own = byTrader.get(t.traderId);
@@ -553,7 +659,10 @@ function rebalanceTraders(traders: Trader[], txns: TraderTxn[]): Trader[] {
   }
   return traders.map(t => {
     const balance = traderBalance(t.openingBalance, byTrader.get(t.id) ?? []);
-    return balance === t.outstandingAmount ? t : { ...t, outstandingAmount: balance, updatedAt: nowISO() };
+    if (balance === t.outstandingAmount) return t;
+    return stamp
+      ? { ...t, outstandingAmount: balance, updatedAt: nowISO() }
+      : { ...t, outstandingAmount: balance };
   });
 }
 
@@ -654,6 +763,27 @@ function traderRows(entry: SaleEntry): TraderTxn[] {
     });
   }
   return rows;
+}
+
+/** A real Supabase identity: only these ids can be carried to the database. */
+const CLOUD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Replace every string in a save that is exactly one of `map`'s keys, returning copies so a
+ * slice still shared with the seed is never rewritten in place. Whole values only: a field
+ * holding a person's name, or an id that merely begins with a retired one, is left alone.
+ */
+function repointIds<T>(node: T, map: Map<string, string>): T {
+  if (Array.isArray(node)) return node.map(item => repointIds(item, map)) as unknown as T;
+  if (node && typeof node === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      out[k] = typeof v === 'string' ? map.get(v) ?? v : repointIds(v, map);
+    }
+    return out as unknown as T;
+  }
+  if (typeof node === 'string') return (map.get(node) ?? node) as unknown as T;
+  return node;
 }
 
 /**
@@ -772,23 +902,81 @@ function migrateSaved(saved: unknown, fromVersion = 0): AppState {
     });
   }
 
+  // v20 — one record per person. The seed shipped its people under `u_*` ids; Supabase gave the
+  // same person a uuid id, and the hydrate merge keeps both, so an owner saw Mohan Lal twice and
+  // could easily edit the copy that can never sync (pushUsers has to refuse a non-uuid id, the
+  // profiles key is a uuid column). Mobile is unique on both sides, so it is the join: the cloud
+  // row wins, and every reference this save holds to the retired id follows it. A seed person
+  // with no cloud twin is left exactly as it was — there is nothing here to fold it into.
+  const retired = new Map<string, string>();
+  const cloudByMobile = new Map<string, string>();
+  for (const u of merged.users) if (CLOUD_ID_RE.test(u.id)) cloudByMobile.set(u.mobile, u.id);
+  for (const u of merged.users) {
+    if (CLOUD_ID_RE.test(u.id)) continue;
+    const twin = cloudByMobile.get(u.mobile);
+    if (twin) retired.set(u.id, twin);
+  }
+  if (retired.size) {
+    merged.users = merged.users.filter(u => !retired.has(u.id));
+    for (const key of Object.keys(merged)) {
+      (merged as unknown as Record<string, unknown>)[key] =
+        repointIds((merged as unknown as Record<string, unknown>)[key], retired);
+    }
+  }
+
+  // v21 — the "ibd" dose logged on 25-Sep-2026 while proving the owner's create-login flow was a
+  // test entry, not farm history, so its ₹1,000 of vaccine money leaves every book. The rows are
+  // named by id: nothing here filters a record the farm actually entered.
+  if (fromVersion < 21) {
+    const testVac = 'vac_muh9hudojpzb5a';
+    const testRows = [`vac-vaccine-${testVac}`, `vac-labour-${testVac}`, `vac-vaccinator-${testVac}`];
+    merged.vaccinations = merged.vaccinations.filter(v => v.id !== testVac);
+    merged.finance = merged.finance.filter(f => !testRows.includes(f.refId ?? ''));
+    merged.audit = merged.audit.filter(a => a.entityId !== testVac);
+  }
+
+  // A saved company context is a claim, never a fact. The company may have been deactivated
+  // and this person may have been detached from it while the browser was closed, so both are
+  // re-read off the slices this save itself carries. A context that no longer stands is
+  // dropped — the person stays signed in, and the notice says why on the way out. No data is
+  // cleared here: the cache is left intact for the day the company stands again.
   const session = merged.session;
-  const sessionValid = !!session
-    && merged.users.some(u => u.id === session.userId)
-    && (session.companyId === null || merged.companies.some(c => c.id === session.companyId));
-  if (!sessionValid) merged.session = null;
+  const sessionUser = session ? merged.users.find(u => u.id === session.userId) ?? null : null;
+  merged.accessNotice = null;
+  if (!session || !sessionUser) merged.session = null;
+  else {
+    const a = companyAccessOf(session, sessionUser, merged.companies);
+    if (contextIntact(a)) {
+      if (a.reason === 'NO_CONTEXT' && isPlatformAdmin(sessionUser) === false
+        && operableCompanies(sessionUser, merged.companies).length === 1) {
+        merged.session = { ...session, companyId: operableCompanies(sessionUser, merged.companies)[0].id };
+      }
+    } else {
+      merged.session = { ...session, companyId: null };
+      merged.accessNotice = a;
+    }
+  }
 
   return merged;
 }
 
 export const useApp = create<AppState>()(persist(
   (set, get) => {
-    /** Active company id, or null. Used to stamp companyId on new records. */
-    const cid = () => get().session?.companyId ?? null;
+    /** The company a new record may bear: the working context only while it still stands. A
+     *  context a pull found dead — or one pointing at a company this browser has no record of —
+     *  stamps nothing, so a stale id cannot brand a record mid-session (§3, §6). */
+    const cid = () => operableCompanyId(access());
     const me = () => get().users.find(u => u.id === get().session?.userId) ?? null;
+    /** The one company-access read: the context this browser is holding, against the company
+     *  and membership slices the last pull refreshed. Screens and guards ask this; RLS decides. */
+    const access = (): CompanyAccess =>
+      companyAccessOf(get().session, me(), get().companies);
     const can = (key: PermissionKey) => {
       const u = me();
       if (!u) return false;
+      // A dead membership or a deactivated company ends operational work at once, whatever the
+      // role still says — the same gate app.member_of()/app.role_in() apply to every policy.
+      if (!contextIntact(access())) return false;
       return DEFAULT_ROLE_PERMISSIONS[u.role]?.[key] ?? false;
     };
     /** Daily operational entries are gated in the data layer, not just the UI (§4, §5). */
@@ -806,7 +994,7 @@ export const useApp = create<AppState>()(persist(
      */
     const canOnBatch = (key: PermissionKey, batchId: string): boolean => {
       const u = me();
-      if (!u) return false;
+      if (!u || !contextIntact(access())) return false;
       const a = get().assignments.find(x => x.batchId === batchId && x.userId === u.id);
       return effectiveCan(u.role, a?.permissions, key);
     };
@@ -833,10 +1021,11 @@ export const useApp = create<AppState>()(persist(
       return get().vaccinations.find(v => v.id === id && v.companyId === companyId) ?? null;
     };
 
-    /** Finish sign-in: pick company context when unambiguous. */
+    /** Finish sign-in: pick company context when unambiguous. Only a company that stands is a
+     *  context — a deactivated one is never entered from a login, however it is listed. */
     function startSession(user: User): Session {
-      const single = user.companyIds.length === 1 ? user.companyIds[0] : null;
-      return { userId: user.id, companyId: single, signedInAt: nowISO() };
+      const open = operableCompanies(user, get().companies);
+      return { userId: user.id, companyId: open.length === 1 ? open[0].id : null, signedInAt: nowISO() };
     }
 
     /** Godown balance check across a set of deductions (KG). */
@@ -1047,6 +1236,7 @@ export const useApp = create<AppState>()(persist(
     return {
       ...baseSeed(),
       session: null,
+      accessNotice: null,
       online: typeof navigator !== 'undefined' ? navigator.onLine : true,
       toasts: [],
 
@@ -1059,7 +1249,7 @@ export const useApp = create<AppState>()(persist(
         if (!user) return { ok: false, error: 'No account found for this number' };
         if (!user.active) return { ok: false, error: 'This account is deactivated' };
         if (!verifyPassword(password, user.passwordHash)) return { ok: false, error: 'Incorrect password' };
-        set(s => ({ session: startSession(user), audit: audit(s, 'Session', user.id, 'CREATE') }));
+        set(s => ({ session: startSession(user), accessNotice: null, audit: audit(s, 'Session', user.id, 'CREATE') }));
         return { ok: true };
       },
 
@@ -1079,7 +1269,7 @@ export const useApp = create<AppState>()(persist(
         if (!user) return { ok: false, error: 'No account found for this number' };
         if (!user.active) return { ok: false, error: 'This account is deactivated' };
         if (!isOtpValid(m, code)) return { ok: false, error: 'Incorrect or expired OTP' };
-        set(s => ({ session: startSession(user), audit: audit(s, 'Session', user.id, 'CREATE') }));
+        set(s => ({ session: startSession(user), accessNotice: null, audit: audit(s, 'Session', user.id, 'CREATE') }));
         return { ok: true };
       },
 
@@ -1087,23 +1277,59 @@ export const useApp = create<AppState>()(persist(
         const user = me();
         const sess = get().session;
         if (!user || !sess) return { ok: false, error: 'Not signed in' };
+        // The same refusal sign-in makes, for the person who was already signed in when it
+        // happened: switching companies is not a way back in.
+        if (!user.active) return { ok: false, error: 'This account is deactivated' };
         const company = get().companies.find(c => c.id === companyId);
         if (!company || !company.active) return { ok: false, error: 'Company unavailable' };
-        const isMaster = user.role === 'MASTER_ADMIN';
-        if (!isMaster && !user.companyIds.includes(companyId)) {
+        if (!isPlatformAdmin(user) && !user.companyIds.includes(companyId)) {
           return { ok: false, error: 'You do not have access to this company' };
         }
-        set({ session: { ...sess, companyId } });
+        // Entering a company is a fresh context: a notice left over from the one just
+        // dropped must not be read against this one.
+        set({ session: { ...sess, companyId }, accessNotice: null });
         return { ok: true };
       },
 
-      signOut: () => set(s => ({ session: null, audit: audit(s, 'Session', s.session?.userId ?? '', 'DELETE') })),
+      signOut: () => set(s => ({
+        session: null, accessNotice: null,
+        audit: audit(s, 'Session', s.session?.userId ?? '', 'DELETE'),
+      })),
+
+      revalidateCompanyAccess: () => {
+        const a = access();
+        // An entered company settles the matter; dropping out to choose another one does not
+        // answer for the company just lost, so the notice is kept until one of those happens.
+        if (a.reason === 'USABLE') { if (get().accessNotice) set({ accessNotice: null }); return; }
+        if (a.reason === 'NO_CONTEXT') {
+          // A revocation whose cause has gone away is not a reason to keep anybody out. When
+          // the farm that came back is the only one they hold, walk them into it rather than
+          // leaving a stale "Company inactive" up over a company that now stands; with more
+          // than one, the picker is the honest answer and the notice has nothing left to say.
+          const open = operableCompanies(me(), get().companies);
+          if (get().accessNotice && open.length === 1 && get().session) {
+            set(s => ({ session: s.session ? { ...s.session, companyId: open[0].id } : null, accessNotice: null }));
+          }
+          return;
+        }
+        // Only write when this is news. The check runs from an effect keyed on the very session
+        // it rewrites, so re-stamping it each pass would re-render it forever.
+        const { session, accessNotice } = get();
+        if (!session?.companyId && accessNotice?.reason === a.reason) return;
+        // The person stays signed in — their other memberships are still valid — but the
+        // working context goes, so no screen can read or stamp a company it no longer holds.
+        set(s => ({
+          accessNotice: a,
+          session: s.session ? { ...s.session, companyId: null } : null,
+        }));
+      },
+      clearAccessNotice: () => set({ accessNotice: null }),
 
       setOnline: (v) => set({ online: v }),
-      pushToast: (kind, message) => {
+      pushToast: (kind, message, detail) => {
         const id = uid('t');
-        set(s => ({ toasts: [...s.toasts, { id, kind, message }] }));
-        setTimeout(() => get().dismissToast(id), 3200);
+        set(s => ({ toasts: [...s.toasts, { id, kind, message, detail }] }));
+        setTimeout(() => get().dismissToast(id), TOAST_TTL_MS);
       },
       dismissToast: (id) => set(s => ({ toasts: s.toasts.filter(t => t.id !== id) })),
 
@@ -1119,20 +1345,44 @@ export const useApp = create<AppState>()(persist(
         }));
         return company;
       },
-      toggleCompanyActive: (id) => set(s => ({
-        companies: s.companies.map(c => c.id === id ? { ...c, active: !c.active, updatedAt: nowISO() } : c),
-        audit: audit(s, 'Company', id, 'UPDATE', 'active'),
-      })),
+      toggleCompanyActive: (id) => {
+        // The lifecycle switch is the platform's, not a screen's: refused here as well as in
+        // the routes, and in the database (003 lets only a Master Admin write `companies`).
+        if (!can('manageCompanies')) return;
+        set(s => {
+        const c = s.companies.find(x => x.id === id);
+        return {
+          companies: s.companies.map(x => x.id === id ? { ...x, active: !x.active, updatedAt: nowISO() } : x),
+          // The lifecycle change itself is the audited event: who switched this company off
+          // or back on. Its records are left exactly where they are (§13).
+          audit: audit(s, 'Company', id, 'UPDATE', 'active', c?.active, !c?.active,
+            c?.active ? 'Company deactivated' : 'Company reactivated'),
+        };
+      });
+      },
 
-      createUser: ({ name, mobile, password, role, companyIds }) => {
+      createUser: ({ name, mobile, password, role, companyIds, id }) => {
         if (!can('manageUsers')) return { ok: false, error: 'You cannot manage users' };
-        const m = normalizeMobile(mobile);
-        if (m.length !== 10) return { ok: false, error: 'Enter a valid 10-digit mobile number' };
-        if (get().users.some(u => u.mobile === m)) return { ok: false, error: 'A user with this mobile already exists' };
-        if (password.length < 4) return { ok: false, error: 'Password must be at least 4 characters' };
-        if (role !== 'MASTER_ADMIN' && companyIds.length === 0) return { ok: false, error: 'Assign at least one company' };
+        // A company manager places a person where they themselves belong: a companyId typed into
+        // a request buys nothing, here or in create_login's gate (010).
+        const caller = me();
+        if (!isPlatformAdmin(caller)) {
+          if (role === 'MASTER_ADMIN') {
+            return { ok: false, error: 'Only the platform admin can create a platform account' };
+          }
+          const mine = new Set(caller?.companyIds ?? []);
+          if (companyIds.some(c => !mine.has(c))) {
+            return { ok: false, error: 'You can only add people to a company you belong to' };
+          }
+        }
+        const { mobile: m, error } = validateUserDraft(
+          { name, mobile, password, role, companyIds },
+          mm => get().users.some(u => u.mobile === mm),
+        );
+        if (error) return { ok: false, error };
         const user: User = {
-          id: uid('u'), name: name.trim(), mobile: m, passwordHash: hashPassword(password),
+          id: id ?? (runtime.cloud ? newUuid() : uid('u')),
+          name: name.trim(), mobile: m, passwordHash: hashPassword(password),
           role, companyIds: role === 'MASTER_ADMIN' ? [] : companyIds,
           initials: name.trim().split(/\s+/).slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('') || '?',
           active: true, createdAt: nowISO(), updatedAt: nowISO(),
@@ -1149,6 +1399,63 @@ export const useApp = create<AppState>()(persist(
         audit: audit(s, 'User', id, 'UPDATE', 'companyIds'),
       })),
 
+      /**
+       * The person this session may change right now: inside the standing company, not
+       * themselves, not a platform account, and — unless they hold only this company — not
+       * somebody else's employee. The same sentence lib/team writes for the screen, so a row is
+       * never offered here that the store would refuse. RLS decides the last word (015).
+       */
+      personOf: (id) => {
+        const companyId = cid();
+        if (!companyId) return { error: 'No company selected' } as const;
+        if (!can('manageUsers')) return { error: 'You cannot manage users' } as const;
+        const user = get().users.find(u => u.id === id);
+        if (!user) return { error: 'User not found' } as const;
+        const caller = me();
+        const platform = isPlatformAdmin(caller);
+        if (!platform && !user.companyIds.includes(companyId)) {
+          return { error: 'This user does not belong to the company you are working in' } as const;
+        }
+        const block = personBlock(user, caller, platform);
+        if (block) return { error: block } as const;
+        return { user, companyId } as const;
+      },
+
+      updateUserRole: (id, role) => {
+        const found = get().personOf(id);
+        if ('error' in found) return { ok: false, error: found.error };
+        const { user, companyId } = found;
+        const caller = me();
+        if (!isPlatformAdmin(caller)) {
+          if (role === 'MASTER_ADMIN') return { ok: false, error: 'Only the platform admin can change a platform account' };
+          const wrong = roleChangeError(user, role);
+          if (wrong) return { ok: false, error: wrong };
+        }
+        if (user.role === role) return { ok: true };
+        const company = get().companies.find(c => c.id === companyId);
+        set(s => ({
+          users: s.users.map(u => u.id === id ? { ...u, role, updatedAt: nowISO() } : u),
+          audit: audit(s, 'User', id, 'UPDATE', 'role',
+            user.role, role, `Role changed in ${company?.name ?? 'the company'}`),
+        }));
+        return { ok: true };
+      },
+
+      /** Off, or back on. Nothing here deletes a record: a switched-off person keeps their whole history. */
+      setUserActive: (id, active) => {
+        const found = get().personOf(id);
+        if ('error' in found) return { ok: false, error: found.error };
+        const { user, companyId } = found;
+        if (user.active === active) return { ok: true };
+        const company = get().companies.find(c => c.id === companyId);
+        set(s => ({
+          users: s.users.map(u => u.id === id ? { ...u, active, updatedAt: nowISO() } : u),
+          audit: audit(s, 'User', id, 'UPDATE', 'active', user.active, active,
+            `${active ? 'Activated' : 'Deactivated'} in ${company?.name ?? 'the company'}`),
+        }));
+        return { ok: true };
+      },
+
       /* ============================= COMPANY STRUCTURE ============================= */
 
       addFarm: (f) => {
@@ -1158,9 +1465,10 @@ export const useApp = create<AppState>()(persist(
         set(s => ({ farms: [...s.farms, farm], audit: audit(s, 'Farm', farm.id, 'CREATE') }));
         return farm;
       },
-      updateFarm: (id, patch) => set(s => ({
-        farms: s.farms.map(f => f.id === id ? { ...f, ...patch, updatedAt: nowISO() } : f),
-      })),
+      updateFarm: (id, patch) => {
+        const companyId = cid();
+        set(s => ({ farms: s.farms.map(f => f.id === id && f.companyId === companyId ? { ...f, ...patch, updatedAt: nowISO() } : f) }));
+      },
       addShed: (sh) => {
         const companyId = cid();
         if (!companyId) return null;
@@ -1168,9 +1476,23 @@ export const useApp = create<AppState>()(persist(
         set(s => ({ sheds: [...s.sheds, shed], audit: audit(s, 'Shed', shed.id, 'CREATE') }));
         return shed;
       },
-      updateShed: (id, patch) => set(s => ({
-        sheds: s.sheds.map(x => x.id === id ? { ...x, ...patch, updatedAt: nowISO() } : x),
-      })),
+      updateShed: (id, patch) => {
+        const companyId = cid();
+        set(s => ({ sheds: s.sheds.map(x => x.id === id && x.companyId === companyId ? { ...x, ...patch, updatedAt: nowISO() } : x) }));
+      },
+      deleteShed: (id) => {
+        const companyId = cid();
+        const shed = get().sheds.find(s => s.id === id);
+        if (!companyId || !shed || shed.companyId !== companyId) return { ok: false, error: 'Shed not found' };
+        if (get().batches.some(b => b.shedId === id)) {
+          return { ok: false, error: `${shed.name} has batches on it. Close or move those first.` };
+        }
+        set(s => ({
+          sheds: s.sheds.filter(x => x.id !== id),
+          audit: audit(s, 'Shed', id, 'DELETE'),
+        }));
+        return { ok: true };
+      },
 
       nextBatchCode: (shedId) => {
         const shed = get().sheds.find(s => s.id === shedId);
@@ -1264,9 +1586,10 @@ export const useApp = create<AppState>()(persist(
         });
         return { ok: true };
       },
-      updateBatch: (id, patch) => set(s => ({
-        batches: s.batches.map(b => b.id === id ? { ...b, ...patch, updatedAt: nowISO() } : b),
-      })),
+      updateBatch: (id, patch) => {
+        const companyId = cid();
+        set(s => ({ batches: s.batches.map(b => b.id === id && b.companyId === companyId ? { ...b, ...patch, updatedAt: nowISO() } : b) }));
+      },
       /**
        * The planning intake behind the coverage forecast — a figure the owner sets, never a
        * ledger event. A clearing (null) or zero intake leaves the batch out of the forecast
@@ -1274,7 +1597,7 @@ export const useApp = create<AppState>()(persist(
        */
       setBatchFeedIntake: (id, tonnesPerDay) => {
         if (!can('update')) return { ok: false, error: 'Not permitted to edit batch details' };
-        const batch = get().batches.find(b => b.id === id);
+        const batch = get().batches.find(b => b.id === id && b.companyId === cid());
         if (!batch) return { ok: false, error: 'Batch not found' };
         if (tonnesPerDay !== null && (!Number.isFinite(tonnesPerDay) || tonnesPerDay < 0)) {
           return { ok: false, error: 'Feed intake must be 0 tonnes a day or more' };
@@ -1291,11 +1614,11 @@ export const useApp = create<AppState>()(persist(
       },
       closeBatch: (batchId, closing) => {
         if (!can('closeBatch')) return { ok: false, error: 'Only the Owner can close a batch' };
-        const batch = get().batches.find(b => b.id === batchId);
-        if (!batch) return { ok: false, error: 'Batch not found' };
-        if (batch.status === 'CLOSED') return { ok: false, error: 'Batch is already closed' };
         const companyId = cid();
         if (!companyId) return { ok: false, error: 'No company selected' };
+        const batch = get().batches.find(b => b.id === batchId && b.companyId === companyId);
+        if (!batch) return { ok: false, error: 'Batch not found' };
+        if (batch.status === 'CLOSED') return { ok: false, error: 'Batch is already closed' };
         const full: BatchClosing = { ...closing, closedBy: get().session?.userId ?? 'system', closedAt: nowISO() };
         // Bird sale income is a real financial transaction — it must flow through the Finance
         // ledger so it appears in shed income, batch P&L and farm P&L exactly like any
@@ -1337,6 +1660,12 @@ export const useApp = create<AppState>()(persist(
         if (!batch) return { ok: false, error: 'Batch not found' };
         const u = get().users.find(x => x.id === userId);
         if (!u) return { ok: false, error: 'User not found' };
+        // batch_assignments.user_id is a foreign key on profiles, so access can only be granted
+        // to a person the login table actually has. The demo seed still ships records keyed `u_*`
+        // beside their cloud twins, and a row naming one of those can never leave this browser.
+        if (runtime.cloud && !isUuid(u.id)) {
+          return { ok: false, error: `${u.name} has no login yet — create one to grant access` };
+        }
         if (!u.companyIds.includes(batch.companyId)) return { ok: false, error: `${u.name} is not part of this company` };
         if (get().assignments.some(a => a.batchId === batchId && a.userId === userId)) {
           return { ok: false, error: `${u.name} already has access to this batch` };
@@ -1355,10 +1684,13 @@ export const useApp = create<AppState>()(persist(
         }));
         return { ok: true };
       },
-      revokeAssignment: (id) => set(s => ({
-        assignments: s.assignments.filter(a => a.id !== id),
-        audit: audit(s, 'Assignment', id, 'DELETE'),
-      })),
+      revokeAssignment: (id) => {
+        const companyId = cid();
+        set(s => ({
+          assignments: s.assignments.filter(a => !(a.id === id && a.companyId === companyId)),
+          audit: audit(s, 'Assignment', id, 'DELETE'),
+        }));
+      },
 
       /* ============================= VACCINATION ============================= */
 
@@ -1650,7 +1982,7 @@ export const useApp = create<AppState>()(persist(
       },
       updateMortality: (id, patch) => {
         const denied = editGuard(); if (denied) return denied;
-        const existing = get().mortality.find(m => m.id === id);
+        const existing = get().mortality.find(m => m.id === id && m.companyId === cid());
         if (!existing) return { ok: false, error: 'Entry not found' };
         set(s => ({
           mortality: s.mortality.map(m => m.id === id ? { ...m, ...patch, updatedBy: s.session?.userId ?? 'system', updatedAt: nowISO() } : m),
@@ -1680,7 +2012,7 @@ export const useApp = create<AppState>()(persist(
       },
       updateEggCollection: (id, patch) => {
         const denied = editGuard(); if (denied) return denied;
-        const existing = get().eggs.find(e => e.id === id);
+        const existing = get().eggs.find(e => e.id === id && e.companyId === cid());
         if (!existing) return { ok: false, error: 'Entry not found' };
         const next = { ...existing, ...patch };
         const trays = [next.goodTrays, next.brokenTrays, next.doubleTrays, next.smallTrays];
@@ -1713,7 +2045,7 @@ export const useApp = create<AppState>()(persist(
       },
       updateEggWastage: (id, patch) => {
         const denied = editGuard(); if (denied) return denied;
-        const existing = get().eggWastages.find(w => w.id === id);
+        const existing = get().eggWastages.find(w => w.id === id && w.companyId === cid());
         if (!existing) return { ok: false, error: 'Entry not found' };
         const next: EggWastage = {
           ...existing, ...patch,
@@ -1759,7 +2091,7 @@ export const useApp = create<AppState>()(persist(
       updateFeedConsumption: (id, patch, opts) => {
         const denied = editGuard(); if (denied) return denied;
         const companyId = cid();
-        const existing = get().feed.find(f => f.id === id);
+        const existing = get().feed.find(f => f.id === id && f.companyId === companyId);
         if (!existing || !companyId) return { ok: false, error: 'Entry not found' };
         // Reverse this consumption's prior ledger deductions, then apply the new ones.
         const priorLedger = get().feedStock.filter(e => e.remarks === `ref:${id}`);
@@ -1819,7 +2151,7 @@ export const useApp = create<AppState>()(persist(
       },
       updateFeedRound: (id, patch) => {
         const denied = editGuard(); if (denied) return denied;
-        const existing = get().feedRounds.find(x => x.id === id);
+        const existing = get().feedRounds.find(x => x.id === id && x.companyId === cid());
         if (!existing) return { ok: false, error: 'Entry not found' };
         const status = patch.status ?? existing.status;
         const at = status === 'GIVEN' ? (patch.at ?? existing.at) : '';
@@ -1857,7 +2189,7 @@ export const useApp = create<AppState>()(persist(
       },
       acknowledgeSaleLog: (id) => {
         if (!can('acknowledgeSales')) return { ok: false, error: 'Only Finance or the Owner can confirm a dispatch' };
-        const log = get().saleLogs.find(l => l.id === id);
+        const log = get().saleLogs.find(l => l.id === id && l.companyId === cid());
         if (!log) return { ok: false, error: 'Dispatch log not found' };
         if (log.status === 'ACKNOWLEDGED') return { ok: false, error: 'Already confirmed' };
         set(s => ({
@@ -2074,11 +2406,15 @@ export const useApp = create<AppState>()(persist(
           if (neg) return { ok: false, error: `Insufficient stock: ${neg}` };
         }
         // A purchase is a payable, so it names the supplier it is owed to. The receipt number is
-        // issued here rather than typed: two farms must not raise the same purchase number.
+        // issued here rather than typed: two farms must not raise the same purchase number. The
+        // form passes the one the counter gave it; without that, this device numbers the row.
         const namedSupplier = e.kind === 'FEED_IN' ? e.supplier?.trim() ?? '' : null;
         if (e.kind === 'FEED_IN' && !namedSupplier) return { ok: false, error: 'Record the supplier this stock was bought from' };
         const receipt: Partial<Pick<FeedStockEntry, 'supplier' | 'purchaseRef'>> = namedSupplier === null ? {}
-          : { supplier: namedSupplier, purchaseRef: nextPurchaseRef(get().feedStock, companyId, e.date) };
+          : {
+            supplier: namedSupplier,
+            purchaseRef: opts?.purchaseRef || nextPurchaseRef(get().feedStock, companyId, e.date),
+          };
         const entry: FeedStockEntry = {
           ...e, ...receipt, qtyKg, companyId, id: uid('fs'), createdBy: get().session?.userId ?? 'system',
           createdAt: nowISO(), synced: get().online,
@@ -2177,7 +2513,7 @@ export const useApp = create<AppState>()(persist(
         return { ok: true };
       },
 
-      receiveMedicine: (draft) => {
+      receiveMedicine: (draft, opts) => {
         const companyId = cid();
         if (!companyId) return { ok: false, error: 'No company selected' };
         if (!can('create')) return { ok: false, error: 'Your role cannot receive stock' };
@@ -2193,7 +2529,7 @@ export const useApp = create<AppState>()(persist(
         if (draft.expiryDate && draft.expiryDate < draft.date) {
           return { ok: false, error: 'The expiry date is before the day it arrived' };
         }
-        const purchaseRef = nextMedicineRef(get().medicineStock, companyId, draft.date);
+        const purchaseRef = opts?.purchaseRef || nextMedicineRef(get().medicineStock, companyId, draft.date);
         const entry: MedicineStockEntry = {
           id: uid('ms'), companyId, medicineId: item.id, date: draft.date, kind: 'RECEIPT', qty,
           ratePerUnit: rate ?? undefined, supplier, purchaseRef,
@@ -2445,28 +2781,54 @@ export const useApp = create<AppState>()(persist(
         return { ok: true };
       },
 
-      nextCashReceiptNo: (date) => {
+      /**
+       * The next reference in a receipt series, claimed from the database counter while it can be
+       * reached. Offline, the store numbers from its own high water instead — unique on this
+       * device and nothing more, which the caller is told rather than quietly assumed.
+       */
+      takeReceiptNo: async (scope, date) => {
         const companyId = cid();
         if (!companyId || !date) return '';
-        // Numbered per company and per day: two farms collecting cash on the same morning
-        // must not be handed the same receipt number.
-        const prefix = `CR-${date}-`;
-        const taken = (reference: string | undefined) => (reference?.startsWith(prefix)
-          ? Number.parseInt(reference.slice(prefix.length), 10) : NaN);
-        const used = [
-          ...get().finance.filter(t => t.companyId === companyId).map(t => taken(t.reference)),
-          ...get().traderTxns.filter(t => t.companyId === companyId).map(t => taken(t.reference)),
-          ...get().saleEntries.filter(e => e.companyId === companyId).map(e => taken(e.cashReference)),
-          ...get().cashHandovers.filter(h => h.companyId === companyId).map(h => taken(h.reference)),
-        ].filter(n => Number.isFinite(n));
-        const next = (used.length ? Math.max(...used) : 0) + 1;
-        return `${prefix}${String(next).padStart(3, '0')}`;
-      },
-
-      nextPurchaseNo: (date) => {
-        const companyId = cid();
-        if (!companyId || !date) return '';
-        return nextPurchaseRef(get().feedStock, companyId, date);
+        // The store's own fallback: the highest reference this device holds for the series. It
+        // also goes to the counter as a floor, so records numbered before the counter existed —
+        // or while this device was offline — are never numbered over.
+        const taken = scope === 'PUR' ? purchaseReceiptHighWater(get().feedStock, companyId, date)
+          : scope === 'MED' ? medicineReceiptHighWater(get().medicineStock, companyId, date)
+            // One CR series across the four tables a cash receipt can stand in, exactly so one
+            // collection cannot be handed two numbers by the screen that recorded it.
+            : receiptHighWater([
+              ...get().finance.filter(t => t.companyId === companyId).map(t => t.reference),
+              ...get().traderTxns.filter(t => t.companyId === companyId).map(t => t.reference),
+              ...get().saleEntries.filter(e => e.companyId === companyId).map(e => e.cashReference),
+              ...get().cashHandovers.filter(h => h.companyId === companyId).map(h => h.reference),
+            ], 'CR', date);
+        const local = () => {
+          const key = `${companyId}|${scope}|${date}`;
+          const shown = Math.max(taken, receiptClaims.get(key) ?? 0) + 1;
+          receiptClaims.set(key, shown);
+          return receiptNo(scope, date, shown);
+        };
+        if (!get().online) return local();
+        const a = await allocateReceiptNo(companyId, scope, date, taken);
+        if (a.kind === 'numbered') {
+          // Remember what the counter handed this device too: if the wire drops before the row
+          // saves, the number it falls back to must still sit past the one already in the form.
+          const seq = Number.parseInt(a.ref.slice(`${scope}-${date}-`.length), 10);
+          if (Number.isFinite(seq)) {
+            const key = `${companyId}|${scope}|${date}`;
+            receiptClaims.set(key, Math.max(receiptClaims.get(key) ?? 0, seq));
+          }
+          return a.ref;
+        }
+        if (a.kind === 'local') {
+          if (a.note) get().pushToast('info', a.note);
+          return local();
+        }
+        // §20: the counter said no, so nothing is booked and no number is invented. The reason
+        // and what to do about it come from the normalizer — never from a blind "save again",
+        // which would mint a second reference for the same money.
+        get().pushToast('error', a.error, a.detail);
+        return '';
       },
 
       recordPurchasePayment: (input) => {
@@ -2634,15 +2996,23 @@ export const useApp = create<AppState>()(persist(
         });
         return trader;
       },
-      updateTrader: (id, patch) => set(s => ({
-        traders: rebalanceTraders(s.traders.map(t => t.id === id ? { ...t, ...patch, updatedAt: nowISO() } : t), s.traderTxns),
-      })),
+      updateTrader: (id, patch) => {
+        const companyId = cid();
+        set(s => ({
+          traders: rebalanceTraders(s.traders.map(t => t.id === id && t.companyId === companyId ? { ...t, ...patch, updatedAt: nowISO() } : t), s.traderTxns),
+        }));
+      },
       addTraderTxn: (t) => {
         const companyId = cid();
         if (!companyId) return { ok: false, error: 'No company selected' };
         if (!can('manageTraders')) return { ok: false, error: 'Only Finance/Owner manage traders' };
         const problem = accountabilityError(t);
         if (problem) return { ok: false, error: problem };
+        // A ledger row is only ever about a trader this farm trades with: writing one against
+        // another company's id would rebalance that trader's balance from the wrong terminal.
+        if (!get().traders.some(x => x.id === t.traderId && x.companyId === companyId)) {
+          return { ok: false, error: 'Select the trader this entry is for' };
+        }
         const entry: TraderTxn = {
           ...t, companyId, id: uid('tt'), createdBy: get().session?.userId ?? 'system',
           createdAt: nowISO(), synced: get().online,
@@ -2695,13 +3065,154 @@ export const useApp = create<AppState>()(persist(
         set(s => ({ tasks: [...s.tasks, task], audit: audit(s, 'Task', task.id, 'CREATE') }));
         return task;
       },
-      updateTask: (id, patch) => set(s => ({
-        tasks: s.tasks.map(t => t.id === id ? { ...t, ...patch, updatedAt: nowISO(), synced: s.online && t.synced } : t),
-      })),
-      deleteTask: (id) => set(s => ({
-        tasks: s.tasks.filter(t => t.id !== id),
-        audit: audit(s, 'Task', id, 'DELETE'),
-      })),
+      updateTask: (id, patch) => {
+        const companyId = cid();
+        set(s => ({
+          tasks: s.tasks.map(t => t.id === id && t.companyId === companyId ? { ...t, ...patch, updatedAt: nowISO(), synced: s.online && t.synced } : t),
+        }));
+      },
+      deleteTask: (id) => {
+        const companyId = cid();
+        set(s => ({
+          tasks: s.tasks.filter(t => !(t.id === id && t.companyId === companyId)),
+          audit: audit(s, 'Task', id, 'DELETE'),
+        }));
+      },
+
+      /* ============================= BACKUP ============================= */
+
+      /**
+       * Built from the live cache, which is already exactly this company's rows as the database
+       * holds them — so the file and the sync can never disagree about what a record is. Money a
+       * role may not read is left out and named in `omitted`, which is the same judgement the
+       * push engine makes when it refuses to send such a slice.
+       */
+      exportCompanyBackup: () => {
+        if (!can('exportReports')) return { ok: false, error: 'Your role cannot export company data.' };
+        const companyId = cid();
+        if (!companyId) return { ok: false, error: 'Choose a company first.' };
+        const user = me();
+        const { file, omitted } = buildBackup({
+          companyId,
+          companyName: get().companies.find(c => c.id === companyId)?.name ?? companyId,
+          userId: get().session?.userId ?? 'system',
+          userName: user?.name ?? get().session?.userId ?? 'system',
+          role: user?.role,
+          appVersion: runtime.version,
+          storeVersion: PERSIST_VERSION,
+          nowIso: nowISO(),
+          state: get() as unknown as Record<string, unknown[]>,
+          profile: BACKUP_PROFILE,
+          canRead: def => roleReadable(user?.role, def),
+        });
+        const records = Object.values(file.recordCounts).reduce((a, n) => a + n, 0);
+        set(s => ({
+          audit: [
+            auditStep(s, 'BACKUP_CREATED', 'Backup', companyId,
+              `${records} records across ${Object.keys(file.recordCounts).length} record types`,
+              omitted.length ? `${omitted.length} record type(s) left out: ${omitted.map(o => `${o.slice} (${o.reason})`).join(', ')}` : undefined),
+            ...s.audit,
+          ].slice(0, 500),
+        }));
+        return { ok: true, file, omitted };
+      },
+
+      /** Reads a candidate file and says what restoring it would change. Writes nothing. */
+      checkBackupFile: (json) => {
+        const companyId = cid();
+        const user = me();
+        if (!companyId) {
+          return {
+            ok: false, company: null, meta: null, plans: [],
+            issues: [{ code: 'COMPANY', level: 'error', message: 'Choose a company before checking a backup.' }],
+            totals: { fileRows: 0, add: 0, change: 0, same: 0, kept: 0 },
+          };
+        }
+        return validateBackup(json, {
+          companyId,
+          state: get() as unknown as Record<string, unknown[]>,
+          canRead: def => roleReadable(user?.role, def),
+          storeVersion: PERSIST_VERSION,
+          profile: BACKUP_PROFILE,
+        });
+      },
+
+      /**
+       * The plan the person already watched being previewed, applied row by row. The company is
+       * checked again here rather than trusted from the reading, because the context can move
+       * between those two moments and a file for another farm must never land in this one's
+       * books. Rows arrive unsynced, so the sync sends them and the other devices receive them.
+       */
+      restoreCompanyBackup: (plan, summary) => {
+        if (!can('delete')) return { ok: false, error: 'Only an owner may restore company data.' };
+        const companyId = cid();
+        if (!companyId) return { ok: false, error: 'Choose a company first.' };
+        if (plan.companyId !== companyId) {
+          return {
+            ok: false,
+            error: `This backup belongs to ${plan.companyId}, not the company you are working in (${companyId}). It was not restored.`,
+          };
+        }
+        const written = Object.values(plan.writes).reduce((n, rows) => n + rows.length, 0);
+        if (!written) return { ok: false, error: 'There is nothing left in this plan to write.' };
+
+        set(s => ({
+          audit: [auditStep(s, 'RESTORE_STARTED', 'Backup', companyId, summary), ...s.audit].slice(0, 500),
+        }));
+
+        try {
+          const touched = new Set(Object.keys(plan.writes));
+          set(s => {
+            const patch: Record<string, unknown> = {};
+            for (const [slice, rows] of Object.entries(plan.writes)) {
+              const live = (s as unknown as Record<string, unknown[]>)[slice];
+              const current = Array.isArray(live) ? live : [];
+              const byId = new Map(rows.map(r => [rowId(r), r]));
+              const ids = new Set(current.map(r => rowId(r)));
+              // A row already here is replaced where it stands; a row the company does not have
+              // is appended. Nothing is dropped to make room, so a colleague's later entry
+              // — one the file never saw — survives its own backup's restore.
+              patch[slice] = [
+                ...current.map(r => { const f = byId.get(rowId(r)); return f ? { ...f, synced: false } : r; }),
+                ...rows.filter(r => !ids.has(rowId(r))),
+              ];
+            }
+            return patch as Partial<AppState>;
+          });
+
+          // A trader's balance has no column anywhere: it is a cache of that trader's ledger, so
+          // a restore that moved money must rebuild it or the home screen reads the old dues off
+          // a stale cache. The same call the pull makes, for the same reason.
+          if (touched.has('traders') || touched.has('traderTxns')) {
+            const next = get() as unknown as Record<string, unknown>;
+            set({ traders: rebalanceTraders(next.traders as Trader[], next.traderTxns as TraderTxn[], false) } as Partial<AppState>);
+          }
+
+          const counts = Object.entries(plan.counts)
+            .map(([slice, c]) => `${SLICE_LABELS[slice] ?? slice}: ${c.add} new, ${c.change} changed`)
+            .join('; ');
+          set(s => ({
+            audit: [
+              auditStep(s, 'RESTORE_COMPLETED', 'Backup', companyId,
+                `${written} records restored — ${counts}`, summary),
+              ...s.audit,
+            ].slice(0, 500),
+          }));
+          return { ok: true };
+        } catch (e) {
+          // The failure is on the trail beside the attempt: a restore that stopped halfway is
+          // exactly the thing a later reader needs to find.
+          const reason = e instanceof Error ? e.message : String(e);
+          set(s => ({
+            audit: [
+              auditStep(s, 'RESTORE_FAILED', 'Backup', companyId,
+                `Restore stopped: ${reason}`, summary),
+              ...s.audit,
+            ].slice(0, 500),
+          }));
+          return { ok: false, error: reason };
+        }
+      },
 
       syncPending: () => set(s => ({
         mortality: s.mortality.map(m => ({ ...m, synced: true })),
@@ -2751,11 +3262,14 @@ export const useApp = create<AppState>()(persist(
     // the farm's own entry in Finance, dated the day the labour is paid.
     // v19: the day-lock concept is removed. Any locked-day rows an older save still holds
     // are dropped; no other data is affected and nothing is re-seeded.
-    version: 19,
+    // v20: a seed person who also exists in the cloud is folded into the cloud record (joined
+    // on their unique mobile) and every reference to the retired id is repointed, so an owner
+    // edits the one copy that actually syncs. No financial or operational row is removed.
+    version: PERSIST_VERSION,
     storage: createJSONStorage(() => localStorage),
     migrate: migrateSaved,
     partialize: (s) => {
-      const { toasts, online, ...rest } = s;
+      const { toasts, online, accessNotice, ...rest } = s;
       return rest as unknown as AppState;
     },
   },
@@ -2773,9 +3287,26 @@ export function useActiveCompanyId(): string | null {
   return useApp(s => s.session?.companyId ?? null);
 }
 
+/** The live answer to "may this person be working here?" — recomputed off the slices a pull
+ *  refreshes, so a deactivation or a removed membership changes the app's shape immediately. */
+export function useCompanyAccess(): CompanyAccess {
+  const session = useApp(s => s.session);
+  const user = useCurrentUser();
+  const companies = useApp(s => s.companies);
+  return useMemo(() => companyAccessOf(session, user, companies), [session, user, companies]);
+}
+
+/** The companies this person may enter to work, from the selector's point of view. */
+export function useOperableCompanies(): Company[] {
+  const user = useCurrentUser();
+  const companies = useApp(s => s.companies);
+  return useMemo(() => operableCompanies(user, companies), [user, companies]);
+}
+
 export function useCan(key: PermissionKey): boolean {
   const user = useCurrentUser();
-  if (!user) return false;
+  const access = useCompanyAccess();
+  if (!user || !contextIntact(access)) return false;
   return DEFAULT_ROLE_PERMISSIONS[user.role]?.[key] ?? false;
 }
 
@@ -2851,7 +3382,7 @@ export function useCompanyData() {
       users: users.filter(u => u.companyIds.includes(companyId ?? '__none__')),
     };
   }, [
-    companyId, companies, farms, sheds, batches, mortality, eggs, feed, saleLogs,
+    companyId, companies, farms, sheds, batches, mortality, eggs, feed, feedRounds, saleLogs,
     saleEntries, eggSaleBookings, eggWastages, feedStock, medicineItems, medicineStock, feedFormulas,
     finance, traders, traderTxns, tasks,
     assignments, audit, users, cashHandovers, cashCounts,
