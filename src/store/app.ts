@@ -788,6 +788,64 @@ function repointIds<T>(node: T, map: Map<string, string>): T {
 }
 
 /**
+ * The seed shipped its people under `u_*` ids; Supabase gave the same person a uuid id, because
+ * `profiles.id` is `auth.users.id`. Mobile is unique on both sides, so it is the join, and the
+ * cloud record wins: it is the only one the database can ever be told about (`pushUsers` has to
+ * refuse a non-uuid id), so leaving both standing offers the owner buttons on a copy that can
+ * never sync. A seed person with no cloud twin is returned untouched — there is nothing to fold
+ * it into.
+ */
+function cloudTwinsOf(users: User[]): Map<string, string> {
+  const cloudByMobile = new Map<string, string>();
+  for (const u of users) if (CLOUD_ID_RE.test(u.id)) cloudByMobile.set(u.mobile, u.id);
+  const retired = new Map<string, string>();
+  for (const u of users) {
+    if (CLOUD_ID_RE.test(u.id)) continue;
+    const twin = cloudByMobile.get(u.mobile);
+    if (twin) retired.set(u.id, twin);
+  }
+  return retired;
+}
+
+/** Fold the duplicated people out of one record and repoint every reference to a retired id.
+ *  Mutates the object handed in; returns how many people folded. */
+function foldCloudTwins(record: Record<string, unknown>): number {
+  const users = (record.users ?? []) as User[];
+  const retired = cloudTwinsOf(users);
+  if (!retired.size) return 0;
+  record.users = users.filter(u => !retired.has(u.id));
+  for (const key of Object.keys(record)) {
+    record[key] = repointIds(record[key], retired);
+  }
+  return retired.size;
+}
+
+/** The slices a person id can be named inside, plus the working context. */
+const IDENTITY_SLICES = [...Object.keys(baseSeed()), 'session'];
+
+/**
+ * Fold the seed's people into the cloud ones the store now holds — the same join persist v20
+ * makes, run again after every read of the people tables. v20 fires once, when a save's version
+ * differs, which on a device that cached the demo roster before its farm went live is long
+ * before a single uuid arrives: the hydrate merge keeps browser-only rows, so both records stand
+ * and the owner sees each person twice.
+ *
+ * Dropping a seed row here can never be read as a delete against `profiles`: the send memory for
+ * people is built from uuid ids only, both when primed from a pull and when diffed. What does
+ * move is a record that named the retired id — it now names a login the database knows, so the
+ * row the queue was holding ("waits for X to have a login") goes out, which is exactly what that
+ * hold waits for.
+ */
+export function foldSeedIdentities(): number {
+  const state = useApp.getState() as unknown as Record<string, unknown>;
+  const slices: Record<string, unknown> = {};
+  for (const key of IDENTITY_SLICES) slices[key] = state[key];
+  const folded = foldCloudTwins(slices);
+  if (folded) useApp.setState(slices as never);
+  return folded;
+}
+
+/**
  * Upgrade a save written before the current store version without discarding it:
  * unknown or missing slices fall back to the seed, v5 fields (the four egg-grade
  * pools, graded sale logs, the feed round log) are backfilled per record, and a
@@ -903,27 +961,10 @@ function migrateSaved(saved: unknown, fromVersion = 0): AppState {
     });
   }
 
-  // v20 — one record per person. The seed shipped its people under `u_*` ids; Supabase gave the
-  // same person a uuid id, and the hydrate merge keeps both, so an owner saw Mohan Lal twice and
-  // could easily edit the copy that can never sync (pushUsers has to refuse a non-uuid id, the
-  // profiles key is a uuid column). Mobile is unique on both sides, so it is the join: the cloud
-  // row wins, and every reference this save holds to the retired id follows it. A seed person
-  // with no cloud twin is left exactly as it was — there is nothing here to fold it into.
-  const retired = new Map<string, string>();
-  const cloudByMobile = new Map<string, string>();
-  for (const u of merged.users) if (CLOUD_ID_RE.test(u.id)) cloudByMobile.set(u.mobile, u.id);
-  for (const u of merged.users) {
-    if (CLOUD_ID_RE.test(u.id)) continue;
-    const twin = cloudByMobile.get(u.mobile);
-    if (twin) retired.set(u.id, twin);
-  }
-  if (retired.size) {
-    merged.users = merged.users.filter(u => !retired.has(u.id));
-    for (const key of Object.keys(merged)) {
-      (merged as unknown as Record<string, unknown>)[key] =
-        repointIds((merged as unknown as Record<string, unknown>)[key], retired);
-    }
-  }
+  // v20 — one record per person. See `foldCloudTwins`: the cloud row wins and every reference
+  // this save holds to the retired id follows it. A hydrate that brings people in later folds
+  // them the same way (exported `foldSeedIdentities`), since this line only runs once per save.
+  foldCloudTwins(merged as unknown as Record<string, unknown>);
 
   // v21 — the "ibd" dose logged on 25-Sep-2026 while proving the owner's create-login flow was a
   // test entry, not farm history, so its ₹1,000 of vaccine money leaves every book. The rows are

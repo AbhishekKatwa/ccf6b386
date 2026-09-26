@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { GROUPS, allowed, itemVisible } from '@/components/layout/nav';
 import { MANAGEABLE_ROLES, buildTeam, personBlock } from '@/lib/team';
 import { runtime } from '@/lib/runtime';
-import { useApp } from '@/store/app';
+import { useApp, foldSeedIdentities } from '@/store/app';
 import { dataService } from '@/services/dataService';
 import { installClient, createFakeClient, resetClient, requestLog } from './harness/supabase-stub.mjs';
 import {
@@ -294,5 +294,62 @@ describe('P0 · in cloud mode the owner’s edit goes through set_person_access,
     assert.equal((await dataService.users.updateRole(U.ALPHA_MANAGER, 'FARM_LABOR')).ok, false);
     assert.deepEqual(seen, [], 'a refusal costs no request');
     assert.equal(requestLog().length, 0);
+  });
+});
+
+// ============================ one person, one record ============================
+
+/** A uuid shaped exactly like `profiles.id`, which IS `auth.users.id`. */
+const CLOUD_LABOR = '7c1f9a02-3b64-4d15-9a8e-2f6c0d51b477';
+
+describe('P0 · a cloud identity lands on a device that still holds the seed roster', () => {
+  /** The same labor as Supabase holds them: one mobile, two records. */
+  function withTwin() {
+    const world = buildWorld();
+    const labor = world.users.find(u => u.id === U.ALPHA_LABOR);
+    resetApp({ ...world, users: [...world.users, { ...labor, id: CLOUD_LABOR }] });
+    return world;
+  }
+
+  it('the fold keeps the cloud row and repoints every record that named the seed one', () => {
+    withTwin();
+    assert.equal(foldSeedIdentities(), 1);
+    assert.equal(person(U.ALPHA_LABOR), undefined,
+      'the copy that can never sync leaves the roster — pushUsers must refuse a non-uuid id');
+    assert.equal(person(CLOUD_LABOR).role, 'FARM_LABOR');
+    assert.equal(state().mortality.find(m => m.id === 'mo_test_a1').createdBy, CLOUD_LABOR,
+      'a day logged by the seed row is now logged by the person');
+    assert.equal(state().assignments[0].userId, CLOUD_LABOR, 'so is the shed assignment');
+    assert.equal(state().eggs.filter(e => e.createdBy === CLOUD_LABOR).length, 3);
+    assert.equal(person(U.ALPHA_OWNER).id, U.ALPHA_OWNER, 'a person with no twin is left exactly as they were');
+    assert.equal(foldSeedIdentities(), 0, 'and the next read of the roster has nothing left to fold');
+  });
+
+  it('a device that only holds seed people folds nothing', () => {
+    const world = buildWorld();
+    resetApp(world);
+    assert.equal(foldSeedIdentities(), 0);
+    assert.equal(state().users.length, world.users.length);
+  });
+
+  it('after the fold, an owner’s edit lands on the record that syncs', () => {
+    const world = withTwin();
+    foldSeedIdentities();
+    signInAs(U.ALPHA_OWNER, CO.ALPHA);
+    const laborMobile = mobileOf(world, U.ALPHA_LABOR);
+    assert.equal(state().users.filter(u => u.mobile === laborMobile).length, 1, 'one Alpha Labor, not two');
+    assert.equal(state().updateUserRole(CLOUD_LABOR, 'FARM_MANAGER').ok, true);
+    assert.equal(person(CLOUD_LABOR).role, 'FARM_MANAGER');
+    const st = state();
+    const roster = buildTeam({
+      users: st.users.filter(u => u.companyIds.includes(CO.ALPHA)),
+      sheds: st.sheds, batches: st.batches, assignments: st.assignments, audit: st.audit,
+      companyId: CO.ALPHA, caller: person(U.ALPHA_OWNER), platform: false,
+    });
+    assert.equal(roster.map(r => r.user.id).includes(U.ALPHA_LABOR), false,
+      'the roster no longer offers the copy');
+    assert.equal(roster.some(r => r.user.id === CLOUD_LABOR), true);
+    assert.equal(roster.find(r => r.user.id === CLOUD_LABOR).sheds.length, 1,
+      'and the work the seed row carried — the labor’s shed assignment — came with them');
   });
 });

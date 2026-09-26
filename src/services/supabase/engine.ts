@@ -13,7 +13,7 @@ import { supabase } from '@/lib/supabase';
 import { runtime } from '@/lib/runtime';
 import { DatabaseError, logDatabaseError, normalizeDatabaseError } from '@/lib/dbErrors';
 import { companyAccessOf, contextIntact, operableCompanies } from '@/lib/companyAccess';
-import { useApp, rebalanceTraders } from '@/store/app';
+import { useApp, rebalanceTraders, foldSeedIdentities } from '@/store/app';
 import { pullAll, pullCatalog, pullSlice, pullUsers, type PulledState } from './pull';
 import { PushEngine } from './push';
 import { SLICES, SYNCED_SLICES } from './registry';
@@ -103,6 +103,12 @@ export async function hydrateFromDatabase(): Promise<void> {
   // the engine with them would let a later store change speak for a session that is gone.
   const { data: { session } } = await supabase!.auth.getSession();
   if (!session) return;
+  // Fold first (§45): seed identities that have cloud twins must be collapsed before any
+  // measurement or priming, or the diff will see repointed references as new rows and try
+  // to push them against ids the database has already retired. The hold gate ("waits for X
+  // to have a login") only fires when the send memory knows the person — a fold that moves
+  // the reference after prime() bypasses that gate entirely.
+  if ('users' in rows) foldSeedIdentities();
   // prime first: what the database just handed over is what it already has. Only then does
   // the merge bring in the browser's own rows, so the diff sees as owed exactly the set
   // the database has never been told about — never the whole cache.
@@ -416,9 +422,9 @@ async function reconcile(): Promise<void> {
     return;
   }
   // server-authoritative (§37): pulled rows replace what they touch; browser-only rows survive.
-  // What the pull just handed over is absorbed first, so the next diff owes only the rows
-  // this browser changed — never the ones the database itself just answered with. A row this
-  // device has already changed and not yet sent is measured before that memory moves.
+  // Fold seed identities before the measurement, or repointed references look like new rows
+  // and bypass the hold gate that says "waits for X to have a login".
+  if ('users' in pulled) foldSeedIdentities();
   const owed = engine.owed(pulled, useApp.getState() as unknown as Record<string, any>);
   engine.absorb(pulled);
   mergeReceived(pulled, owed);
