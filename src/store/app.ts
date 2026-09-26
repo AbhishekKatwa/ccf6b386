@@ -187,7 +187,8 @@ interface AppState {
     /** Supabase mode pre-mints the id (a uuid, because profiles.id IS auth.users.id). */
     id?: string;
   }) => { ok: boolean; error?: string; user?: User };
-  toggleUserActive: (id: string) => void;
+  /** The platform roster's on/off switch. Refused for the account this session signed in with. */
+  toggleUserActive: (id: string) => Result;
   updateUserCompanies: (id: string, companyIds: string[]) => void;
   /** Change one person's role inside the active company. Guarded, audited, never self-applied. */
   updateUserRole: (id: string, role: Role) => Result;
@@ -1390,10 +1391,20 @@ export const useApp = create<AppState>()(persist(
         set(s => ({ users: [...s.users, user], audit: audit(s, 'User', user.id, 'CREATE') }));
         return { ok: true, user };
       },
-      toggleUserActive: (id) => set(s => ({
-        users: s.users.map(u => u.id === id ? { ...u, active: !u.active, updatedAt: nowISO() } : u),
-        audit: audit(s, 'User', id, 'UPDATE', 'active'),
-      })),
+      /** The platform roster's on/off switch. Never for the account this browser is signed in
+       *  with: a deactivated profile has no identity under RLS (015 narrows `app.uid()` exactly
+       *  there), so that click would leave the session reading an empty database with nobody on
+       *  the device left who could click it back. */
+      toggleUserActive: (id) => {
+        if (get().session?.userId === id) {
+          return { ok: false, error: 'You cannot switch off the account you are signed in with' };
+        }
+        set(s => ({
+          users: s.users.map(u => u.id === id ? { ...u, active: !u.active, updatedAt: nowISO() } : u),
+          audit: audit(s, 'User', id, 'UPDATE', 'active'),
+        }));
+        return { ok: true };
+      },
       updateUserCompanies: (id, companyIds) => set(s => ({
         users: s.users.map(u => u.id === id ? { ...u, companyIds, updatedAt: nowISO() } : u),
         audit: audit(s, 'User', id, 'UPDATE', 'companyIds'),

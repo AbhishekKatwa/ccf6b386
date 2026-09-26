@@ -203,7 +203,8 @@ export function AdminScreen() {
                 )}
                 <Button size="sm" variant={u.active ? 'outline' : 'success'} icon={<Power size={14} />}
                   onClick={() => {
-                    toggleUserActive(u.id);
+                    const r = toggleUserActive(u.id);
+                    if (!r.ok) return pushToast('error', r.error ?? 'Cannot change this user');
                     pushToast(localOnly ? 'info' : 'success', localOnly
                       ? `${u.name} is not a cloud account — this change applies to this device only`
                       : (u.active ? 'User deactivated' : 'User activated'));

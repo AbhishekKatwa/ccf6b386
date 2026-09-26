@@ -4,7 +4,7 @@ import clsx from 'clsx';
 import {
   LayoutDashboard, ClipboardList, Warehouse, Layers, Wheat, FlaskConical, Handshake,
   Wallet, BarChart3, User, Phone, Menu, Building2,
-  Wifi, WifiOff, RefreshCw, Feather, Receipt, ChevronDown, Check, History, LogOut, BellRing,
+  Wifi, WifiOff, CloudOff, RefreshCw, Feather, Receipt, ChevronDown, Check, History, LogOut, BellRing,
   CalendarRange, Pill, Egg,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -54,6 +54,19 @@ export function SyncPill({ compact = false }: { compact?: boolean }) {
         title={pending ? `${pending} change(s) waiting for the internet — they will go out on their own when it returns` : undefined}
       >
         <WifiOff size={11} /> {pending ? `Offline · ${pending}` : 'Offline'}
+      </span>
+    );
+  }
+  // A build with no Supabase configured has no queue to report and no database to be synced
+  // with: every record on it is this browser's alone. Saying "Synced" there would be the one
+  // lie this chip exists to avoid, and it is the difference between farm data and demo data.
+  if (!cloud) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-full bg-warn-soft text-warn px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em]"
+        title="This app instance has no cloud connection: everything on it lives in this browser only, and nothing here is shared with the farm's database."
+      >
+        <CloudOff size={11} /> {compact ? 'Local' : 'Local only'}
       </span>
     );
   }
