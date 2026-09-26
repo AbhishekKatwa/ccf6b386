@@ -7,7 +7,8 @@
  * trader's cached `outstandingAmount`) is dropped by toRow on purpose: the database is the
  * fact, the client re-derives the read.
  */
-import { toRow, fromRow, camel } from './rows';
+import { toRow, fromRow, camel, isUuid } from './rows';
+import type { PermissionKey, Role } from '@/types';
 
 export interface ChildDef {
   table: string;
@@ -33,6 +34,21 @@ export interface SliceDef {
   finish?: (o: any, kids: Record<string, any[]>) => any;
   skip?: (o: any) => boolean;
   children?: ChildDef[];
+  /**
+   * This table's own SELECT verb in 003 — `readKey` is a permission key, `readRoles` the
+   * literal role list, exactly as the migration states them.
+   *
+   * The engine's whole memory is built from the rows the database hands back, so a slice this
+   * session cannot read can never be confirmed: every cached row of it looks new on every
+   * pass, the queue can never drain, and RLS refuses the write anyway. Such a slice is left
+   * alone entirely — not sent, not counted as owed, and above all not read as a delete.
+   *
+   * Several of these are narrower than the table's INSERT verb on purpose (a labour may book a
+   * feed round's consumption but never open the consumption table). That asymmetry belongs to
+   * 003; this is its mirror, not a second opinion. RLS stays the boundary.
+   */
+  readKey?: PermissionKey;
+  readRoles?: Role[];
 }
 
 const colToDb = (table: string, fk: string) => (parentId: string, item: any, i: number) =>
@@ -57,10 +73,19 @@ export const SLICES: SliceDef[] = [
       return o;
     },
   },
-  { slice: 'assignments', table: 'batch_assignments' },
+  {
+    slice: 'assignments', table: 'batch_assignments',
+    // user_id is a foreign key on profiles, and the legacy cache keys its people `u_*`: a row
+    // naming one has no uuid to offer, so it can never land any more than the person beside it
+    // can. The import leaves the same rows out, and pushUsers refuses them for the same reason.
+    skip: o => !isUuid(o.userId),
+  },
   { slice: 'mortality', table: 'mortality' },
   {
     slice: 'feed', table: 'feed_consumption',
+    // 003: the consumption snapshot is the ops roles' read; a labour's round books it but the
+    // labour cannot open the table.
+    readRoles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'MASTER_ADMIN'],
     children: [{
       table: 'feed_consumption_deductions', fk: 'consumption_id', field: 'deduction',
       toDb: colToDb('feed_consumption_deductions', 'consumption_id'),
@@ -84,6 +109,7 @@ export const SLICES: SliceDef[] = [
   { slice: 'saleLogs', table: 'sale_logs' },
   {
     slice: 'saleEntries', table: 'sale_entries',
+    readKey: 'viewFinance',
     renames: { cashHandledById: 'cash_handled_by' },
     inverse: { cash_handled_by: 'cashHandledById' },
     prepare: ({ rates, lines, credit, ...o }) => ({
@@ -119,12 +145,15 @@ export const SLICES: SliceDef[] = [
       return rest;
     },
   },
-  { slice: 'eggSaleBookings', table: 'egg_sale_bookings' },
-  { slice: 'feedStock', table: 'feed_stock' },
-  { slice: 'medicineItems', table: 'medicine_items' },
-  { slice: 'medicineStock', table: 'medicine_stock' },
+  { slice: 'eggSaleBookings', table: 'egg_sale_bookings', readKey: 'viewFinance' },
+  { slice: 'feedStock', table: 'feed_stock', readRoles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'MASTER_ADMIN'] },
+  { slice: 'medicineItems', table: 'medicine_items',
+    readRoles: ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER', 'FARM_LABOR', 'MASTER_ADMIN'] },
+  { slice: 'medicineStock', table: 'medicine_stock',
+    readRoles: ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER', 'FARM_LABOR', 'MASTER_ADMIN'] },
   {
     slice: 'feedFormulas', table: 'feed_formulas',
+    readRoles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'MASTER_ADMIN'],
     children: [{
       table: 'feed_formula_items', fk: 'formula_id', field: 'items',
       toDb: colToDb('feed_formula_items', 'formula_id'),
@@ -133,6 +162,7 @@ export const SLICES: SliceDef[] = [
     finish: (o, kids) => ({ ...o, items: kids.feed_formula_items ?? o.items }),
   },
   { slice: 'finance', table: 'finance_txns',
+    readKey: 'viewFinance',
     renames: { handledById: 'handled_by', authorizedById: 'authorized_by' },
     inverse: { handled_by: 'handledById', authorized_by: 'authorizedById' },
     // godown is NOT NULL DEFAULT false: absent means exactly that — the row is shed money,
@@ -140,19 +170,21 @@ export const SLICES: SliceDef[] = [
     // asking for a null there.
     prepare: o => ({ ...o, godown: o.godown === true }),
   },
-  { slice: 'traders', table: 'traders',
+  { slice: 'traders', table: 'traders', readKey: 'viewFinance',
     // the balance the list shows is replayed off the ledger by useTraderBalances; a pull
     // carries no cached figure, and none should be needed.
     finish: o => ({ ...o, outstandingAmount: 0 }),
   },
-  { slice: 'traderTxns', table: 'trader_txns',
+  { slice: 'traderTxns', table: 'trader_txns', readKey: 'viewFinance',
     renames: { handledById: 'handled_by', authorizedById: 'authorized_by' },
     inverse: { handled_by: 'handledById', authorized_by: 'authorizedById' },
   },
   { slice: 'tasks', table: 'tasks' },
-  { slice: 'vaccinations', table: 'vaccinations' },
+  { slice: 'vaccinations', table: 'vaccinations',
+    readRoles: ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER', 'FARM_LABOR'] },
   {
     slice: 'vaccinationTemplates', table: 'vaccination_templates',
+    readRoles: ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER', 'FARM_LABOR'],
     children: [{
       table: 'vaccination_template_items', fk: 'template_id', field: 'items',
       toDb: colToDb('vaccination_template_items', 'template_id'),
@@ -161,13 +193,13 @@ export const SLICES: SliceDef[] = [
     finish: (o, kids) => ({ ...o, items: kids.vaccination_template_items ?? o.items }),
   },
   { slice: 'supportMessages', table: 'support_messages' },
-  { slice: 'cashHandovers', table: 'cash_handovers' },
-  { slice: 'cashCounts', table: 'cash_counts',
+  { slice: 'cashHandovers', table: 'cash_handovers', readKey: 'viewFinance' },
+  { slice: 'cashCounts', table: 'cash_counts', readKey: 'viewFinance',
     renames: { closedById: 'closed_by' },
     inverse: { closed_by: 'closedById' },
   },
   {
-    slice: 'audit', table: 'audit',
+    slice: 'audit', table: 'audit', readKey: 'manageUsers',
     // A pre-v19 cache still carries the day lock's trail; the table has no verbs for it,
     // and the import drops the same rows.
     skip: o => o.action === 'LOCK' || o.action === 'UNLOCK' || o.entity === 'DayLock',

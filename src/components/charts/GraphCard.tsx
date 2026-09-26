@@ -1,7 +1,9 @@
-import { Component, useState, type ErrorInfo, type ReactNode } from 'react';
+import { Component, useId, useState, type ErrorInfo, type ReactNode } from 'react';
 import clsx from 'clsx';
 import { AlertTriangle, RotateCw, TrendingUp } from 'lucide-react';
+import { motion } from 'motion/react';
 import { Surface } from '@/components/ui/Card';
+import { EASE, INDICATOR_SPRING, MOTION, Presence, useReducedMotion } from '@/components/motion';
 
 /**
  * The frame every owner-dashboard graph is drawn in. It owns the five states a
@@ -15,20 +17,39 @@ import { Surface } from '@/components/ui/Card';
 export function GraphRange<T extends string>({ value, onChange, options, label }: {
   value: T; onChange: (v: T) => void; options: readonly { value: T; label: string }[]; label?: string;
 }) {
+  const reduced = useReducedMotion();
+  // One shared layout id per control (never across the four graphs on a page), so the active
+  // pill slides between widths instead of repainting.
+  const pill = useId();
   return (
     <div className="flex gap-0.5 bg-sunk rounded-full p-0.5 shrink-0" role="group" aria-label={label}>
-      {options.map(o => (
-        <button
-          key={o.value}
-          type="button"
-          aria-pressed={value === o.value}
-          onClick={() => onChange(o.value)}
-          className={clsx(
-            'px-2.5 py-1 rounded-full font-mono text-[10px] font-semibold uppercase tracking-[0.08em] press transition-colors',
-            value === o.value ? 'bg-brand text-white shadow-card' : 'text-muted hover:text-ink',
-          )}
-        >{o.label}</button>
-      ))}
+      {options.map(o => {
+        const on = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(o.value)}
+            className={clsx(
+              'relative px-2.5 py-1 rounded-full font-mono text-[10px] font-semibold uppercase tracking-[0.08em] press transition-colors',
+              on ? 'text-white' : 'text-muted hover:text-ink',
+            )}
+          >
+            {on && (
+              <motion.span
+                layoutId={pill}
+                initial={reduced ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={reduced ? { duration: 0 } : INDICATOR_SPRING}
+                className="absolute inset-0 rounded-full bg-brand shadow-card"
+                aria-hidden
+              />
+            )}
+            <span className="relative z-10">{o.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -138,8 +159,12 @@ export function GraphCard({ title, subtitle, actions, stats, loading = false, em
 }) {
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const reduced = useReducedMotion();
 
   const shown = error === null && !loading && !empty;
+  // Which of the five states is on screen decides the key, so a skeleton hands over to its
+  // graph with one short crossfade instead of the plot appearing inside a still frame.
+  const phase = loading ? 'loading' : error !== null ? 'error' : empty ? 'empty' : 'ready';
 
   return (
     <Surface className={clsx('p-4 min-w-0', className)}>
@@ -164,15 +189,25 @@ export function GraphCard({ title, subtitle, actions, stats, loading = false, em
       )}
 
       <div className="mt-3">
-        {loading ? <GraphSkeleton height={height} />
-          : error !== null ? <GraphError message={error} onRetry={() => { setError(null); setAttempt(a => a + 1); }} />
-          : empty ? <GraphEmpty {...empty} height={height} />
-          : (
-            <GraphErrorBoundary key={attempt} graph={title} detail={detail} onError={setError}>
-              {children}
-            </GraphErrorBoundary>
-          )}
-        {shown && <GraphWarnings items={(warnings ?? []).filter(Boolean)} />}
+        <Presence mode="wait">
+          <motion.div
+            key={phase}
+            initial={reduced ? false : { opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, transition: { duration: MOTION.micro.duration } }}
+            transition={reduced ? { duration: 0.01 } : { duration: MOTION.component.duration, ease: EASE }}
+          >
+            {loading ? <GraphSkeleton height={height} />
+              : error !== null ? <GraphError message={error} onRetry={() => { setError(null); setAttempt(a => a + 1); }} />
+              : empty ? <GraphEmpty {...empty} height={height} />
+              : (
+                <GraphErrorBoundary key={attempt} graph={title} detail={detail} onError={setError}>
+                  {children}
+                </GraphErrorBoundary>
+              )}
+            {shown && <GraphWarnings items={(warnings ?? []).filter(Boolean)} />}
+          </motion.div>
+        </Presence>
       </div>
     </Surface>
   );

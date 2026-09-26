@@ -14,7 +14,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { LedgerDayHeader } from '@/components/godown/StockLedger';
 import { GraphCard, GraphRange } from '@/components/charts/GraphCard';
 import { axisNum, BarSeries, DonutChart, HBarList, PairedBars, SERIES_COLORS, type HRow } from '@/components/charts/DataViz';
-import { PageReveal, ScrollReveal, ChartReveal, StaggerContainer, StaggerItem } from '@/components/motion';
+import { PageReveal, ScrollReveal, ChartReveal, StaggerContainer, StaggerItem, TabPanel } from '@/components/motion';
 import { medicineStockBoard, usageExpenseOf, valueMedicines } from '@/lib/medicines';
 import { unitQty } from '@/components/medicine/medicineMeta';
 import {
@@ -702,6 +702,7 @@ export function FinanceScreen() {
       <div className="px-4 sm:px-0 mt-3 space-y-5">
         {tabs}
 
+        <TabPanel id={tab} className="space-y-5">
         {tab !== 'ledger' && (
           /* period context row */
           <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1530,6 +1531,7 @@ export function FinanceScreen() {
             {filtered.length > 50 && <p className="text-[11px] text-muted px-1">Showing the 50 most recent of {filtered.length}. Narrow the filters to see more.</p>}
           </div>
         )}
+        </TabPanel>
       </div>
 
       {/* shed drill-down */}

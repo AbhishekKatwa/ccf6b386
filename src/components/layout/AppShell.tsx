@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore, type ReactNode } from 'react';
+import { lazy, Suspense, useState, useEffect, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
 import {
@@ -8,180 +8,93 @@ import {
   CalendarRange, Pill, Egg,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useApp, useCurrentUser } from '@/store/app';
-import { runtime } from '@/lib/runtime';
-import { cloudSyncStatus, retrySync, type CloudSyncStatus } from '@/services/supabase/engine';
+import { useApp, useCurrentUser, useOperableCompanies } from '@/store/app';
+import { useSyncStatus } from '@/hooks/useSyncStatus';
 import { Avatar } from '@/components/ui/Card';
 import { ActionSheet, ConfirmDialog } from '@/components/ui/Dialog';
 import { FORMULA_VIEW_ROLES, MEDICINE_ROLES } from '@/lib/permissions';
 import { ROLE_LABELS, type Role } from '@/types';
-import { useReducedMotion } from '@/components/motion';
+import { useReducedMotion, EASE, INDICATOR_SPRING, MOTION, Presence } from '@/components/motion';
+import { Search, X } from 'lucide-react';
+import { allowed, mobileTabs, visibleGroups, type MoreAction } from './nav';
 
-interface NavItem { to: string; label: string; icon: ReactNode; end?: boolean; roles?: Role[] }
-interface NavGroup { title: string; items: NavItem[]; roles?: Role[] }
-interface MoreAction { icon: ReactNode; label: string; hint?: string; onClick: () => void; roles?: Role[] }
+/**
+ * The palette is a keystroke away, not a click away from the screen a person is on, so its
+ * module — the component and the search index it builds — has no reason to ride along on every
+ * boot. It is fetched on the first ask, and warmed while the tab is idle so ⌘K stays instant.
+ */
+const paletteModule = () => import('@/components/command/CommandPalette');
+const CommandPalette = lazy(() => paletteModule().then(m => ({ default: m.CommandPalette })));
 
 /** Nav is role-gated so users never see modules they cannot access (§14).
  *  MASTER_ADMIN sees every panel: platform duties require reading any company. */
 const M: Role = 'MASTER_ADMIN';
-const GROUPS: NavGroup[] = [
-  {
-    title: 'Overview',
-    items: [
-      { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={17} />, end: true },
-      //{ to: '/alerts', label: 'Alerts', icon: <BellRing size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', M] },
-      //{ to: '/tasks', label: 'Tasks', icon: <ClipboardList size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_LABOR', M] },
-      { to: '/log', label: "Today's log", icon: <History size={17} />, roles: ['FARM_LABOR'] },
-    ],
-  },
-  {
-    title: 'Farm',
-    roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', M],
-    items: [
-      { to: '/farms', label: 'Sheds', icon: <Warehouse size={17} /> },
-      //{ to: '/batches', label: 'Batches', icon: <Layers size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER', M] },
-      //{ to: '/feed/formulas', label: 'Feed', icon: <FlaskConical size={17} />, roles: FORMULA_VIEW_ROLES },
-      { to: '/feed', label: 'Godown', end: true, icon: <Wheat size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR', M] },
-      { to: '/medicines', label: 'Medicines & Vaccines', icon: <Pill size={17} />, roles: MEDICINE_ROLES },
-    ],
-  },
-  {
-    title: 'Commerce',
-    roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR', M],
-    items: [
-      { to: '/sales', label: 'Sales', end: true, icon: <Receipt size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR', M] },
-      { to: '/eggs', label: 'Eggs', icon: <Egg size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR', M] },
-      { to: '/traders', label: 'Traders', icon: <Handshake size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', M] },
-      { to: '/finance', label: 'Finance', icon: <Wallet size={17} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', M] },
-    ],
-  },
-  {
-    title: 'Insights',
-    roles: ['OWNER', 'FINANCIAL_SUPERVISOR', M],
-    items: [
-      { to: '/reports', label: 'Reports', icon: <BarChart3 size={17} /> },
-    ],
-  },
-  {
-    title: 'Platform',
-    roles: ['MASTER_ADMIN'],
-    items: [
-      { to: '/admin', label: 'Companies', icon: <Building2 size={17} /> },
-    ],
-  },
-  {
-    title: 'Account',
-    items: [
-      { to: '/profile', label: 'Profile', icon: <User size={17} /> },
-      { to: '/contact', label: 'Support', icon: <Phone size={17} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'MASTER_ADMIN'] },
-    ],
-  },
-];
 
-function allowed(item: { roles?: Role[] }, role: Role): boolean {
-  return !item.roles || item.roles.includes(role);
+/** The chord the palette listens for: ⌘K on a Mac, Ctrl K anywhere else. */
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const SEARCH_KEY_HINT = IS_MAC ? '⌘K' : 'Ctrl K';
+
+function searchChord(e: KeyboardEvent): boolean {
+  return (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k';
 }
-
-function visibleGroups(role: Role): NavGroup[] {
-  return GROUPS
-    .filter(g => allowed(g, role))
-    .map(g => ({ ...g, items: g.items.filter(it => allowed(it, role)) }))
-    .filter(g => g.items.length > 0);
-}
-
-function mobileTabs(role: Role): NavItem[] {
-  if (role === 'FARM_LABOR') {
-    return [
-      { to: '/', label: 'Today', icon: <LayoutDashboard size={20} />, end: true },
-      { to: '/log', label: 'Log', icon: <History size={20} /> },
-    ];
-  }
-  if (role === 'MASTER_ADMIN') {
-    return [
-      { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} />, end: true },
-      { to: '/admin', label: 'Companies', icon: <Building2 size={20} /> },
-      { to: '/profile', label: 'Profile', icon: <User size={20} /> },
-    ];
-  }
-  /** Four thumb-reach destinations; everything else lives in the More sheet. */
-  const base: NavItem[] = [
-    { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} />, end: true },
-    { to: '/farms', label: 'Sheds', icon: <Warehouse size={20} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER'] },
-    //{ to: '/batches', label: 'Batches', icon: <Layers size={20} />, roles: ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER'] },
-    { to: '/sales', label: 'Sales', end: true, icon: <Receipt size={20} />, roles: ['OWNER', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_SUPERVISOR'] },
-  ];
-  return base.filter(t => allowed(t, role)).slice(0, 4);
-}
-
-const NO_CLOUD_SYNC: CloudSyncStatus = { pending: 0, errors: [] };
-const LOCAL_SYNC = { subscribe: () => () => { /* local mode: no engine to watch */ }, get: () => NO_CLOUD_SYNC };
 
 export function SyncPill({ compact = false }: { compact?: boolean }) {
-  const online = useApp(s => s.online);
-  const syncPending = useApp(s => s.syncPending);
-  const mortality = useApp(s => s.mortality);
-  const feed = useApp(s => s.feed);
-  const eggs = useApp(s => s.eggs);
-  const saleLogs = useApp(s => s.saleLogs);
-  const saleEntries = useApp(s => s.saleEntries);
-  const feedRounds = useApp(s => s.feedRounds);
-  const vaccinations = useApp(s => s.vaccinations);
-
-  // In cloud mode the badge is the engine's real queue: rows the database does not have
-  // yet, and its own sentence for the ones it refused. Tapping retries them — it never
-  // claims a sync the wire did not complete.
-  const cloud = runtime.cloud;
-  const status = useSyncExternalStore(
-    cloud ? cloudSyncStatus.subscribe : LOCAL_SYNC.subscribe,
-    cloud ? cloudSyncStatus.get : LOCAL_SYNC.get,
-  );
-  const legacyPending = [...mortality, ...feed, ...eggs, ...saleLogs, ...saleEntries, ...feedRounds, ...vaccinations]
-    .filter(x => !x.synced).length;
-  const pending = cloud ? status.pending : legacyPending;
-  const detail = cloud && status.errors.length
-    ? ` — ${status.errors.slice(0, 3).join(' · ')}`
-    : '';
+  // The badge is the engine's real queue: rows the database does not have yet, and its own
+  // sentence for the ones it refused. Tapping retries them — it never claims a sync the wire
+  // did not complete. The attention list reads the same snapshot.
+  const { cloud, online, pending, errors, syncing: busy, retry } = useSyncStatus();
+  const detail = cloud && errors.length ? ` — ${errors.slice(0, 3).join(' · ')}` : '';
 
   if (!online) {
+    // Offline is not the end of the story: what is still sitting in this browser waiting for
+    // the wire is named alongside the reason it cannot go. Nothing is lost, and nothing hides.
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-warn-soft text-warn px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em]">
-        <WifiOff size={11} /> Offline
+      <span
+        className="inline-flex items-center gap-1.5 rounded-full bg-warn-soft text-warn px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em]"
+        title={pending ? `${pending} change(s) waiting for the internet — they will go out on their own when it returns` : undefined}
+      >
+        <WifiOff size={11} /> {pending ? `Offline · ${pending}` : 'Offline'}
       </span>
     );
   }
+  // Four states, one chip: a pass on the wire says so, a queue says how long it is, and a
+  // refusal goes red with the database's own sentence behind it. Nothing here is a card.
+  const spinning = busy && pending > 0;
   return (
     <button
-      onClick={() => { if (pending && cloud) retrySync(); else if (pending) syncPending(); }}
+      onClick={retry}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] press',
-        cloud && status.errors.length ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success',
+        cloud && errors.length ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success',
       )}
       title={pending ? `${pending} pending sync${detail} — tap to retry` : 'All synced'}
     >
-      {pending ? <RefreshCw size={11} /> : <Wifi size={11} />}
-      {compact ? (pending ? `${pending}` : 'Synced') : pending ? `${pending} to sync` : 'Synced'}
+      {pending || spinning
+        ? <RefreshCw size={11} className={spinning ? 'animate-spin' : undefined} />
+        : <Wifi size={11} />}
+      {compact
+        ? (spinning ? '···' : pending ? `${pending}` : 'Synced')
+        : (spinning ? 'Syncing' : pending ? `${pending} to sync` : 'Synced')}
     </button>
   );
 }
 
 function CompanySwitcher() {
-  const user = useCurrentUser();
-  const companies = useApp(s => s.companies);
+  const companies = useOperableCompanies();
   const session = useApp(s => s.session);
   const selectCompany = useApp(s => s.selectCompany);
+  const nav = useNavigate();
   const [open, setOpen] = useState(false);
-  if (!user) return null;
+  const reduced = useReducedMotion();
 
-  const accessible = user.role === 'MASTER_ADMIN'
-    ? companies
-    : companies.filter(c => user.companyIds.includes(c.id));
   const current = companies.find(c => c.id === session?.companyId);
-  if (accessible.length === 0) return null;
+  if (companies.length === 0) return null;
 
   return (
     <div className="relative px-3 pb-2">
       <button
         onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
         className="w-full flex items-center gap-2 rounded-[12px] border border-line bg-card px-3 py-2 press hover:bg-sunk"
       >
         <span className="w-7 h-7 rounded-[9px] bg-brand-soft text-brand-ink flex items-center justify-center shrink-0">
@@ -193,21 +106,33 @@ function CompanySwitcher() {
         </span>
         <ChevronDown size={15} className={clsx('text-muted transition-transform', open && 'rotate-180')} />
       </button>
-      {open && (
-        <div className="absolute z-50 mt-1 left-3 right-3 rounded-[12px] border border-line bg-card shadow-float overflow-hidden">
-          {accessible.map(c => (
-            <button
-              key={c.id}
-              onClick={() => { selectCompany(c.id); setOpen(false); }}
-              className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-[13px] hover:bg-sunk press"
-            >
-              <span className="flex-1 truncate font-medium text-ink">{c.name}</span>
-              {!c.active && <span className="font-mono text-[9px] uppercase text-muted">off</span>}
-              {c.id === session?.companyId && <Check size={15} className="text-brand" />}
-            </button>
-          ))}
-        </div>
-      )}
+      <Presence>
+        {open && (
+          <motion.div
+            initial={reduced ? false : { opacity: 0, y: -6, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -6, transition: { duration: MOTION.micro.duration, ease: EASE } }}
+            transition={reduced ? { duration: 0.01 } : { duration: MOTION.component.duration, ease: EASE }}
+            className="absolute z-50 mt-1 left-3 right-3 origin-top rounded-[12px] border border-line bg-card shadow-float overflow-hidden"
+          >
+            {companies.map(c => (
+              <button
+                key={c.id}
+                onClick={() => {
+                  setOpen(false);
+                  // Entering another company is a fresh context: the screen left open belongs
+                  // to the one being dropped, so the session returns to its own home (§11).
+                  if (c.id !== session?.companyId && selectCompany(c.id).ok) nav('/', { replace: true });
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-[13px] hover:bg-sunk press"
+              >
+                <span className="flex-1 truncate font-medium text-ink">{c.name}</span>
+                {c.id === session?.companyId && <Check size={15} className="text-brand" />}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </Presence>
     </div>
   );
 }
@@ -226,7 +151,7 @@ function BrandMark() {
   );
 }
 
-function Sidebar() {
+function Sidebar({ onSearch }: { onSearch: () => void }) {
   const user = useCurrentUser();
   const signOut = useApp(s => s.signOut);
   const groups = user ? visibleGroups(user.role) : [];
@@ -235,9 +160,25 @@ function Sidebar() {
     <aside className="hidden lg:flex flex-col w-[248px] shrink-0 border-r border-line bg-card/70 backdrop-blur min-h-screen sticky top-0">
       <div className="px-5 py-5"><BrandMark /></div>
       {user && user.role !== 'FARM_LABOR' && <CompanySwitcher />}
+      <div className="px-3 pb-2">
+        <button
+          onClick={onSearch}
+          className="w-full flex items-center gap-2 rounded-[12px] border border-line bg-card px-3 py-2 text-[13px] text-muted press hover:border-brand/40 hover:text-brand"
+        >
+          <Search size={15} className="shrink-0" />
+          <span className="flex-1 min-w-0 text-left truncate">Search</span>
+          <kbd className="shrink-0 font-mono text-[10px] text-muted-2 border border-line rounded-[6px] px-1.5 py-0.5">{SEARCH_KEY_HINT}</kbd>
+        </button>
+      </div>
       <nav className="flex-1 px-3 pb-4 overflow-y-auto no-scrollbar">
-        {groups.map(g => (
-          <div key={g.title} className="mb-4">
+        {groups.map((g, gi) => (
+          <motion.div
+            key={g.title}
+            initial={reduced ? false : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={reduced ? { duration: 0 } : { duration: MOTION.component.duration, ease: EASE, delay: reduced ? 0 : gi * 0.05 }}
+            className="mb-4"
+          >
             <p className="px-3 mb-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.18em] text-muted-2">{g.title}</p>
             <div className="space-y-0.5">
               {g.items.map(it => (
@@ -258,20 +199,20 @@ function Sidebar() {
                             initial={reduced ? false : { opacity: 0 }}
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
-                            transition={{ duration: reduced ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                            transition={reduced ? { duration: 0 } : INDICATOR_SPRING}
                             className="absolute inset-0 rounded-[10px] bg-brand-soft ring-1 ring-inset ring-brand/10"
                             aria-hidden
                           />
                         )}
                       </AnimatePresence>
-                      <span className="shrink-0 relative z-10">{it.icon}</span>
+                      <span className={clsx('shrink-0 relative z-10 transition-transform', isActive && !reduced && 'scale-[1.06]')}>{it.icon}</span>
                       <span className="relative z-10">{it.label}</span>
                     </>
                   )}
                 </NavLink>
               ))}
             </div>
-          </div>
+          </motion.div>
         ))}
       </nav>
       {user && (
@@ -291,13 +232,14 @@ function Sidebar() {
   );
 }
 
-function BottomNav({ onMore, onSignOut }: { onMore: () => void; onSignOut: () => void }) {
+function BottomNav({ onMore, onSignOut, onSearch }: { onMore: () => void; onSignOut: () => void; onSearch: () => void }) {
   const loc = useLocation();
   const user = useCurrentUser();
   const tabs = user ? mobileTabs(user.role) : [];
   const isLabor = user?.role === 'FARM_LABOR';
   const showMore = user ? !isLabor : false;
-  const cols = tabs.length + (showMore || isLabor ? 1 : 0);
+  /** One thumb-reach tile always opens search, whatever else the row holds. */
+  const cols = tabs.length + 1 + (showMore || isLabor ? 1 : 0);
   const reduced = useReducedMotion();
   return (
     <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 safe-bottom">
@@ -320,18 +262,26 @@ function BottomNav({ onMore, onSignOut }: { onMore: () => void; onSignOut: () =>
                         initial={reduced ? false : { opacity: 0, scale: 0.9 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.9 }}
-                        transition={{ duration: reduced ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                        transition={reduced ? { duration: 0 } : INDICATOR_SPRING}
                         className="absolute inset-1 rounded-full bg-brand-soft"
                         aria-hidden
                       />
                     )}
                   </AnimatePresence>
-                  <span className={clsx('relative z-10 rounded-full px-3 py-0.5', !isActive && 'transition-colors')}>{t.icon}</span>
+                  <span className={clsx('relative z-10 rounded-full px-3 py-0.5 transition-transform', isActive && !reduced && 'scale-[1.08]', !isActive && 'transition-colors')}>{t.icon}</span>
                   <span className="relative z-10 font-mono text-[9px] font-semibold uppercase tracking-[0.08em]">{t.label}</span>
                 </>
               )}
             </NavLink>
           ))}
+          <button
+            onClick={onSearch}
+            aria-label="Search"
+            className="flex flex-col items-center justify-center gap-1 py-2.5 press text-muted hover:text-brand"
+          >
+            <span className="rounded-full px-3 py-0.5"><Search size={20} /></span>
+            <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.08em]">Search</span>
+          </button>
           {isLabor && (
             <button
               onClick={onSignOut}
@@ -362,11 +312,38 @@ function BottomNav({ onMore, onSignOut }: { onMore: () => void; onSignOut: () =>
 export function AppShell({ children }: { children: ReactNode }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  // Latched on the first ask, then never unset: the palette stays mounted so both its opening
+  // and its closing animate, and its module is fetched once rather than on every boot.
+  const [paletteSeen, setPaletteSeen] = useState(false);
+  const openSearch = () => { setPaletteSeen(true); setSearchOpen(true); };
+  const loc = useLocation();
+  const reduced = useReducedMotion();
   const nav = useNavigate();
   const signOut = useApp(s => s.signOut);
   const user = useCurrentUser();
   const isLabor = user?.role === 'FARM_LABOR';
   const isMaster = user?.role === 'MASTER_ADMIN';
+
+  // The chord works from anywhere in the shell, including while a field has the caret —
+  // the browser's own focus-ring for ⌘K is what a keyboard user expects to break.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!searchChord(e)) return;
+      e.preventDefault();
+      setPaletteSeen(true);
+      setSearchOpen(o => !o);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Warmed while the tab is idle, after the screens have settled: a shortcut must not turn
+  // into a download the first time it is pressed.
+  useEffect(() => {
+    const t = setTimeout(() => { void paletteModule(); }, 2500);
+    return () => clearTimeout(t);
+  }, []);
 
     const role = user?.role;
   const OPS: Role[] = ['OWNER', 'FARM_SUPERVISOR', 'FARM_MANAGER', M];
@@ -388,16 +365,33 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-canvas flex">
-      <Sidebar />
+      <Sidebar onSearch={openSearch} />
       <div className="flex-1 min-w-0 flex flex-col">
         <main className="flex-1 min-w-0">
           <div className="mx-auto w-full max-w-[1080px] px-0 sm:px-6 lg:px-8">
-            {children}
+            {/* Navigation settles with opacity alone: a transform here would make this wrapper the
+              containing block for every sticky header and portal-free fixed layer below it. */}
+            <motion.div
+              key={loc.pathname}
+              initial={reduced ? false : { opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={reduced ? { duration: 0 } : { duration: MOTION.micro.duration, ease: EASE }}
+            >
+              {children}
+            </motion.div>
           </div>
         </main>
       </div>
 
-      <BottomNav onMore={() => setMoreOpen(true)} onSignOut={() => setSignOutOpen(true)} />
+      <BottomNav onMore={() => setMoreOpen(true)} onSignOut={() => setSignOutOpen(true)} onSearch={openSearch} />
+
+      {/* Mounted only after it has been asked for, and never unmounted again, so the palette's
+        // own open and close gestures still animate while its code stays off the boot path. */}
+      {paletteSeen && (
+        <Suspense fallback={null}>
+          <CommandPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
+        </Suspense>
+      )}
 
       <ActionSheet open={moreOpen} onClose={() => setMoreOpen(false)} title="More" actions={moreActions} />
       <ConfirmDialog open={signOutOpen} title="Sign out?" message="You'll need your mobile number and PIN to sign in again."

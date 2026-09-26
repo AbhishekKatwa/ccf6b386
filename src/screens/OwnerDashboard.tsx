@@ -25,7 +25,8 @@ import { ChartLegend, HBarList, TrendChart, type HRow, type VSeries } from '@/co
 import { GraphCard, GraphRange } from '@/components/charts/GraphCard';
 import { AlertRow } from '@/components/ui/AlertRow';
 import { AttentionButtons } from '@/components/ui/AttentionButtons';
-import { buildFarmAlerts, type FarmAlert } from '@/lib/alerts';
+import { useAttention } from '@/hooks/useAttention';
+import { SEVERITY_LABEL, SEVERITY_ORDER, type AlertSeverity, type FarmAlert, type SeverityCounts } from '@/lib/alerts';
 import { CHART } from '@/components/ui/Charts';
 import { Page, ScreenTitle } from '@/components/ui/Header';
 import {
@@ -34,7 +35,7 @@ import {
 import { SyncPill } from '@/components/layout/AppShell';
 import { EGG_GRADES, EGG_GRADE_LABELS, EMPTY_GRADE_COUNTS, ROLE_LABELS } from '@/types';
 import type { EggGradeCounts, Shed } from '@/types';
-import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, AnimatedNumber, ChartReveal } from '@/components/motion';
+import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, AnimatedNumber } from '@/components/motion';
 
 /**
  * The owner's command centre, read in ten seconds: TODAY, then what needs ATTENTION,
@@ -178,48 +179,58 @@ function useReceivables(data: Data) {
 //   );
 // }
 
-// /* ============================= 2 · NEEDS ATTENTION ============================= */
+/* ============================= 2 · NEEDS ATTENTION ============================= */
 
-// /**
-//  * The dashboard preview of the shared rule engine in lib/alerts — the same rules that
-//  * fill the Alerts page, capped at the five that matter most. No alert starts here.
-//  */
-// function NeedsAttention({ alerts }: { alerts: FarmAlert[] }) {
-//   const nav = useNavigate();
-//   const canVaccinate = useCan('completeVaccination');
-//   const vac = useVaccinations();
-//   const shown = alerts.slice(0, 5);
+const SEVERITY_TEXT: Record<AlertSeverity, string> = {
+  critical: 'text-danger', warning: 'text-warn', info: 'text-muted-2',
+};
 
-//   return (
-//     <div>
-//       <SectionTitle right={alerts.length ? <Drill label="View all" to="/alerts" /> : undefined}>
-//         Needs attention
-//       </SectionTitle>
-//       {/* §15: the vaccination tally reads on its own line, next to the rows it summarises.
-//           It opens the alerts it came from — a dose is recorded on the flock that owes it. */}
-//       {canVaccinate && (
-//         <button type="button" onClick={() => nav('/alerts')}
-//           className="mb-2 w-full flex items-center gap-2 rounded-card border border-line bg-sunk px-3 py-2 text-left press hover:bg-card">
-//           <Syringe size={14} className={vac.counts.overdue ? 'text-danger shrink-0' : 'text-brand shrink-0'} />
-//           <span className="flex-1 min-w-0">
-//             <span className="block font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">Vaccination</span>
-//             <span className={`block text-[12.5px] tnum truncate ${vac.counts.overdue ? 'text-danger font-semibold' : 'text-ink-2'}`}>
-//               {countsSummaryLine(vac.counts)}
-//             </span>
-//           </span>
-//           <ChevronRight size={14} className="text-muted shrink-0" />
-//         </button>
-//       )}
-//       {alerts.length === 0 ? (
-//         <AllClear title="Everything looks up to date" description="Every live batch is logged today, no dose is due, godown stock is above the reorder level, no trader is owed money and today's tasks are clear." />
-//       ) : (
-//         <GroupList>
-//           {shown.map(a => <AlertRow key={a.id} alert={a} />)}
-//         </GroupList>
-//       )}
-//     </div>
-//   );
-// }
+/** The open items by standing — only the ones that have any. */
+function AttentionTally({ counts }: { counts: SeverityCounts }) {
+  const shown = SEVERITY_ORDER.filter(s => counts[s] > 0);
+  if (!shown.length) return null;
+  return (
+    <span className="flex items-center gap-2.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em]">
+      {shown.map(s => (
+        <span key={s} className={SEVERITY_TEXT[s]}>
+          <span className="tnum">{counts[s]}</span> {SEVERITY_LABEL[s].toLowerCase()}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * The top of the shared rule engine in lib/alerts, capped at three lines and nothing else:
+ * the dashboard says what is open before any page is opened, and the rest waits on the
+ * Alerts screen. No alert starts here, and no count does — both come from the same list
+ * that fills that page.
+ */
+function NeedsAttention({ alerts, counts }: { alerts: FarmAlert[]; counts: SeverityCounts }) {
+  const shown = alerts.slice(0, 3);
+  return (
+    <div>
+      <SectionTitle right={<AttentionTally counts={counts} />}>Needs attention</SectionTitle>
+      {shown.length === 0 ? (
+        <p className="text-[12px] text-muted px-0.5">
+          Nothing is open: every live flock is logged today, both shelves stand above their
+          reorder levels, no dose is due and no booking falls short.
+        </p>
+      ) : (
+        <>
+          <GroupList>
+            {shown.map(a => <AlertRow key={a.id} alert={a} />)}
+          </GroupList>
+          {alerts.length > shown.length && (
+            <p className="mt-1.5 px-0.5 flex justify-end">
+              <Drill label={`${alerts.length - shown.length} more · view all`} to="/alerts" />
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 /* ============================= 3 · FLOCK ============================= */
 
@@ -557,9 +568,7 @@ function TrendsPanel({ data }: { data: Data }) {
             subtitle={`${fmtDateShort(range.from)} – ${fmtDateShort(range.to)}`}
             height={150} loading={!settled} warnings={c.warnings}
             empty={blank(c.series[0].points) ? { title: c.emptyTitle, description: c.emptyText } : undefined}>
-            <ChartReveal>
-              <TrendChart series={c.series} height={120} format={c.format} />
-            </ChartReveal>
+            <TrendChart series={c.series} height={120} format={c.format} />
             <ChartLegend items={c.series.map(s => ({ label: s.label, color: s.color, dashed: s.dashed }))} />
             <p className="mt-1 text-[11px] text-muted">{c.foot}</p>
           </GraphCard>
@@ -634,18 +643,11 @@ export function OwnerDashboard() {
   const user = useCurrentUser();
   const sheds = useVisibleSheds();
   const canFinance = useCan('viewFinance');
-  const canReport = useCan('exportReports');
-  const canVaccinate = useCan('completeVaccination');
   const today = todayISO();
   const scoped = useMemo(() => ({ ...data, sheds }), [data, sheds]);
 
-  /** One pass of the shared alert rules feeds both the bell-style count and the preview. */
-  const alerts = useMemo(() => buildFarmAlerts({
-    batches: scoped.batches, mortality: scoped.mortality, feed: scoped.feed, eggs: scoped.eggs,
-    tasks: scoped.tasks, feedStock: scoped.feedStock, traders: scoped.traders, traderTxns: scoped.traderTxns,
-    sheds: scoped.sheds, vaccinations: scoped.vaccinations,
-    today, canReport, canViewFinance: canFinance, canViewVaccination: canVaccinate,
-  }), [scoped, today, canReport, canFinance, canVaccinate]);
+  /** One reading of the shared attention rules feeds the tally, the band and the bell count. */
+  const { alerts, counts } = useAttention();
 
   const tasksOpen = data.tasks.filter(t => t.status === 'PENDING' || t.status === 'IN_PROGRESS').length;
 
@@ -691,7 +693,7 @@ export function OwnerDashboard() {
           <TodayStrip data={scoped} sheds={sheds} />
         </div> */}
 
-        {/* <NeedsAttention alerts={alerts} /> */}
+        <StaggerItem><NeedsAttention alerts={alerts} counts={counts} /></StaggerItem>
 
         <StaggerItem className="grid gap-4 lg:grid-cols-2">
           <FlockPanel data={scoped} />

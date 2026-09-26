@@ -1,7 +1,7 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 import clsx from 'clsx';
 import { TrendingDown, TrendingUp, Minus, CheckCircle2, Inbox } from 'lucide-react';
-import { HoverCard, SectionReveal, ScrollReveal } from '@/components/motion';
+import { HoverCard, SectionReveal, StaggerContainer, StaggerItem } from '@/components/motion';
 
 /* ---------------- surfaces ---------------- */
 
@@ -267,15 +267,29 @@ export function ListRow({ leading, title, subtitle, chips, trailing, onClick, cl
 export function EmptyState({ icon, title, description, action }: {
   icon?: ReactNode; title: string; description?: string; action?: ReactNode;
 }) {
+  // The glyph settles first, then the words, then the way out — so an empty screen reads as
+  // an invitation rather than a dead end, without a list of anything animating.
   return (
-    <ScrollReveal className="rounded-[18px] border border-dashed border-line bg-card/60 px-6 py-10 flex flex-col items-center text-center gap-2">
-      <div className="w-12 h-12 rounded-full bg-sunk flex items-center justify-center text-muted mb-1 animate-[float_4s_ease-in-out_infinite]">
-        {icon ?? <Inbox size={19} strokeWidth={1.75} />}
-      </div>
-      <p className="font-display text-[17px] font-semibold text-ink">{title}</p>
-      {description && <p className="text-[13px] text-muted max-w-[300px] leading-relaxed">{description}</p>}
-      {action && <div className="mt-3">{action}</div>}
-    </ScrollReveal>
+    <StaggerContainer className="rounded-[18px] border border-dashed border-line bg-card/60 px-6 py-10 flex flex-col items-center text-center gap-2">
+      <StaggerItem className="mb-1">
+        <span className="w-12 h-12 rounded-full bg-sunk flex items-center justify-center text-muted ap-float">
+          {icon ?? <Inbox size={19} strokeWidth={1.75} />}
+        </span>
+      </StaggerItem>
+      <StaggerItem>
+        <p className="font-display text-[17px] font-semibold text-ink">{title}</p>
+      </StaggerItem>
+      {description && (
+        <StaggerItem>
+          <p className="text-[13px] text-muted max-w-[300px] leading-relaxed">{description}</p>
+        </StaggerItem>
+      )}
+      {action && (
+        <StaggerItem className="mt-3">
+          {action}
+        </StaggerItem>
+      )}
+    </StaggerContainer>
   );
 }
 

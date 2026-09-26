@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { motion } from 'motion/react';
 import { Egg, Plus, FileText, Pencil, Trash2, HandCoins } from 'lucide-react';
 import { useApp, useCan, useCompanyData } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
@@ -8,6 +9,7 @@ import { Button, Field, SegmentedTabs, SelectField } from '@/components/ui/Form'
 import { Dialog } from '@/components/ui/Dialog';
 import { BatchClosedNotice } from '@/components/ui/BatchClosedNotice';
 import { BarsMini, CHART } from '@/components/ui/Charts';
+import { PageReveal, Presence, fadeScale, useReducedMotion } from '@/components/motion';
 import { fmtIN, fmtDate, fmtMoney, todayISO } from '@/lib/format';
 import { latestFirst } from '@/lib/order';
 import { useBatchMetrics } from '@/hooks/useBatchMetrics';
@@ -61,6 +63,7 @@ export function BatchEggsScreen() {
   const [wasteEditing, setWasteEditing] = useState<EggWastage | null>(null);
   const [waste, setWaste] = useState<WasteForm>(emptyWaste());
   const [wasteError, setWasteError] = useState<string | null>(null);
+  const reduced = useReducedMotion();
 
   const batchEggs = useMemo(() => latestFirst(eggs.filter(e => e.batchId === batchId)), [eggs, batchId]);
 
@@ -162,6 +165,7 @@ export function BatchEggsScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <Header title="Eggs" subtitle={`${batch.code} · ${m.age.dayLabel}`}
         action={canReport && <Button size="sm" variant="outline" icon={<FileText size={14} />} onClick={() => nav(`/batches/${batch.id}/daily-report`)}>Report</Button>} />
 
@@ -173,6 +177,10 @@ export function BatchEggsScreen() {
           { value: 'quality', label: 'Quality' },
         ]} />
 
+        <Presence mode="wait">
+        <motion.div key={tab} variants={fadeScale}
+          initial={reduced ? false : 'hidden'} animate="visible" exit={reduced ? undefined : 'exit'}
+          className="space-y-4">
         {tab === 'collection' && (
           <>
             <div className="rounded-[22px] bg-brand text-white p-5 shadow-card relative overflow-hidden">
@@ -386,7 +394,10 @@ export function BatchEggsScreen() {
             </div>
           </>
         )}
+        </motion.div>
+        </Presence>
       </div>
+      </PageReveal>
 
       <Dialog open={openAdd} onClose={() => setOpenAdd(false)} title="Add egg collection" subtitle={`${batch.code} · trays (1 tray = ${EGGS_PER_TRAY} eggs)`}
         footer={<div className="flex gap-2"><Button variant="outline" block onClick={() => setOpenAdd(false)}>Cancel</Button><Button block onClick={submitCollection}>Save</Button></div>}>

@@ -1,7 +1,9 @@
 import { useId, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { ChevronRight } from 'lucide-react';
+import { motion } from 'motion/react';
 import { CHART } from '@/components/ui/Charts';
+import { ChartReveal, MOTION, useReveal } from '@/components/motion';
 import { fmtDateShort } from '@/lib/format';
 
 /**
@@ -127,7 +129,7 @@ export function TrendChart({ series, height = 190, format = axisNum, zeroBase = 
         <div className="w-9 shrink-0 flex flex-col justify-between py-[2px] text-right" style={{ height: h }} aria-hidden>
           {ticks.map((t, i) => <span key={i} className="font-mono text-[9px] text-muted-2 tnum leading-none">{axisNum(t)}</span>)}
         </div>
-        <div className="relative flex-1">
+        <ChartReveal className="relative flex-1">
           <svg
             width="100%" height={h} viewBox={`0 0 ${W} ${h}`} preserveAspectRatio="none"
             className="overflow-visible touch-none cursor-crosshair block"
@@ -194,7 +196,7 @@ export function TrendChart({ series, height = 190, format = axisNum, zeroBase = 
               <clipPath id={`c${clip}`}><rect x="0" y="0" width={W} height={h} /></clipPath>
             </defs>
           </svg>
-        </div>
+        </ChartReveal>
       </div>
 
       <div className="flex justify-between pl-11 mt-1.5">
@@ -222,21 +224,26 @@ export type VBar = { id: string; label: string; value: number | null; hint?: str
 export function BarSeries({ bars, height = 140, format = axisNum, onPick, color = CHART.brand }: {
   bars: VBar[]; height?: number; format?: (v: number) => string; onPick?: (id: string) => void; color?: string;
 }) {
+  const { ref, show, reduced } = useReveal();
   const max = Math.max(...bars.map(b => Math.abs(b.value ?? 0)), 0);
   if (!bars.length) return null;
   const showValues = bars.length <= 7;
   return (
-    <div>
+    <div ref={ref}>
       <div className="flex items-end gap-2" style={{ height }}>
-        {bars.map(b => {
+        {bars.map((b, i) => {
           const zero = b.value === 0;
           const pct = max > 0 && b.value !== null ? (Math.abs(b.value) / max) * 100 : 0;
           const inner = (
             <>
               <span className="w-full flex-1 flex items-end">
-                <span
-                  className="w-full rounded-t-[6px] transition-all"
+                <motion.span
+                  className="w-full rounded-t-[6px] transition-[height,opacity] duration-300"
+                  initial={reduced ? false : { scaleY: 0 }}
+                  animate={{ scaleY: show ? 1 : 0 }}
+                  transition={reduced ? { duration: 0 } : { ...MOTION.page, delay: Math.min(i, 12) * 0.03 }}
                   style={{
+                    transformOrigin: 'bottom',
                     height: zero ? '3px' : `${pct}%`,
                     background: b.value === null ? 'transparent' : (b.color ?? color),
                     border: b.value === null ? '1px dashed var(--color-line)' : undefined,
@@ -290,12 +297,13 @@ const rowTone: Record<NonNullable<HRow['tone']>, { bar: string; text: string }> 
 export function HBarList({ rows, format = axisNum, onPick, caption }: {
   rows: HRow[]; format?: (v: number) => string; onPick?: (id: string, label: string) => void; caption?: string;
 }) {
+  const { ref, show, reduced } = useReveal();
   const max = Math.max(...rows.map(r => Math.abs(r.value)), 0);
   if (!rows.length) return null;
   return (
-    <div>
+    <div ref={ref}>
       <div className="divide-y divide-line-2 -my-1">
-        {rows.map(r => {
+        {rows.map((r, i) => {
           const tone = rowTone[r.tone ?? 'normal'];
           const zero = r.value === 0;
           const width = max > 0 ? Math.max(2, (Math.abs(r.value) / max) * 100) : 0;
@@ -305,9 +313,15 @@ export function HBarList({ rows, format = axisNum, onPick, caption }: {
                 <span className="block text-[13px] font-semibold text-ink truncate">{r.label}</span>
                 {r.sub && <span className="block font-mono text-[10px] text-muted truncate mt-0.5 tnum">{r.sub}</span>}
                 <span className="mt-1.5 flex h-1.5 rounded-full bg-sunk overflow-hidden">
-                  <span className="h-full rounded-full transition-all" style={zero
-                    ? { width: 4, background: tone.bar, opacity: 0.5 }
-                    : { width: `${width}%`, background: tone.bar }} />
+                  <motion.span
+                    className="h-full rounded-full"
+                    initial={reduced ? false : { scaleX: 0 }}
+                    animate={{ scaleX: show ? 1 : 0 }}
+                    transition={reduced ? { duration: 0 } : { ...MOTION.page, delay: Math.min(i, 10) * 0.04 }}
+                    style={{ transformOrigin: 'left', ...(zero
+                      ? { width: 4, background: tone.bar, opacity: 0.5 }
+                      : { width: `${width}%`, background: tone.bar }) }}
+                  />
                 </span>
               </span>
               <span className="shrink-0 pl-3 text-right">
@@ -341,6 +355,7 @@ export type Slice = { label: string; value: number; color: string };
 export function DonutChart({ slices, format = axisNum, centerLabel }: {
   slices: Slice[]; format?: (v: number) => string; centerLabel?: string;
 }) {
+  const { ref, show, reduced } = useReveal();
   const total = slices.reduce((s, x) => s + Math.max(0, x.value), 0);
   if (!slices.length) return null;
   // Recorded but all zero: show the ring as an empty track and the legend as-is, never a blank card.
@@ -348,8 +363,13 @@ export function DonutChart({ slices, format = axisNum, centerLabel }: {
   const r = 42, c = 2 * Math.PI * r;
   let acc = 0;
   return (
-    <div className="flex items-center gap-4">
-      <svg width="104" height="104" viewBox="0 0 104 104" className="shrink-0" role="img" aria-label={slices.map(s => `${s.label} ${format(s.value)}`).join(', ')}>
+    <div className="flex items-center gap-4" ref={ref}>
+      <motion.svg
+        width="104" height="104" viewBox="0 0 104 104" className="shrink-0" role="img" aria-label={slices.map(s => `${s.label} ${format(s.value)}`).join(', ')}
+        initial={reduced ? false : { opacity: 0, scale: 0.94 }}
+        animate={{ opacity: show ? 1 : 0, scale: show ? 1 : 0.94 }}
+        transition={reduced ? { duration: 0 } : MOTION.page}
+      >
         {empty && (
           <circle cx="52" cy="52" r={r} fill="none" stroke="var(--color-line)" strokeWidth="13" strokeDasharray="3 5" />
         )}
@@ -370,7 +390,7 @@ export function DonutChart({ slices, format = axisNum, centerLabel }: {
             {centerLabel.toUpperCase()}
           </text>
         )}
-      </svg>
+      </motion.svg>
       <ul className="min-w-0 flex-1 space-y-1.5">
         {slices.map(s => (
           <li key={s.label} className="flex items-center gap-2 text-[12px]">
@@ -392,6 +412,7 @@ export function PairedBars({ buckets, format = axisNum, height = 160 }: {
   buckets: { label: string; revenue: number | null; expense: number | null; net: number | null }[];
   format?: (v: number) => string; height?: number;
 }) {
+  const { ref, show, reduced } = useReveal();
   const max = Math.max(...buckets.flatMap(b => [b.revenue ?? 0, b.expense ?? 0]), 0);
   if (!buckets.length) return null;
   // A recorded zero shows as a thin stub; a bar is only invisible when nothing was recorded.
@@ -400,15 +421,22 @@ export function PairedBars({ buckets, format = axisNum, height = 160 }: {
     v === null ? { height: 0, background: base, opacity: 0 }
       : v === 0 ? { height: '2px', background: base, opacity: 0.4 }
         : { height: `${Math.max(3, (v / scaleMax) * 100)}%`, background: base, opacity: solid ? 1 : 0.85 };
+  const grow = (i: number) => ({
+    initial: reduced ? false : { scaleY: 0 },
+    animate: { scaleY: show ? 1 : 0 },
+    transition: reduced ? { duration: 0 } : { ...MOTION.page, delay: Math.min(i, 14) * 0.03 },
+  });
   return (
-    <div>
+    <div ref={ref}>
       <div className="flex items-end gap-3" style={{ height }}>
         {buckets.map((b, i) => (
           <div key={`${b.label}-${i}`} className="flex-1 min-w-0 h-full flex flex-col justify-end items-center gap-1"
             title={`${b.label} · in ${b.revenue === null ? 'not recorded' : format(b.revenue)} · out ${b.expense === null ? 'not recorded' : format(b.expense)} · net ${b.net === null ? 'unknown' : format(b.net)}`}>
             <span className="w-full flex items-end justify-center gap-1 h-full">
-              <span className="w-1/2 max-w-[18px] rounded-t-[4px]" style={barStyle(b.revenue, CHART.success, true)} />
-              <span className="w-1/2 max-w-[18px] rounded-t-[4px]" style={barStyle(b.expense, CHART.danger, false)} />
+              <motion.span className="w-1/2 max-w-[18px] rounded-t-[4px]" {...grow(i)}
+                style={{ ...barStyle(b.revenue, CHART.success, true), transformOrigin: 'bottom' }} />
+              <motion.span className="w-1/2 max-w-[18px] rounded-t-[4px]" {...grow(i)}
+                style={{ ...barStyle(b.expense, CHART.danger, false), transformOrigin: 'bottom' }} />
             </span>
             <span className="font-mono text-[9px] text-muted-2 tnum truncate w-full text-center">
               {b.net === null ? '—' : format(b.net)}

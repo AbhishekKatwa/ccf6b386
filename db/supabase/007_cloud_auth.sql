@@ -57,9 +57,10 @@ begin
 
   -- auth.identities.email is GENERATED ALWAYS AS (lower(identity_data->>'email')) STORED, so it
   -- is left out of the write: GoTrue derives it from identity_data, which is where it belongs.
+  -- identities.id is that row's own primary key, so it is generated — 012.
   insert into auth.identities (id, user_id, provider_id, identity_data, provider,
                                last_sign_in_at, created_at, updated_at)
-  values (app.uid(), p_user, p_user::text,
+  values (gen_random_uuid(), p_user, p_user::text,
           jsonb_build_object('sub', p_user::text, 'email', p_email), 'email',
           now(), now(), now())
   on conflict (provider_id, provider) do update

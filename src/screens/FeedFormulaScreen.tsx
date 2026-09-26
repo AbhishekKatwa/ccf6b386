@@ -5,6 +5,7 @@ import { useCan, useCompanyData, useCurrentUser } from '@/store/app';
 import { Header, Page } from '@/components/ui/Header';
 import { Badge, EmptyState, GroupList, IconTile, ListRow } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Form';
+import { PageReveal, StaggerContainer, StaggerItem } from '@/components/motion';
 import { currentFormula, formulaCostPerTonne, formulaTotalKg } from '@/lib/calc';
 import { canViewFormulas } from '@/lib/permissions';
 import { useGodownPrices } from '@/hooks/useGodownPrices';
@@ -44,12 +45,14 @@ export function FeedFormulaScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <Header title="Feed Formulas" subtitle="Per shed · the mix, in KG per ingredient"
         action={canManage && sheds.length > 0
           ? <Button size="sm" icon={<Plus size={14} />} onClick={() => nav(newUrl)}>New</Button>
           : undefined} />
 
-      <div className="px-4 sm:px-0 mt-3 space-y-4 pb-6">
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4 pb-6">
+        <StaggerItem>
         <div className="rounded-[22px] bg-brand-soft p-4">
           <p className="text-sm text-brand-ink leading-relaxed">
             <strong>Auto deduction.</strong> Daily shed consumption is entered in tonnes. Each entry deducts
@@ -57,7 +60,9 @@ export function FeedFormulaScreen() {
             version that was in force on that date.
           </p>
         </div>
+        </StaggerItem>
 
+        <StaggerItem>
         {sheds.length === 0 ? (
           <EmptyState icon={<FlaskConical size={22} />} title="No sheds yet" description="Create a shed first, then define its feed formula." />
         ) : (
@@ -85,15 +90,21 @@ export function FeedFormulaScreen() {
             ))}
           </GroupList>
         )}
+        </StaggerItem>
 
         {!canManage && (
+          <StaggerItem>
           <p className="text-[12px] text-muted px-1 leading-relaxed">
             Read-only view — formulas are created and revised by the Owner and the supervisors assigned to each shed.
           </p>
+          </StaggerItem>
         )}
 
+        <StaggerItem>
         <Button block variant="outline" icon={<FlaskConical size={15} />} onClick={() => nav('/feed')}>View godown stock</Button>
-      </div>
+        </StaggerItem>
+      </StaggerContainer>
+      </PageReveal>
     </Page>
   );
 }

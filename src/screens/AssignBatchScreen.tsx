@@ -1,12 +1,18 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { motion } from 'motion/react';
 import clsx from 'clsx';
-import { CheckCircle2, Check, ChevronRight, UserPlus } from 'lucide-react';
+import { CheckCircle2, Check, ChevronRight, UserPlus, Plus } from 'lucide-react';
 import { useApp, useCan, useCompanyData } from '@/store/app';
+import { runtime } from '@/lib/runtime';
+import { isUuid } from '@/services/supabase/rows';
+import { dataService } from '@/services/dataService';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, Avatar, Row, EmptyState, GroupList, ListRow, Badge } from '@/components/ui/Card';
-import { Button, Field, SearchField, TextArea, Toggle } from '@/components/ui/Form';
-import { ROLE_LABELS, type User } from '@/types';
+import { Button, Field, SearchField, SelectField, TextArea, Toggle } from '@/components/ui/Form';
+import { Dialog } from '@/components/ui/Dialog';
+import { PageReveal, Presence, fadeScale, useReducedMotion } from '@/components/motion';
+import { ROLE_LABELS, type Role, type User } from '@/types';
 
 export function AssignBatchScreen() {
   const { batchId } = useParams();
@@ -24,6 +30,10 @@ export function AssignBatchScreen() {
   const [comments, setComments] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const [createOpen, setCreateOpen] = useState(false);
+  const [cform, setCform] = useState({ name: '', mobile: '', password: '', role: 'FARM_LABOR' as Role });
+  const [cErr, setCErr] = useState<string | null>(null);
+
   const batch = batches.find(b => b.id === batchId);
   const assignedIds = useMemo(
     () => new Set(assignments.filter(a => a.batchId === batchId).map(a => a.userId)),
@@ -31,11 +41,17 @@ export function AssignBatchScreen() {
   );
 
   const candidates = useMemo(() => {
-    const list = users.filter(u => u.active && u.role !== 'MASTER_ADMIN' && !assignedIds.has(u.id));
+    // An access granted here reaches the database through profiles.id, so the legacy `u_*`
+    // records the demo seed keeps beside their cloud twins are not candidates: whichever one a
+    // search surfaces, the person is the cloud record and the row is the one that can travel.
+    const list = users.filter(u => u.active && u.role !== 'MASTER_ADMIN' && !assignedIds.has(u.id)
+      && (!runtime.cloud || isUuid(u.id)));
     if (!q.trim()) return list;
     const s = q.toLowerCase();
     return list.filter(u => u.name.toLowerCase().includes(s) || u.mobile.includes(s));
   }, [users, assignedIds, q]);
+
+  const reduced = useReducedMotion();
 
   if (!canManage) {
     return (
@@ -55,6 +71,22 @@ export function AssignBatchScreen() {
     return <Page withNav><Header title="Assign batch" /><div className="px-4 sm:px-0 mt-4"><EmptyState title="Batch not found" /></div></Page>;
   }
 
+  const CREATOR_ROLES: Role[] = ['OWNER', 'FARM_SUPERVISOR', 'FINANCIAL_SUPERVISOR', 'FARM_MANAGER', 'FARM_LABOR'];
+
+  async function createUserAndSelect() {
+    setCErr(null);
+    const r = await dataService.users.create({
+      name: cform.name, mobile: cform.mobile, password: cform.password,
+      role: cform.role, companyIds: [batch!.companyId],
+    });
+    if (!r.ok) { setCErr(r.error ?? 'Failed to create user'); return; }
+    const created = useApp.getState().users.find(u => u.mobile === cform.mobile.replace(/\D/g, ''));
+    setCreateOpen(false);
+    setCform({ name: '', mobile: '', password: '', role: 'FARM_LABOR' });
+    if (created) { setFound(created); setStep(2); }
+    pushToast('success', `${cform.name} created`);
+  }
+
   function submit() {
     if (!found) return;
     setSubmitting(true);
@@ -69,6 +101,7 @@ export function AssignBatchScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <Header title="Assign batch" subtitle={batch.code} />
 
       {/* stepper */}
@@ -92,14 +125,22 @@ export function AssignBatchScreen() {
         })}
       </div>
 
-      <div className="px-4 sm:px-0 space-y-4">
+      <Presence mode="wait">
+      <motion.div key={step} variants={fadeScale}
+        initial={reduced ? false : 'hidden'} animate="visible" exit={reduced ? undefined : 'exit'}
+        className="px-4 sm:px-0 space-y-4">
         {step === 1 && (
           <>
             <SearchField placeholder="Search by name or mobile" value={q} onChange={setQ} />
 
+            <Button size="sm" variant="ghost" icon={<Plus size={14} />} className="-mt-2"
+              onClick={() => { setCErr(null); setCreateOpen(true); }}>
+              Person not in the list? Create a login
+            </Button>
+
             {candidates.length === 0 ? (
               <EmptyState icon={<UserPlus size={22} />} title="No users available"
-                description={q ? 'Try a different search.' : 'Every active company user is already assigned to this batch. Create users first.'} />
+                description={q ? 'Try a different search.' : 'Every active company user is already assigned to this batch. Create a login below.'} />
             ) : (
               <GroupList>
                 {candidates.map(u => (
@@ -116,6 +157,25 @@ export function AssignBatchScreen() {
                 ))}
               </GroupList>
             )}
+
+            <Dialog open={createOpen} onClose={() => setCreateOpen(false)} title="Create a login"
+              subtitle="The person is added to this company and can be granted batch access straight away.">
+              <div className="space-y-3">
+                <Field label="Full name" value={cform.name} onChange={e => setCform(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Ramesh Kumar" />
+                <Field label="Mobile number" type="tel" inputMode="numeric" maxLength={10} value={cform.mobile}
+                  onChange={e => setCform(f => ({ ...f, mobile: e.target.value.replace(/\D/g, '') }))}
+                  prefix="+91" placeholder="10-digit" className="font-mono" />
+                <Field label="Password" type="password" value={cform.password} onChange={e => setCform(f => ({ ...f, password: e.target.value }))} placeholder="At least 6 characters" />
+                <SelectField label="Role" value={cform.role}
+                  onChange={e => setCform(f => ({ ...f, role: e.target.value as Role }))}
+                  options={CREATOR_ROLES.map(r => ({ value: r, label: ROLE_LABELS[r] }))} />
+                {cErr && <p className="text-[12px] text-danger font-medium">{cErr}</p>}
+                <div className="flex gap-2 pt-1">
+                  <Button variant="outline" block onClick={() => setCreateOpen(false)}>Cancel</Button>
+                  <Button block onClick={createUserAndSelect}>Create</Button>
+                </div>
+              </div>
+            </Dialog>
           </>
         )}
 
@@ -157,7 +217,9 @@ export function AssignBatchScreen() {
             </div>
           </>
         )}
-      </div>
+        </motion.div>
+        </Presence>
+      </PageReveal>
     </Page>
   );
 }

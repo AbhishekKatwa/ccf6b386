@@ -1,17 +1,16 @@
 import { useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Egg, Skull, Wheat, AlertTriangle, ClipboardList, Handshake, ChevronRight, Syringe,
-  Activity, Layers, PlusCircle, Trash2, Pencil, Package,
+  Egg, Skull, Wheat, ChevronRight,
+  Activity, Layers, PlusCircle, Trash2, Pencil,
   TriangleAlert, Flame, Sun, Moon,
 } from 'lucide-react';
-import { useApp, useCurrentUser, useCan, useCompanyData } from '@/store/app';
+import { useApp, useCurrentUser, useCompanyData } from '@/store/app';
 import { SyncPill } from '@/components/layout/AppShell';
-import { fmtIN, fmtMoney, fmtPct, greeting, todayISO, fmtDateShort, fmtDateTime } from '@/lib/format';
+import { fmtIN, greeting, todayISO, fmtDateShort, fmtDateTime } from '@/lib/format';
 import { liveBirdsOn, cumulativeMortality, eggSummary } from '@/lib/calc';
-import { vaccinationPositions, vaccinationReminders } from '@/lib/vaccination';
-import { buildFarmAlerts } from '@/lib/alerts';
+import { useAttention } from '@/hooks/useAttention';
+import { AlertRow } from '@/components/ui/AlertRow';
 import { OPS_ROLES } from '@/lib/permissions';
 import { Page } from '@/components/ui/Header';
 import { AttentionButtons } from '@/components/ui/AttentionButtons';
@@ -23,19 +22,18 @@ import { ROLE_LABELS, EGGS_PER_TRAY } from '@/types';
 import type { Batch } from '@/types';
 import { LaborHomeScreen } from '@/screens/LaborScreen';
 import { OwnerDashboard } from '@/screens/OwnerDashboard';
-import { PageReveal, StaggerContainer, StaggerItem, AnimatedNumber, ChartReveal, ScrollReveal } from '@/components/motion';
+import { PageReveal, StaggerContainer, StaggerItem, AnimatedNumber, ScrollReveal } from '@/components/motion';
 
-type Attention = {
-  id: string; icon: ReactNode; tone: 'danger' | 'warn' | 'accent' | 'brand';
-  title: string; detail: string; actionLabel: string; to: string;
+const VERB: Record<string, string> = {
+  CREATE: 'added', UPDATE: 'updated', DELETE: 'removed',
+  BACKUP_CREATED: 'exported', RESTORE_STARTED: 'started restoring',
+  RESTORE_COMPLETED: 'restored', RESTORE_FAILED: 'failed to restore',
 };
-
-const VERB: Record<string, string> = { CREATE: 'added', UPDATE: 'updated', DELETE: 'removed' };
 const ENTITY: Record<string, string> = {
   Mortality: 'mortality', Feed: 'feed', EggCollection: 'egg collection', SaleEntry: 'sale entry',
   Finance: 'transaction', Task: 'task', Batch: 'batch', Session: 'session',
   Assignment: 'access', Trader: 'trader', Farm: 'farm', FeedStock: 'feed stock', TraderTxn: 'trader txn',
-  SaleLog: 'dispatch log', FeedConsumption: 'feed',
+  SaleLog: 'dispatch log', FeedConsumption: 'feed', Backup: 'backup',
   Vaccination: 'vaccination', VaccinationTemplate: 'vaccination template',
   EggSaleBooking: 'egg sale booking',
 };
@@ -55,10 +53,7 @@ function ManagerHome() {
   const nav = useNavigate();
   const user = useCurrentUser();
   const data = useCompanyData();
-  const { batches, mortality, feed, eggs, traders, tasks, users, assignments, audit, sheds, vaccinations } = data;
-  const canViewFinance = useCan('viewFinance');
-  const canReport = useCan('exportReports');
-  const canVaccinate = useCan('completeVaccination');
+  const { batches, mortality, feed, eggs, tasks, users, assignments, audit } = data;
 
   const today = todayISO();
 
@@ -99,84 +94,20 @@ function ManagerHome() {
     return { labels, eggSeries, mortSeries };
   }, [myLive, eggs, mortality]);
 
-  const pendingTasks = tasks.filter(t => t.date === today && (t.status === 'PENDING' || t.status === 'IN_PROGRESS'));
-
   /**
-   * The Alerts badge counts what the Alerts page actually shows, so the number on the
-   * button and the list behind it can never disagree — the home preview below is a
-   * shorter cut of the same picture, not a second source.
+   * The Alerts badge and the preview below are the shared attention engine's own list —
+   * the same rules, the same role gates and the same order the Alerts page shows, so a
+   * number on this screen can never disagree with the page behind it.
    */
-  const alertCount = useMemo(() => buildFarmAlerts({
-    batches, mortality, feed, eggs, tasks, traders, feedStock: data.feedStock, traderTxns: data.traderTxns,
-    sheds, vaccinations, today, canReport, canViewFinance, canViewVaccination: canVaccinate,
-  }).length, [batches, mortality, feed, eggs, tasks, traders, data.feedStock, data.traderTxns, sheds,
-    vaccinations, today, canReport, canViewFinance, canVaccinate]);
+  const { alerts } = useAttention();
 
   const tasksOpen = tasks.filter(t => t.status === 'PENDING' || t.status === 'IN_PROGRESS').length;
   const canSeeAlerts = !!user && OPS_ROLES.includes(user.role);
-
-  const attention = useMemo<Attention[]>(() => {
-    const items: Attention[] = [];
-    // A dose the flock is owed leads the list: it is the one thing that cannot wait for the next round.
-    if (canVaccinate) {
-      const mine = new Set(myLive.map(b => b.id));
-      const owed = vaccinations.filter(v => mine.has(v.batchId));
-      for (const r of vaccinationReminders(vaccinationPositions(owed, batches, sheds, today))) {
-        items.push({ ...r, icon: <Syringe size={16} /> });
-      }
-    }
-    for (const b of myLive) {
-      const loggedMort = mortality.some(m => m.batchId === b.id && m.date === today);
-      const loggedFeed = feed.some(f => f.batchId === b.id && f.date === today);
-      const loggedEgg = b.birdType !== 'LAYER' || eggs.some(e => e.shedId === b.shedId && e.date === today);
-      if (!loggedMort || !loggedFeed || !loggedEgg) {
-        const missing = [!loggedMort && 'mortality', !loggedFeed && 'feed', !loggedEgg && 'eggs'].filter(Boolean).join(', ');
-        items.push({
-          id: `log-${b.id}`, icon: <Wheat size={16} />, tone: 'accent',
-          title: `${b.code} — not logged today`, detail: `Missing ${missing}`,
-          actionLabel: 'Log', to: canReport ? `/batches/${b.id}/daily-report` : `/batches/${b.id}`,
-        });
-      }
-      const cum = cumulativeMortality(b.id, mortality, today);
-      const pct = b.initialBirds > 0 ? (cum / b.initialBirds) * 100 : 0;
-      if (pct > 5) {
-        items.push({
-          id: `mort-${b.id}`, icon: <AlertTriangle size={16} />, tone: 'danger',
-          title: `Elevated mortality — ${b.code}`, detail: `Cumulative ${fmtPct(pct, 2)} of placed birds`,
-          actionLabel: 'Review', to: `/batches/${b.id}/mortality`,
-        });
-      }
-    }
-    if (pendingTasks.length) {
-      items.push({
-        id: 'tasks', icon: <ClipboardList size={16} />, tone: 'brand',
-        title: `${pendingTasks.length} task${pendingTasks.length === 1 ? '' : 's'} pending today`,
-        detail: 'Daily work awaiting action', actionLabel: 'Open', to: '/tasks',
-      });
-    }
-    if (canViewFinance) {
-      const owed = traders.filter(t => t.active && t.outstandingAmount > 0);
-      const sum = owed.reduce((s, t) => s + t.outstandingAmount, 0);
-      if (owed.length) {
-        items.push({
-          id: 'traders', icon: <Handshake size={16} />, tone: 'warn',
-          title: `${fmtMoney(sum)} outstanding`, detail: `Across ${owed.length} trader${owed.length === 1 ? '' : 's'}`,
-          actionLabel: 'Collect', to: '/traders',
-        });
-      }
-    }
-    return items;
-  }, [myLive, mortality, feed, eggs, today, pendingTasks.length, canViewFinance, canReport, traders, canVaccinate, vaccinations, batches, sheds]);
 
   const recent = useMemo(() => audit.slice(0, 7), [audit]);
   const firstName = user?.name.split(' ')[0] ?? 'there';
   const trendData = hasLayers ? week.eggSeries : week.mortSeries;
   const trendLabel = hasLayers ? 'Good trays collected' : 'Mortality';
-
-  const toneMap: Record<Attention['tone'], string> = {
-    danger: 'bg-danger-soft text-danger', warn: 'bg-warn-soft text-warn',
-    accent: 'bg-accent-soft text-accent-ink', brand: 'bg-brand-soft text-brand',
-  };
 
   return (
     <Page withNav>
@@ -235,28 +166,19 @@ function ManagerHome() {
 
           {/* alerts & tasks, merged into one pair of count buttons */}
           <StaggerItem className="px-4 sm:px-0">
-            <AttentionButtons alerts={canSeeAlerts ? alertCount : undefined} tasks={tasksOpen} />
+            <AttentionButtons alerts={canSeeAlerts ? alerts.length : undefined} tasks={tasksOpen} />
           </StaggerItem>
 
           {/* needs attention */}
           <StaggerItem className="px-4 sm:px-0">
-            <SectionTitle right={<span className="font-mono text-[11px] text-muted tnum">{attention.length ? `${attention.length} open` : ''}</span>}>
+            <SectionTitle right={<span className="font-mono text-[11px] text-muted tnum">{alerts.length ? `${alerts.length} open` : ''}</span>}>
               Needs attention
             </SectionTitle>
-            {attention.length === 0 ? (
+            {alerts.length === 0 ? (
               <AllClear title="Everything's logged" description="No pending tasks, alerts or unlogged batches right now." />
             ) : (
               <GroupList>
-                {attention.slice(0, 5).map(a => (
-                  <div key={a.id} className="flex items-center gap-3 px-4 py-3">
-                    <span className={`w-9 h-9 rounded-[11px] flex items-center justify-center shrink-0 ${toneMap[a.tone]}`}>{a.icon}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[14px] font-semibold text-ink truncate">{a.title}</p>
-                      <p className="text-[12px] text-muted truncate mt-0.5 tnum">{a.detail}</p>
-                    </div>
-                    <Button size="sm" variant="outline" onClick={() => nav(a.to)} className="shrink-0">{a.actionLabel}</Button>
-                  </div>
-                ))}
+                {alerts.slice(0, 5).map(a => <AlertRow key={a.id} alert={a} />)}
               </GroupList>
             )}
           </StaggerItem>
@@ -272,15 +194,13 @@ function ManagerHome() {
                   </div>
                   <Badge tone={hasLayers ? 'accent' : 'danger'}>{hasLayers ? <Egg size={12} /> : <Skull size={12} />} last 7 days</Badge>
                 </div>
-                <ChartReveal>
-                  <AreaTrend
-                    data={trendData}
-                    labels={week.labels}
-                    color={hasLayers ? CHART.accent : CHART.danger}
-                    height={132}
-                    format={(v) => fmtIN(v)}
-                  />
-                </ChartReveal>
+                <AreaTrend
+                  data={trendData}
+                  labels={week.labels}
+                  color={hasLayers ? CHART.accent : CHART.danger}
+                  height={132}
+                  format={(v) => fmtIN(v)}
+                />
               </Card>
 
               <div>

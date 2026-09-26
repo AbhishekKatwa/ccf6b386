@@ -14,5 +14,17 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-export const supabase: SupabaseClient | null =
-  url && key ? createClient(url, key) : null;
+/** Built at module load, so a mistake in either variable would otherwise take the whole bundle
+ *  down with it. A client that could not be built is the same "no Supabase configured" case the
+ *  app already handles: everything falls back to the store's own cache. */
+function build(): SupabaseClient | null {
+  if (!url || !key) return null;
+  try {
+    return createClient(url, key);
+  } catch (e) {
+    console.error('[amrut] VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY are not usable;', e);
+    return null;
+  }
+}
+
+export const supabase: SupabaseClient | null = build();

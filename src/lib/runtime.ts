@@ -5,4 +5,7 @@
 export const runtime = {
   /** True when Supabase is configured AND the app signed in through it for this session. */
   cloud: false,
+
+  /** Baked from `package.json` by Vite. A bundle built without that define still reads 'dev'. */
+  version: typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev',
 };

@@ -2,10 +2,12 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Plus, Users, Power, LogIn, Check, MessageCircle, Inbox, ShieldCheck, ChevronDown, UserPlus } from 'lucide-react';
 import clsx from 'clsx';
+import { motion } from 'motion/react';
 import { Page, ScreenTitle } from '@/components/ui/Header';
 import { Button, Field, SelectField, SegmentedTabs } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
 import { Avatar, Badge, EmptyState } from '@/components/ui/Card';
+import { EASE, MOTION, PageReveal, Presence, useReducedMotion } from '@/components/motion';
 import { useApp } from '@/store/app';
 import { dataService } from '@/services/dataService';
 import { COMPANY_ASSIGNABLE_ROLES, ROLE_LABELS, type Role } from '@/types';
@@ -32,6 +34,7 @@ export function AdminScreen() {
   const markSupportHandled = useApp(s => s.markSupportHandled);
 
   const [tab, setTab] = useState<Tab>('companies');
+  const reduced = useReducedMotion();
   const [companyDialog, setCompanyDialog] = useState(false);
   const [newCompany, setNewCompany] = useState('');
   const [userDialog, setUserDialog] = useState(false);
@@ -72,6 +75,7 @@ export function AdminScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <ScreenTitle
         eyebrow="Master Admin"
         title="Platform"
@@ -91,6 +95,15 @@ export function AdminScreen() {
           ]}
         />
 
+        {/* One panel at a time: the tab body settles in rather than being swapped under the finger. */}
+        <Presence mode="wait">
+          <motion.div
+            key={tab}
+            initial={reduced ? false : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4, transition: { duration: MOTION.micro.duration, ease: EASE } }}
+            transition={reduced ? { duration: 0.01 } : { duration: MOTION.component.duration, ease: EASE }}
+          >
         {tab === 'companies' && (
           <div className="space-y-2.5">
             {companies.map(c => {
@@ -121,7 +134,12 @@ export function AdminScreen() {
                     </div>
                   </div>
                   {rosterOpenHere && members.length > 0 && (
-                    <div className="mt-3 space-y-1 rounded-[12px] bg-sunk p-2">
+                    <motion.div
+                      initial={reduced ? false : { opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={reduced ? { duration: 0.01 } : { duration: MOTION.component.duration, ease: EASE }}
+                      className="mt-3 space-y-1 rounded-[12px] bg-sunk p-2"
+                    >
                       {members.map(u => (
                         <div key={u.id} className="flex items-center gap-2.5 min-w-0">
                           <Avatar name={u.name} initials={u.initials} size={28} tone={u.active ? 'brand' : 'neutral'} />
@@ -132,7 +150,7 @@ export function AdminScreen() {
                           {!u.active && <Badge tone="neutral">Off</Badge>}
                         </div>
                       ))}
-                    </div>
+                    </motion.div>
                   )}
                   <div className="flex flex-wrap gap-2 mt-3">
                     <Button size="sm" variant="outline" icon={<LogIn size={14} />}
@@ -244,7 +262,10 @@ export function AdminScreen() {
             })}
           </div>
         )}
+          </motion.div>
+        </Presence>
       </div>
+      </PageReveal>
 
       {/* Create company */}
       <Dialog open={companyDialog} onClose={() => setCompanyDialog(false)} title="New company"

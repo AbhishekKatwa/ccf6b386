@@ -90,13 +90,30 @@ export interface Farm {
   name: string;
   location: string;
   contactMobile: string;
+  /** Working plane of the farm, in metres. Defaults come from DEFAULT_PLOT in lib/shedLayout. */
+  plotLengthM?: number;
+  plotWidthM?: number;
   createdAt: string;
   updatedAt: string;
 }
 
 export type ShedStatus = 'ACTIVE' | 'IDLE' | 'MAINTENANCE';
 
-export interface Shed {
+/**
+ * Site-plan geometry, all in metres. Optional: a shed that has never been placed in the
+ * layout editor derives a position from its index, so no existing record needs backfilling.
+ * Origin is the centre of the farm plot; `layoutX` runs along plot length, `layoutY` across it.
+ */
+export interface ShedGeometry {
+  layoutX?: number;
+  layoutY?: number;
+  rotationDeg?: number;
+  lengthM?: number;
+  widthM?: number;
+  heightM?: number;
+}
+
+export interface Shed extends ShedGeometry {
   id: string;
   companyId: string;
   farmId: string;
@@ -965,12 +982,20 @@ export interface FarmTask {
   synced: boolean;
 }
 
+/**
+ * What the trail records. The last four are a backup's own steps: a file leaving the company
+ * and the three ways an attempt to bring one back can end. They ride the same table as every
+ * other entry so the audit trail remains the one place a change is answered from.
+ */
+export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE'
+  | 'BACKUP_CREATED' | 'RESTORE_STARTED' | 'RESTORE_COMPLETED' | 'RESTORE_FAILED';
+
 export interface AuditEntry {
   id: string;
   companyId?: string;
   entity: string;
   entityId: string;
-  action: 'CREATE' | 'UPDATE' | 'DELETE';
+  action: AuditAction;
   field?: string;
   oldValue?: unknown;
   newValue?: unknown;

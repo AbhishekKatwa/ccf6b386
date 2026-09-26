@@ -10,7 +10,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { GraphCard } from '@/components/charts/GraphCard';
 import { axisNum, ChartLegend, TrendChart, type VSeries } from '@/components/charts/DataViz';
 import { CHART } from '@/components/ui/Charts';
-import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, ChartReveal, useReducedMotion } from '@/components/motion';
+import { MOTION, PageReveal, StaggerContainer, StaggerItem, ScrollReveal, ChartReveal, useReducedMotion } from '@/components/motion';
 import { motion } from 'motion/react';
 import { EMPTY_PAYMENT, PaymentFields, paymentPatch, type PaymentDraft } from '@/components/finance/PaymentFields';
 import { fmtDateShort, fmtIN, fmtMoney, todayISO } from '@/lib/format';
@@ -44,7 +44,7 @@ function Meter({ share, className }: { share: number | null; className?: string 
       <motion.div className="h-full w-full rounded-full bg-brand origin-left"
         initial={reduced ? false : { scaleX: 0 }}
         animate={{ scaleX: pct / 100 }}
-        transition={{ duration: reduced ? 0 : 0.7, ease: [0.22, 1, 0.36, 1] }} />
+        transition={reduced ? { duration: 0 } : MOTION.page} />
     </div>
   );
 }

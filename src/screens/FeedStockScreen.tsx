@@ -16,7 +16,7 @@ import { godownMovements, ledgerTotals, type Movement } from '@/lib/movements';
 import { useShortageAllocator } from '@/hooks/useShortageAllocator';
 import { useGodownPrices } from '@/hooks/useGodownPrices';
 import { useFeedCoverage } from '@/hooks/useFeedCoverage';
-import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal } from '@/components/motion';
+import { PageReveal, StaggerContainer, StaggerItem, ScrollReveal, TabPanel } from '@/components/motion';
 
 /**
  * The godown screen is the valuation's front page: every KG, average cost and stock
@@ -131,6 +131,7 @@ export function FeedStockScreen() {
       <div className="px-4 sm:px-0 mt-3 space-y-4">
         {tabs}
 
+        <TabPanel id={tab} className="space-y-4">
         {tab === 'ledger' && (
           <StockLedger
             movements={ledgerMovements}
@@ -269,8 +270,8 @@ export function FeedStockScreen() {
             <p className="text-xs text-warn font-semibold">{lowCount} ingredient{lowCount > 1 ? 's' : ''} below the {fmtIN(GODOWN_LOW_KG)} kg reorder level.</p>
           </div>
         )}
-
         </>)}
+        </TabPanel>
       </div>
 
       <AddStockDialog open={open} onClose={() => setOpen(false)} />

@@ -11,7 +11,12 @@
  * database's own sentence, not a silence.
  */
 import { supabase } from '@/lib/supabase';
-import { toRow, stable } from './rows';
+import { roleReadable } from '@/lib/permissions';
+import {
+  DatabaseError, logDatabaseError, normalizeDatabaseError, tableLabel, technicalLineOf,
+} from '@/lib/dbErrors';
+import type { Role } from '@/types';
+import { toRow, stable, isUuid } from './rows';
 import { SLICES, rowId, type SliceDef } from './registry';
 import { PRIMARY_KEYS } from './columns.gen';
 
@@ -22,11 +27,18 @@ interface RowPlan {
   children: { table: string; fk: string; rows: Record<string, unknown>[] }[];
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The exceptions to the opsDenied() skip: asking the platform for help is not a company
+ *  operation, so a Master Admin's own message still goes out — never a company's books. And a
+ *  company row is the platform's own record: only MASTER_ADMIN may write `companies` (003), so
+ *  the lifecycle it carries — active or retired — is exactly the thing that skip must not eat. */
+const PLATFORM_SLICES = new Set(['supportMessages', 'companies']);
 
-/** The one exception to the opsDenied() skip: asking the platform for help is not a company
- *  operation, so a Master Admin's own message still goes out — never a company's books. */
-const PLATFORM_SLICES = new Set(['supportMessages']);
+/** The person a row names, for the one table whose pointer to `profiles` is NOT NULL. Every
+ *  other reference is nullable, so losing a login blanks the name rather than refusing the
+ *  row; an assignment has no such escape. */
+const PERSON_REF: Record<string, (o: any) => unknown> = {
+  assignments: o => o.userId,
+};
 
 function planOf(def: SliceDef, obj: any): RowPlan | null {
   if (def.skip?.(obj)) return null;
@@ -45,26 +57,36 @@ function planOf(def: SliceDef, obj: any): RowPlan | null {
 export class PushEngine {
   private sent = new Map<string, Map<string, string>>();
   private busy = false;
-  /** table → the database's own sentence for the last pass that refused it. */
+  /** table → the sentence this session can read for the last pass that refused it. The
+   *  database's own wording stays in the developer log (`dbErrors`), never on the badge. */
   private errors = new Map<string, string>();
 
   /** Remember the database's own rows after a pull so the first push only carries what the
-   *  browser changed since — including nothing at all on a clean machine. */
+   *  browser changed since — including nothing at all on a clean machine. A slice the pull
+   *  never answered for keeps the memory it had rather than being primed as empty: an absent
+   *  slice is a table this pass did not read, not a table the database has nothing in, and
+   *  forgetting it would hand the next pass the whole cached slice to re-send over a
+   *  teammate's newer row. */
   prime(pulled: Record<string, any[]>): void {
     this.sent.clear();
     for (const def of SLICES) {
+      if (!(def.slice in pulled)) continue;
       const m = new Map<string, string>();
-      for (const o of pulled[def.slice] ?? []) {
+      for (const o of pulled[def.slice]) {
         const p = planOf(def, o);
         if (p) m.set(rowId(o), p.canon);
       }
       this.sent.set(def.slice, m);
     }
-    const users = new Map<string, string>();
-    for (const u of pulled.users ?? []) users.set(rowId(u), this.usersCanon(u));
-    this.sent.set('users', users);
-    this.sent.set('ingredientCatalog', new Map(
-      (pulled.ingredientCatalog ?? []).map((n: string) => [n, n])));
+    if ('users' in pulled) {
+      const users = new Map<string, string>();
+      for (const u of pulled.users) users.set(rowId(u), this.usersCanon(u));
+      this.sent.set('users', users);
+    }
+    if ('ingredientCatalog' in pulled) {
+      this.sent.set('ingredientCatalog', new Map(
+        pulled.ingredientCatalog.map((n: string) => [n, n])));
+    }
   }
 
   /** Rows the database just handed over are, by definition, rows it already has. A live pull
@@ -82,9 +104,11 @@ export class PushEngine {
         continue;
       }
       if (slice === 'users') {
-        const m = this.sent.get('users') ?? new Map<string, string>();
-        for (const u of list ?? []) m.set(rowId(u), this.usersCanon(u));
-        this.sent.set('users', m);
+        // pullUsers answers with every person this session may see, so a complete read
+        // rewrites that memory instead of adding to it: a login deleted elsewhere has to stop
+        // counting as one the database has.
+        this.sent.set('users', new Map(
+          (list ?? []).map((u: any) => [rowId(u), this.usersCanon(u)])));
         continue;
       }
       const def = SLICES.find(s => s.slice === slice);
@@ -96,6 +120,35 @@ export class PushEngine {
       }
       this.sent.set(slice, m);
     }
+  }
+
+  /** Rows this browser still owes the database: present in the last confirmed send and changed
+   *  since. Asked for BEFORE a pull rewrites that memory — after it, "different from the
+   *  database" would also describe a teammate's newer row, and protecting that would push a
+   *  stale copy straight over theirs. A row the database has never been told about is not here:
+   *  the merge already keeps those. */
+  owed(pulled: Record<string, any[]>, state: Record<string, any>): Record<string, Set<string>> {
+    const out: Record<string, Set<string>> = {};
+    for (const key of Object.keys(pulled)) {
+      if (key === 'ingredientCatalog') continue; // merged as a union; no row of it can be clobbered
+      const before = this.sent.get(key);
+      if (!before || !before.size) continue;
+      const def = SLICES.find(s => s.slice === key);
+      if (!def && key !== 'users') continue;
+      const canon = key === 'users'
+        ? (o: any) => this.usersCanon(o)
+        : (o: any) => planOf(def!, o)?.canon;
+      const ids = new Set<string>();
+      for (const o of ((state[key] as any[]) ?? [])) {
+        const id = String(rowId(o));
+        const was = before.get(id);
+        if (was === undefined) continue;
+        const now = canon(o);
+        if (now && now !== was) ids.add(id);
+      }
+      if (ids.size) out[key] = ids;
+    }
+    return out;
   }
 
   private usersCanon(u: any): string {
@@ -122,6 +175,11 @@ export class PushEngine {
    * where the select policy lets a company manager read it. And a company-scoped row with
    * no company belongs to no member at all — every policy behind it is member_of(...),
    * which refuses a null company for everybody.
+   *
+   * A company that has been deactivated is foreign for the same reason: `app.member_of()`
+   * and `app.role_in()` now refuse it on every table (013), so its cached rows must neither
+   * go out nor sit in the queue as owed — and, above all, must not read as rows to delete
+   * when the company stands again.
    */
   private scope(state: Record<string, any>): (def: SliceDef, o: any) => boolean {
     const me = (state.users ?? []).find((u: any) => u.id === state.session?.userId);
@@ -129,13 +187,17 @@ export class PushEngine {
     const ids = new Set<string>((me?.companyIds ?? []).map(String));
     if (state.session?.companyId) ids.add(String(state.session.companyId));
     const wildcard = me?.role === 'MASTER_ADMIN' || ids.has('*');
+    const dead = new Set<string>((state.companies ?? [])
+      .filter((c: any) => c?.active === false)
+      .map((c: any) => String(c.id)));
     return (def, o) => {
       if (def.slice === 'supportMessages') {
         const sender = o.userId ?? o.user_id;
         return sender != null && String(sender) !== uid;
       }
-      if (wildcard) return false;
       const c = def.companyOf ? def.companyOf(o) : o.companyId;
+      if (c != null && dead.has(String(c))) return true;
+      if (wildcard) return false;
       return c == null || !ids.has(String(c));
     };
   }
@@ -151,6 +213,28 @@ export class PushEngine {
     const me = (state.users ?? []).find((u: any) => u.id === state.session?.userId);
     if (me?.role === 'MASTER_ADMIN') return true;
     return ((me?.companyIds ?? []) as unknown[]).map(String).includes('*');
+  }
+
+  /**
+   * Whether this session's role may read a table at all — the registry's mirror of 003's own
+   * SELECT verb, which is narrower than membership for the money, formula, godown, flock-health
+   * and audit tables.
+   *
+   * The engine's entire memory is the set of rows the database handed back, so a slice this
+   * session cannot read can never be confirmed: every cached row of it reads as one the
+   * database has never seen, on every pass, forever. A labour's device holding the company's
+   * traders is the case that shows it — 140 rows queued, RLS refusing every one of them, and a
+   * badge that cannot drain. Worse, the day the cache drops those rows the same blindness reads
+   * them as local deletes to replay.
+   *
+   * So such a slice is left alone: not sent, not owed, and never a delete. It is the same
+   * judgement `scope()` makes of another company's rows — what this session cannot see through
+   * RLS is not its to speak for.
+   */
+  private readDenied(def: SliceDef, state: Record<string, any>): boolean {
+    if (!def.readKey && !def.readRoles) return false;
+    const me = (state.users ?? []).find((u: any) => u.id === state.session?.userId);
+    return !roleReadable(me?.role as Role | undefined, def);
   }
 
   /**
@@ -174,9 +258,16 @@ export class PushEngine {
         .from(table)
         .upsert(bucket, { onConflict: pk.join(',') });
       if (error) {
-        const why = `${table}${bucket.length > 1 ? ` (${bucket.length} rows, from id ${bucket[0].id ?? bucket[0][pk[0]]})` : ''}: ${error.message}`;
-        this.errors.set(table, why);
-        throw new Error(why);
+        const n = normalizeDatabaseError(error, { table, origin: 'background' });
+        // The badge carries the sentence the user can read; the log keeps the database's own,
+        // with the bucket size that made this statement fail.
+        this.errors.set(table, n.userMessage);
+        logDatabaseError({
+          ...n,
+          technicalMessage: technicalLineOf(n,
+            bucket.length > 1 ? `(${bucket.length} rows, from id ${bucket[0].id ?? bucket[0][pk[0]]})` : ''),
+        }, error);
+        throw new DatabaseError(n, error);
       }
       this.errors.delete(table);
     }
@@ -188,22 +279,28 @@ export class PushEngine {
       .delete()
       .eq(column, value);
     if (error) {
-      const why = `${table}: ${error.message}`;
-      this.errors.set(table, why);
-      throw new Error(why);
+      const n = normalizeDatabaseError(error, { table, origin: 'background' });
+      this.errors.set(table, n.userMessage);
+      logDatabaseError({ ...n, technicalMessage: technicalLineOf(n) }, error);
+      throw new DatabaseError(n, error);
     }
     this.errors.delete(table);
   }
 
+  /** A pass is on the wire. A pull that re-primes the snapshot mid-flight would be undone by
+   *  the write that set it, so a caller that must choose between the two asks here. */
+  isBusy(): boolean { return this.busy; }
+
   /** Rows the database is owed on the next pass — new, changed, or deleted since the last
-   *  send — plus the database's own sentence for each table that refused them. This is the
-   *  real queue: it drains only when a write actually lands. */
+   *  send — plus a readable reason for each table that refused them. This is the real
+   *  queue: it drains only when a write actually lands. */
   pending(state: Record<string, any>): { count: number; errors: string[] } {
     let count = 0;
     const foreign = this.scope(state);
     const skipOps = this.opsDenied(state);
     for (const def of SLICES) {
       if (skipOps && !PLATFORM_SLICES.has(def.slice)) continue;
+      if (this.readDenied(def, state)) continue;
       const last = this.sent.get(def.slice) ?? new Map<string, string>();
       const rows = (state[def.slice] ?? []) as any[];
       const storeIds = new Set(rows.map(rowId));
@@ -221,8 +318,8 @@ export class PushEngine {
     return { count, errors: [...this.errors.values()] };
   }
 
-  /** One diff pass over every synced slice. `failures` is a line per table that refused;
-   *  `written` names the slices whose rows are now proven to be in the database. */
+  /** One diff pass over every synced slice. `failures` is one readable line per table that
+   *  refused; `written` names the slices whose rows are now proven to be in the database. */
   async push(state: Record<string, any>): Promise<{ failures: string[]; written: string[] }> {
     if (this.busy) return { failures: [], written: [] };
     this.busy = true;
@@ -236,6 +333,7 @@ export class PushEngine {
       // the platform slices alone: they are the admin's own work, not a company's.
       for (const def of SLICES) {
         if (skipOps && !PLATFORM_SLICES.has(def.slice)) continue;
+        if (this.readDenied(def, state)) continue;
         const f = await this.pushSlice(def, state, foreign);
         failures.push(...f);
         if (!f.length) written.push(def.slice);
@@ -257,8 +355,25 @@ export class PushEngine {
    *  feed, vaccination and money rows out of the database.) */
   private refuseWipe(table: string, gone: number, nowSize: number, lastSize: number): string | null {
     return gone && !nowSize && lastSize
-      ? `${table}: refused to delete ${gone} rows — the store offered this slice with nothing in it`
+      ? `Refused to delete ${gone} ${tableLabel(table)} — the app offered that list with nothing in it`
       : null;
+  }
+
+  /** Whose record the last complete read of the people tables carried: exactly the logins this
+   *  account can point a row at. */
+  private knownPerson(id: string): boolean {
+    return this.sent.get('users')?.has(id) ?? false;
+  }
+
+  /** A login the database wrote itself (create_login): the person exists from this moment, so a
+   *  row naming them must not wait on the realtime pull to notice. The canon is empty on
+   *  purpose — the next complete read of the people tables overwrites it with the real one. */
+  confirmPerson(id: string): void {
+    this.sent.get('users')?.set(id, '');
+  }
+
+  private nameOf(state: Record<string, any>, id: string): string {
+    return ((state.users ?? []) as any[]).find(u => String(u.id) === id)?.name ?? id;
   }
 
   private async pushSlice(def: SliceDef, state: Record<string, any>,
@@ -270,10 +385,19 @@ export class PushEngine {
     const now = new Map<string, string>();
     const rows: Record<string, unknown>[] = [];
     const pending: RowPlan[] = [];
+    const held: any[] = [];
     for (const o of store) {
       if (foreign(def, o)) continue;
       const plan = planOf(def, o);
       if (!plan) continue;
+      const person = PERSON_REF[def.slice]?.(o);
+      if (person != null && !this.knownPerson(String(person))) {
+        // The database has never answered for this person, so it would refuse the row — and one
+        // refused row brings its whole bucket down with it. Held back, not forgotten: it stays
+        // owed, and the day a login appears for them the next diff carries it out.
+        held.push(o);
+        continue;
+      }
       now.set(rowId(o), plan.canon);
       if (last.get(rowId(o)) !== plan.canon) {
         pending.push(plan);
@@ -284,11 +408,20 @@ export class PushEngine {
     const gone = [...last.keys()].filter(id => !now.has(id) && !storeIds.has(id));
     const wipe = this.refuseWipe(def.table, gone.length, now.size, last.size);
     if (wipe) return [wipe];
+    // The held rows get their own error key: a refusal the database itself spoke stays the
+    // sentence the badge carries, and this one is restated every pass rather than clobbering it.
+    const holdKey = `${def.table}#people`;
+    if (held.length) {
+      const who = held.map(o => this.nameOf(state, String(PERSON_REF[def.slice]!(o)))).join(', ');
+      const why = `${held.length} ${tableLabel(def.table)} wait for ${who} to have a login`;
+      this.errors.set(holdKey, why);
+      failures.push(why);
+    } else this.errors.delete(holdKey);
     if (!rows.length && !gone.length) {
       // nothing owed: whatever this table was refused for, that refusal is no longer the truth
-      this.errors.delete(def.table);
+      if (!held.length) this.errors.delete(def.table);
       this.sent.set(def.slice, now);
-      return [];
+      return failures;
     }
     try {
       await this.write(def.table, rows);
@@ -301,7 +434,7 @@ export class PushEngine {
       for (const id of gone) await this.remove(def.table, 'id', id);
       this.sent.set(def.slice, now);
     } catch (e) {
-      failures.push((e as Error).message);
+      failures.push(normalizeDatabaseError(e, { table: def.table, origin: 'background' }).userMessage);
     }
     return failures;
   }
@@ -313,7 +446,7 @@ export class PushEngine {
     const changed: any[] = [];
     try {
       for (const u of users) {
-        if (!UUID_RE.test(String(u.id))) continue; // legacy cache rows are the old world's
+        if (!isUuid(u.id)) continue; // legacy cache rows are the old world's
         const canon = this.usersCanon(u);
         now.set(rowId(u), canon);
         if (last.get(rowId(u)) !== canon) changed.push(u);
@@ -341,7 +474,7 @@ export class PushEngine {
       }
       this.sent.set('users', now);
     } catch (e) {
-      failures.push((e as Error).message);
+      failures.push(normalizeDatabaseError(e, { table: 'profiles', origin: 'background' }).userMessage);
     }
     return failures;
   }
@@ -363,11 +496,16 @@ export class PushEngine {
       await this.write('ingredients', clean.filter(n => !last.has(n)).map(n => ({ name: n })));
       for (const n of gone) {
         const { error } = await supabase!.from('ingredients').delete().eq('name', n);
-        if (error) throw new Error(`ingredients: ${error.message}`);
+        if (error) {
+          const normalized = normalizeDatabaseError(error, { table: 'ingredients', origin: 'background' });
+          this.errors.set('ingredients', normalized.userMessage);
+          logDatabaseError({ ...normalized, technicalMessage: technicalLineOf(normalized) }, error);
+          throw new DatabaseError(normalized, error);
+        }
       }
       this.sent.set('ingredientCatalog', now);
     } catch (e) {
-      failures.push((e as Error).message);
+      failures.push(normalizeDatabaseError(e, { table: 'ingredients', origin: 'background' }).userMessage);
     }
     return failures;
   }

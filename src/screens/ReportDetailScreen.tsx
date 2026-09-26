@@ -9,6 +9,8 @@ import { Button, ChipGroup, Field, SelectField } from '@/components/ui/Form';
 import { GraphCard } from '@/components/charts/GraphCard';
 import { axisNum, HBarList, PairedBars, TrendChart, type HRow, type VSeries } from '@/components/charts/DataViz';
 import { CHART } from '@/components/ui/Charts';
+import { EASE, MOTION, Presence, StaggerContainer, StaggerItem, useReducedMotion } from '@/components/motion';
+import { motion } from 'motion/react';
 import { godownIngredients, type Range } from '@/lib/analytics';
 import { fmtDate, fmtIN, todayISO } from '@/lib/format';
 import {
@@ -53,6 +55,7 @@ export function ReportDetailScreen() {
   };
 
   const options = useMemo(() => (def ? filterOptions(def, data) : {}), [def, data]);
+  const reduced = useReducedMotion();
 
   const missing = def?.needs?.filter(param => !p[KEY[param]]) ?? [];
   const report = useMemo(() => {
@@ -105,7 +108,8 @@ export function ReportDetailScreen() {
         ) : undefined}
       />
 
-      <div className="px-4 sm:px-0 mt-3 space-y-4">
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4">
+        <StaggerItem className="space-y-4">
         <p className="text-[12.5px] text-muted leading-relaxed">{def.desc}</p>
 
         {/* ---------- what this statement is being read on ---------- */}
@@ -146,7 +150,19 @@ export function ReportDetailScreen() {
 
           <ScopeLine def={def} p={p} range={range} data={data} onClear={param => setParam(param, '')} />
         </Card>
+        </StaggerItem>
 
+        {/* ---------- one statement, one of three states: gate, nothing to state, result ---------- */}
+        <StaggerItem>
+        <Presence mode="wait">
+          <motion.div
+            key={missing.length > 0 ? 'needs' : !report ? 'empty' : 'result'}
+            className="space-y-4"
+            initial={reduced ? false : { opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, transition: { duration: MOTION.micro.duration } }}
+            transition={reduced ? { duration: 0 } : { duration: MOTION.component.duration, ease: EASE }}
+          >
         {missing.length > 0 ? (
           <NeedsGate param={missing[0]} options={options[missing[0]] ?? []} onPick={id => setParam(missing[0], id)} />
         ) : !report ? (
@@ -213,7 +229,10 @@ export function ReportDetailScreen() {
             )}
           </>
         )}
-      </div>
+          </motion.div>
+        </Presence>
+        </StaggerItem>
+      </StaggerContainer>
     </Page>
   );
 }

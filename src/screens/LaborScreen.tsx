@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion, type Transition } from 'motion/react';
 import clsx from 'clsx';
 import {
   Egg, Skull, Package, Wheat, Clock, Check, ChevronRight, Minus, Plus, Syringe,
@@ -16,6 +17,7 @@ import { eggStockByGrade, gradeTotal } from '@/lib/calc';
 import { vaccinationDayLabel } from '@/lib/vaccination';
 import { useVaccinationSchedule } from '@/hooks/useVaccinations';
 import { VaccinationCompleteSheet } from '@/components/vaccination/VaccinationSheets';
+import { EASE, MOTION, PageReveal, StaggerContainer, StaggerItem, useReducedMotion } from '@/components/motion';
 import {
   EGG_GRADES, EMPTY_GRADE_COUNTS, FEED_ROUNDS, FEED_ROUND_LABELS,
   type EggGrade, type EggGradeCounts, type FeedRound,
@@ -417,6 +419,16 @@ function FeedSheet({ onClose, day }: { onClose: () => void; day: LaborDay }) {
 
 type SheetKind = 'eggs' | 'mortality' | 'sale' | 'feed';
 
+/**
+ * Sections of a worker's day arrive in reading order instead of all at once. The offset is the
+ * section's slot in that order, so a skipped conditional section never makes the next one jitter.
+ */
+function sectionIn(reduced: boolean, index: number): Transition {
+  return reduced ? { duration: 0 }
+    : { duration: MOTION.page.duration, ease: EASE, delay: index * 0.06 };
+}
+const SECTION_RISE = { opacity: 0, y: 10 };
+
 export function LaborHomeScreen() {
   const nav = useNavigate();
   const day = useLaborDay();
@@ -427,6 +439,7 @@ export function LaborHomeScreen() {
   const [confirmOut, setConfirmOut] = useState(false);
   const vac = useVaccinationSchedule(day.batch?.id);
   const [doseId, setDoseId] = useState<string | null>(null);
+  const reduced = useReducedMotion();
 
   const s = day.todays;
   const user = day.user;
@@ -443,11 +456,13 @@ export function LaborHomeScreen() {
   if (!day.batch) {
     return (
       <Page withNav>
+        <PageReveal>
         <ScreenTitle eyebrow={greeting()} title={firstName} subtitle={fmtDate(day.today)} />
         <div className="px-4 sm:px-0">
           <EmptyState icon={<Layers size={22} />} title="No shed assigned yet"
             description="Your supervisor has not mapped you to a shed. You will see today's work here once that is done." />
         </div>
+        </PageReveal>
         <SignOut open={confirmOut} onClose={() => setConfirmOut(false)} onConfirm={signOut} />
       </Page>
     );
@@ -461,7 +476,11 @@ export function LaborHomeScreen() {
 
   return (
     <Page withNav>
-      <header className="px-4 sm:px-0 pt-5 pb-3 safe-top flex items-start justify-between gap-3">
+      <motion.header
+        initial={reduced ? false : SECTION_RISE}
+        animate={{ opacity: 1, y: 0 }}
+        transition={sectionIn(reduced, 0)}
+        className="px-4 sm:px-0 pt-5 pb-3 safe-top flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">
             {greeting()} · {fmtDate(day.today)}
@@ -478,9 +497,13 @@ export function LaborHomeScreen() {
           <SyncPill compact />
           <Avatar name={user.name} size={40} />
         </div>
-      </header>
+      </motion.header>
 
-      <section className="px-4 sm:px-0 mt-4">
+      <motion.section
+        initial={reduced ? false : SECTION_RISE}
+        animate={{ opacity: 1, y: 0 }}
+        transition={sectionIn(reduced, 1)}
+        className="px-4 sm:px-0 mt-4">
         <SectionTitle right={
           <button onClick={() => nav('/log')} className="font-mono text-[11px] font-semibold text-brand press">Today’s log</button>
         }>What to record</SectionTitle>
@@ -495,9 +518,13 @@ export function LaborHomeScreen() {
             </button>
           ))}
         </div>
-      </section>
+      </motion.section>
 
-      <section className="px-4 sm:px-0 mt-5">
+      <motion.section
+        initial={reduced ? false : SECTION_RISE}
+        animate={{ opacity: 1, y: 0 }}
+        transition={sectionIn(reduced, 2)}
+        className="px-4 sm:px-0 mt-5">
         <SectionTitle>Feed timing</SectionTitle>
         <Card padded={false} className="overflow-hidden">
           <button onClick={() => setSheet('feed')} className="w-full press">
@@ -529,11 +556,15 @@ export function LaborHomeScreen() {
             </div>
           </button>
         </Card>
-      </section>
+      </motion.section>
 
       {/* §13: labor sees only the doses in front of them, and one button on each. */}
       {doses.length > 0 && (
-        <section className="px-4 sm:px-0 mt-5">
+        <motion.section
+          initial={reduced ? false : SECTION_RISE}
+          animate={{ opacity: 1, y: 0 }}
+          transition={sectionIn(reduced, 3)}
+          className="px-4 sm:px-0 mt-5">
           <SectionTitle>Vaccination to give</SectionTitle>
           <div className="space-y-2.5">
             {doses.map(p => (
@@ -552,11 +583,15 @@ export function LaborHomeScreen() {
               </Card>
             ))}
           </div>
-        </section>
+        </motion.section>
       )}
 
       {myTasks.length > 0 && (
-        <section className="px-4 sm:px-0 mt-5">
+        <motion.section
+          initial={reduced ? false : SECTION_RISE}
+          animate={{ opacity: 1, y: 0 }}
+          transition={sectionIn(reduced, 4)}
+          className="px-4 sm:px-0 mt-5">
           <SectionTitle right={
             <button onClick={() => nav('/tasks')} className="font-mono text-[11px] font-semibold text-brand press">All tasks</button>
           }>My tasks today</SectionTitle>
@@ -579,14 +614,18 @@ export function LaborHomeScreen() {
               );
             })}
           </div>
-        </section>
+        </motion.section>
       )}
 
-      <section className="px-4 sm:px-0 mt-6 space-y-2.5">
+      <motion.section
+        initial={reduced ? false : SECTION_RISE}
+        animate={{ opacity: 1, y: 0 }}
+        transition={sectionIn(reduced, 5)}
+        className="px-4 sm:px-0 mt-6 space-y-2.5">
         <Button variant="outline" size="lg" block icon={<History size={17} />} onClick={() => nav('/log')}>Today’s log</Button>
         <Button variant="outline" size="lg" block icon={<LogOut size={17} />} className="text-danger border-danger/30"
           onClick={() => setConfirmOut(true)}>Sign out</Button>
-      </section>
+      </motion.section>
 
       {sheet === 'eggs' && <EggSheet onClose={() => setSheet(null)} day={day} />}
       {sheet === 'mortality' && <MortalitySheet onClose={() => setSheet(null)} day={day} />}
@@ -668,7 +707,7 @@ export function LaborLogScreen() {
         title: t.title, detail: 'Task completed', by: day.user.name,
       });
     }
-    return out.sort((a, b) => a.at.localeCompare(b.at));
+    return out.sort((a, b) => b.at.localeCompare(a.at));
   }, [day.todays, day.batch, day.data, day.today, day.user]);
 
   if (!day.user) return null;
@@ -676,10 +715,12 @@ export function LaborLogScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <ScreenTitle eyebrow="Farm labor" title="Today’s log"
         subtitle={`${day.shed?.name ?? 'Shed'} · ${fmtDate(day.today)}`} />
-      <div className="px-4 sm:px-0 space-y-4">
+      <StaggerContainer className="px-4 sm:px-0 space-y-4">
         {s && (
+          <StaggerItem key="summary">
           <Card>
             <div className="grid grid-cols-3 gap-3 text-center">
               <div>
@@ -696,8 +737,10 @@ export function LaborLogScreen() {
               </div>
             </div>
           </Card>
+          </StaggerItem>
         )}
 
+        <StaggerItem key="entries">
         {!day.batch ? (
           <EmptyState icon={<Layers size={22} />} title="No shed assigned"
             description="Your day log appears here once a shed is assigned to you." />
@@ -720,7 +763,9 @@ export function LaborLogScreen() {
             ))}
           </div>
         )}
-      </div>
+        </StaggerItem>
+      </StaggerContainer>
+      </PageReveal>
     </Page>
   );
 }

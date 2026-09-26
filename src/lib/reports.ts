@@ -1817,6 +1817,8 @@ const KIND_LABEL: Record<FinanceTxn['kind'], string> = {
 
 const ACTION_LABEL: Record<AuditEntry['action'], string> = {
   CREATE: 'Created', UPDATE: 'Updated', DELETE: 'Deleted',
+  BACKUP_CREATED: 'Backup exported', RESTORE_STARTED: 'Restore started',
+  RESTORE_COMPLETED: 'Restore completed', RESTORE_FAILED: 'Restore failed',
 };
 
 const shortId = (id: string) => (id && id.length > 12 ? `${id.slice(0, 7)}…${id.slice(-3)}` : id || DASH);

@@ -1,19 +1,23 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { MapPin, Plus, ChevronRight, Building2, Phone } from 'lucide-react';
-import { useApp, useCompanyData } from '@/store/app';
+import { MapPin, Plus, ChevronRight, Building2, Phone, LayoutGrid } from 'lucide-react';
+import { useApp, useCompanyData, useCurrentUser } from '@/store/app';
+import { STRUCTURE_ROLES } from '@/lib/permissions';
 import { dataService } from '@/services/dataService';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, StatusBadge, EmptyState, IconTile, GroupList, ListRow, StatStrip, StatCell, Stat } from '@/components/ui/Card';
 import { Button, Field } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
+import { StaggerContainer, StaggerItem } from '@/components/motion';
 import { fmtIN } from '@/lib/format';
 
 export function FarmDetailScreen() {
   const { farmId } = useParams();
   const nav = useNavigate();
   const { farms, batches } = useCompanyData();
+  const user = useCurrentUser();
   const pushToast = useApp(s => s.pushToast);
+  const canLayout = !!user && STRUCTURE_ROLES.includes(user.role);
 
   const farm = farms.find(f => f.id === farmId);
   const farmSheds = dataService.sheds.useList().filter(s => s.farmId === farmId);
@@ -37,7 +41,8 @@ export function FarmDetailScreen() {
       <Header title={farm.name} subtitle={farm.location}
         action={<Button size="sm" variant="outline" icon={<Plus size={14} />} onClick={() => setOpen(true)}>Shed</Button>} />
 
-      <div className="px-4 sm:px-0 mt-3 space-y-4">
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4">
+        <StaggerItem>
         <Card padded={false} className="overflow-hidden">
           <div className="p-4 flex items-start gap-3">
             <IconTile tone="brand" size={46}><MapPin size={20} /></IconTile>
@@ -55,9 +60,18 @@ export function FarmDetailScreen() {
             <StatCell><Stat label="Live batches" value={fmtIN(batches.filter(b => b.farmId === farm.id && b.status === 'ACTIVE' && farmSheds.some(s => s.id === b.shedId)).length)} tone="accent" size="md" /></StatCell>
           </StatStrip>
         </Card>
+        </StaggerItem>
 
+        <StaggerItem>
         <div>
-          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted mb-2 px-0.5">Sheds</p>
+          <div className="flex items-end justify-between gap-3 mb-2 px-0.5">
+            <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Sheds</p>
+            {canLayout && (
+              <Button size="sm" variant="ghost" icon={<LayoutGrid size={14} />} onClick={() => nav(`/farms/${farm.id}/layout`)}>
+                Farm layout
+              </Button>
+            )}
+          </div>
           {farmSheds.length === 0 ? (
             <EmptyState icon={<Building2 size={22} />} title="No sheds yet" description="Add a shed to start assigning batches."
               action={<Button onClick={() => setOpen(true)} icon={<Plus size={14} />}>Add shed</Button>} />
@@ -79,7 +93,8 @@ export function FarmDetailScreen() {
             </GroupList>
           )}
         </div>
-      </div>
+        </StaggerItem>
+      </StaggerContainer>
 
       <Dialog open={open} onClose={() => setOpen(false)} title="Add shed" subtitle={farm.name}
         footer={<div className="flex gap-2"><Button variant="outline" block onClick={() => setOpen(false)}>Cancel</Button><Button block onClick={submit}>Create shed</Button></div>}>

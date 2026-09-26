@@ -1,5 +1,7 @@
 import { useId, useState } from 'react';
 import clsx from 'clsx';
+import { motion } from 'motion/react';
+import { ChartReveal, MOTION, useReveal } from '@/components/motion';
 
 export const CHART = {
   brand: '#164a35',
@@ -96,27 +98,29 @@ export function AreaTrend({ data, labels, color = CHART.brand, height = 120, for
         <span className="font-display text-[20px] font-semibold tnum text-ink">{fmt(data[active])}</span>
         {labels && <span className="font-mono text-[10px] text-muted tnum">{labels[active]}</span>}
       </div>
-      <svg
-        width="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
-        className="overflow-visible touch-none cursor-crosshair"
-        onPointerMove={onMove} onPointerDown={onMove}
-      >
-        <defs>
-          <linearGradient id={`a${gid}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.2" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <polygon points={`0,${h} ${line} ${(data.length - 1) * step},${h}`} fill={`url(#a${gid})`} />
-        <polyline points={line} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        {idx !== null && (
-          <>
-            <line x1={active * step} y1="0" x2={active * step} y2={h} stroke={color} strokeOpacity="0.3" strokeWidth="1" strokeDasharray="3 3" />
-            <circle cx={active * step} cy={ys[active]} r="4" fill={color} stroke="var(--color-card)" strokeWidth="2" />
-          </>
-        )}
-        <circle cx={(data.length - 1) * step} cy={ys[data.length - 1]} r="3" fill={color} stroke="var(--color-card)" strokeWidth="1.5" />
-      </svg>
+      <ChartReveal className="block">
+        <svg
+          width="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
+          className="overflow-visible touch-none cursor-crosshair block"
+          onPointerMove={onMove} onPointerDown={onMove}
+        >
+          <defs>
+            <linearGradient id={`a${gid}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity="0.2" />
+              <stop offset="100%" stopColor={color} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <polygon points={`0,${h} ${line} ${(data.length - 1) * step},${h}`} fill={`url(#a${gid})`} />
+          <polyline points={line} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          {idx !== null && (
+            <>
+              <line x1={active * step} y1="0" x2={active * step} y2={h} stroke={color} strokeOpacity="0.3" strokeWidth="1" strokeDasharray="3 3" />
+              <circle cx={active * step} cy={ys[active]} r="4" fill={color} stroke="var(--color-card)" strokeWidth="2" />
+            </>
+          )}
+          <circle cx={(data.length - 1) * step} cy={ys[data.length - 1]} r="3" fill={color} stroke="var(--color-card)" strokeWidth="1.5" />
+        </svg>
+      </ChartReveal>
       {labels && (
         <div className="flex justify-between mt-1.5">
           {[0, Math.floor((labels.length - 1) / 2), labels.length - 1].map((i, k) => (
@@ -133,14 +137,20 @@ export function BarChart({ data, labels, color = CHART.accent, height = 80 }: {
 }) {
   const max = Math.max(...data, 1);
   const lastIdx = data.length - 1;
+  const { ref, show, reduced } = useReveal();
   return (
-    <div>
+    <div ref={ref}>
       <div className="flex items-end gap-[3px]" style={{ height }}>
         {data.map((v, i) => (
-          <div
+          <motion.div
             key={i}
-            className="flex-1 rounded-t-[3px] transition-all hover:opacity-100"
+            initial={reduced ? false : { scaleY: 0 }}
+            animate={{ scaleY: show ? 1 : 0 }}
+            transition={reduced ? { duration: 0 } : { ...MOTION.page, delay: Math.min(i, 14) * 0.025 }}
+            className="flex-1 rounded-t-[3px] transition-[height,opacity] duration-300"
+            // The entrance is a transform; height still carries the data.
             style={{
+              transformOrigin: 'bottom',
               height: `${Math.max(3, (v / max) * 100)}%`,
               background: color,
               opacity: i === lastIdx ? 1 : 0.32 + (v / max) * 0.4,
@@ -161,8 +171,9 @@ export function BarChart({ data, labels, color = CHART.accent, height = 80 }: {
 /** Compact horizontal distribution bars (e.g. feed by ingredient). */
 export function BarsMini({ items, color = CHART.brand }: { items: { label: string; value: number; display?: string }[]; color?: string }) {
   const max = Math.max(...items.map(i => i.value), 1);
+  const { ref, show, reduced } = useReveal();
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-2.5" ref={ref}>
       {items.map(it => (
         <div key={it.label}>
           <div className="flex justify-between text-[12px] mb-1">
@@ -170,7 +181,13 @@ export function BarsMini({ items, color = CHART.brand }: { items: { label: strin
             <span className="font-mono text-muted tnum">{it.display ?? it.value.toLocaleString('en-IN')}</span>
           </div>
           <div className="h-1.5 rounded-full bg-sunk overflow-hidden">
-            <div className="h-full rounded-full transition-all" style={{ width: `${(it.value / max) * 100}%`, background: color }} />
+            <motion.div
+              className="h-full rounded-full"
+              initial={reduced ? false : { scaleX: 0 }}
+              animate={{ scaleX: show ? 1 : 0 }}
+              transition={reduced ? { duration: 0 } : MOTION.page}
+              style={{ width: `${(it.value / max) * 100}%`, background: color, transformOrigin: 'left' }}
+            />
           </div>
         </div>
       ))}

@@ -11,6 +11,8 @@
  */
 import { supabase } from '@/lib/supabase';
 import { runtime } from '@/lib/runtime';
+import { DatabaseError, logDatabaseError, normalizeDatabaseError } from '@/lib/dbErrors';
+import { companyAccessOf, contextIntact, operableCompanies } from '@/lib/companyAccess';
 import { useApp, rebalanceTraders } from '@/store/app';
 import { pullAll, pullCatalog, pullSlice, pullUsers, type PulledState } from './pull';
 import { PushEngine } from './push';
@@ -25,15 +27,18 @@ let started = false;
  *  leaves the browser before that: an unprimed engine would offer the whole cache as a diff. */
 let syncedIn = false;
 
-/** The last sync-failure sentence we surfaced. A realtime burst or a store edit re-runs the
- *  diff every second; the same refusal must say itself once, not stack a wall of toasts. The
- *  badge already carries the standing error, so a repeat of the identical line is silent. */
+/** The same standing error, said once. A store edit re-runs the diff every second, and one
+ *  refusal must not stack a wall of toasts — the badge already carries what is owed.
+ *
+ *  A queue that refused is not a form that refused (§21): the line names the queue, and the
+ *  reasons the engine carries — already the user's words, never the database's — go underneath. */
 let lastSyncError = '';
 function reportSyncFailures(lines: string[]): void {
-  const msg = lines.length ? `Supabase: ${lines.join(' · ')}` : '';
-  if (msg === lastSyncError) return;
-  lastSyncError = msg;
-  if (msg) useApp.getState().pushToast('error', msg);
+  const detail = [...new Set(lines.filter(Boolean))].join(' · ');
+  if (!detail) { lastSyncError = ''; return; }
+  if (detail === lastSyncError) return;
+  lastSyncError = detail;
+  useApp.getState().pushToast('error', 'Some changes could not sync.', detail);
 }
 
 /** A slice the database accepted. Rows that were only awaiting a write keep their sync flag. */
@@ -42,6 +47,8 @@ const SYNC_FLAGGED = [
   'eggSaleBookings', 'feedStock', 'medicineStock', 'finance', 'traderTxns', 'tasks',
   'vaccinations', 'cashHandovers', 'cashCounts', 'supportMessages',
 ];
+
+const EMPTY: Set<string> = new Set<string>();
 
 function markWritten(written: string[]): void {
   const keys = SYNC_FLAGGED.filter(k => written.includes(k));
@@ -55,22 +62,27 @@ function markWritten(written: string[]): void {
   if (Object.keys(patch).length) useApp.setState(patch as never);
 }
 
-/** pulled rows win; rows only the browser has (made while away from the network) are kept
- *  and go out on the first diff. Nothing cached is silently discarded. */
-function mergeSlice(key: string, pulled: any[], local: any[]): any[] {
+/** pulled rows win, except where this browser has a change the database has not been given
+ *  yet; rows only the browser has (made while away from the network) are kept and go out on the
+ *  first diff. Nothing the farm recorded offline is silently discarded. */
+function mergeSlice(key: string, pulled: any[], local: any[], owed: Set<string>): any[] {
   if (key === 'ingredientCatalog') {
     return [...new Set([...(pulled as string[]), ...(local as string[])])];
   }
-  const ids = new Set(pulled.map(o => String(o?.id)));
-  return [...pulled, ...(local ?? []).filter(o => o?.id && !ids.has(String(o.id)))];
+  // Drop the pulled copy of a row this device still owes, so the local one survives as the
+  // only row with that id; everything else takes the database's version.
+  const keep = pulled.filter(o => !owed.has(String(o?.id)));
+  const ids = new Set(keep.map(o => String(o?.id)));
+  return [...keep, ...(local ?? []).filter(o => o?.id && !ids.has(String(o.id)))];
 }
 
-/** Applies pulled rows over the store's current slice, keeping browser-only rows. */
-function mergeReceived(pulled: PulledState): void {
+/** Applies pulled rows over the store's current slice, keeping browser-only rows and the
+ *  rows this device still owes (`owed`, measured before the pull rewrote the send memory). */
+function mergeReceived(pulled: PulledState, owed: Record<string, Set<string>> = {}): void {
   const state = useApp.getState() as unknown as Record<string, unknown>;
   const patch: Record<string, unknown> = {};
   for (const [key, rows] of Object.entries(pulled)) {
-    patch[key] = mergeSlice(key, rows, (state[key] as any[]) ?? []);
+    patch[key] = mergeSlice(key, rows, (state[key] as any[]) ?? [], owed[key] ?? EMPTY);
   }
   useApp.setState(patch as never);
   // The database has no column for a trader's balance, so a pulled trader arrives with that
@@ -94,54 +106,134 @@ export async function hydrateFromDatabase(): Promise<void> {
   // prime first: what the database just handed over is what it already has. Only then does
   // the merge bring in the browser's own rows, so the diff sees as owed exactly the set
   // the database has never been told about — never the whole cache.
+  // Measured before the prime: this device's own unsent changes, so a row the farm edited while
+  // no wire was there is not read back off the database and quietly overwritten with the older
+  // copy. It stays in the store and goes out on the flush below.
+  const owed = engine.owed(rows, useApp.getState() as unknown as Record<string, any>);
   engine.prime(rows);
-  mergeReceived(rows);
+  mergeReceived(rows, owed);
   syncedIn = true;
+  clearRetry();
+  attempt = 0; // a fresh read of the database is the start of the ladder, not its fourth rung
+  // The pull has just refreshed `companies`, `users` and every membership: if the working
+  // context no longer stands, it goes now, before the first diff and before any screen can
+  // render off it.
+  useApp.getState().revalidateCompanyAccess();
   reportSyncFailures(failed);
   publishStatus();
   void flush();
+}
+
+/** The database has this person now, written by `create_login` rather than by a push of ours:
+ *  confirm them so an access granted in the same breath is sendable at once, instead of waiting
+ *  on the realtime pull that will land a second later and say the same thing. */
+export function confirmLogin(userId: string): void {
+  engine.confirmPerson(userId);
 }
 
 export function setStoreSession(userId: string): void {
   const state = useApp.getState();
   const user = state.users.find(u => u.id === userId);
   const previous = state.session;
-  const stillMember = previous?.companyId && user?.companyIds.includes(previous.companyId);
+  // Re-read the context the browser last held against what the database now says of it.
+  const was = companyAccessOf(previous, user, state.companies);
+  // A context that was taken while this device slept (the company switched off, or the person
+  // was detached from it) is a revocation, not an empty slot. Blank it and the screen that
+  // fills is a company picker that quietly omits the dead one — the person is left to guess
+  // whether they were ever here. Name the reason instead, on the one screen that carries it.
+  // With no previous session there is nothing to revoke, and a notice carried into a fresh
+  // sign-in would read as though this one had been refused.
+  const carried = !previous ? null : contextIntact(was) ? state.accessNotice : was;
   useApp.setState({
     session: {
       userId,
-      companyId: stillMember ? previous!.companyId : (user?.companyIds[0] ?? null),
+      companyId: was.reason === 'USABLE'
+        ? previous!.companyId
+        : (operableCompanies(user, state.companies)[0]?.id ?? null),
       signedInAt: new Date().toISOString(),
     },
+    accessNotice: carried,
   });
 }
 
 async function flush(): Promise<void> {
   if (!syncedIn) return;
+  // Offline there is nothing to send to. The queue is a diff against the store, so waiting
+  // costs nothing and the rows are still owed when the wire returns; offering them to a dead
+  // network only trades a full cache for a wall of "failed to fetch".
+  if (!useApp.getState().online) { publishStatus(); return; }
   const state = useApp.getState() as unknown as Record<string, unknown>;
+  clearRetry(); // one pass at a time: this flush carries the next rung, not a timer already set for it
+  syncing = true;
+  publishStatus();
   const { failures, written } = await engine.push(state);
+  syncing = false;
   reportSyncFailures(failures);
   markWritten(written);
   publishStatus();
+  scheduleRetry();
 }
 
-/** Retry now — the badge's tap. Failed rows are still owed, so this re-offers them. */
+/** Retry now — the badge's tap. Failed rows are still owed, so this re-offers them.
+ *  A person asking is a fresh case: the ladder starts again at its first rung. */
 export function retrySync(): void {
+  attempt = 0;
   void flush();
+}
+
+// ============================== bounded retry ==============================
+
+/**
+ * A pass the wire refused leaves the rows owed, and the badge already says so. This device
+ * still comes back to them on its own — a blip, a tunnel, a laptop waking — a few times on a
+ * widening ladder, then stops. The queue is the store's own diff, so a stopped retry loses
+ * nothing: the next edit, the network returning or a tap on the badge starts the ladder again.
+ */
+const RETRY_LADDER = [5_000, 20_000, 60_000, 300_000];
+let attempt = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let syncing = false;
+
+function clearRetry(): void {
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
+}
+
+function scheduleRetry(): void {
+  clearRetry();
+  const state = useApp.getState() as unknown as Record<string, unknown>;
+  if (engine.pending(state).count === 0 || !useApp.getState().online) { attempt = 0; return; }
+  if (attempt >= RETRY_LADDER.length) return;
+  const wait = RETRY_LADDER[attempt++];
+  retryTimer = setTimeout(() => { retryTimer = null; void flush(); }, wait);
+}
+
+/**
+ * Back on the network: an outage swallows realtime events, so the rows others changed while
+ * this device was away have to be pulled, not just answered for. The existing hydrate does
+ * exactly that (pull → prime → merge → flush), so reconnection re-enters it rather than
+ * opening a second path. A pull landing while a write is in flight would re-prime the engine
+ * off a snapshot the wire has not finished confirming, so that pass sends alone.
+ */
+async function resync(): Promise<void> {
+  if (!syncedIn) return;
+  if (engine.isBusy()) { void flush(); return; }
+  await hydrateFromDatabase();
 }
 
 // ============================== queue status (the badge's truth) ==============================
 
-export interface CloudSyncStatus { pending: number; errors: string[] }
+export interface CloudSyncStatus { pending: number; errors: string[]; syncing: boolean }
 
-let status: CloudSyncStatus = { pending: 0, errors: [] };
+let status: CloudSyncStatus = { pending: 0, errors: [], syncing: false };
 const statusListeners = new Set<() => void>();
 
 function publishStatus(): void {
   const state = useApp.getState() as unknown as Record<string, unknown>;
-  const next = syncedIn ? engine.pending(state) : { count: 0, errors: [] };
-  const shaped = { pending: next.count, errors: next.errors };
-  if (shaped.pending === status.pending && shaped.errors.join('|') === status.errors.join('|')) return;
+  const next = syncedIn ? engine.pending(state) : { count: 0, errors: [] as string[] };
+  const shaped = { pending: next.count, errors: next.errors, syncing };
+  if (shaped.pending === status.pending && shaped.errors.join('|') === status.errors.join('|')
+    && shaped.syncing === status.syncing) return;
   status = shaped;
   for (const fn of statusListeners) fn();
 }
@@ -158,6 +250,12 @@ export const cloudSyncStatus = {
 
 function schedulePush(): void {
   publishStatus(); // the badge moves with the edit, not only with the wire
+  clearRetry();    // one pass at a time: the edit's own debounce carries the retry ladder
+  // This is also the sound a landing write makes: `markWritten` flips `synced`, the store
+  // changes, and the diff arrives here. So a pass that got rows in restarts the ladder, while a
+  // pass the wire refused everything on advances it — progress keeps its full allowance and a
+  // dead end still stops.
+  attempt = 0;
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => { timer = null; void flush(); }, 1000);
 }
@@ -185,6 +283,9 @@ export function completeSignIn(userId: string): Promise<void> {
   return entry.p;
 }
 
+/** When this tab last went to the background; 0 means it is not hidden right now. */
+let hiddenAt = 0;
+
 export function startCloudSync(): void {
   if (!supabase || started) return;
   started = true;
@@ -192,6 +293,9 @@ export function startCloudSync(): void {
   supabase.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_OUT') {
       syncedIn = false;
+      syncing = false;
+      clearRetry();
+      attempt = 0;
       lastSyncError = ''; // the next session earns its own first error
       publishStatus();
       if (useApp.getState().session) useApp.setState({ session: null });
@@ -209,6 +313,8 @@ export function startCloudSync(): void {
     if (!runtime.cloud) return;
     if (prev.session && !state.session) {
       syncedIn = false; // whoever signs back in gets their own prime before anything is owed
+      syncing = false;
+      clearRetry();
       void supabase!.auth.signOut();
     }
     if (!state.session || !syncedIn) return;
@@ -232,7 +338,46 @@ export function startCloudSync(): void {
     .channel('amrut-sync')
     .on('postgres_changes', { event: '*', schema: 'public' }, msg => noteExternalChange((msg as { table?: string }).table ?? ''))
     .subscribe();
+
+  // The network itself is a change to react to, not only a thing to discover on the next edit:
+  // a phone leaving a tunnel has no reason to touch the store, and a queue that waits for one
+  // reads as a sync that never happens. The flag is stamped here first because the decision
+  // below is made off it, and App's own listener may be registered after this one.
+  window.addEventListener('online', () => {
+    useApp.getState().setOnline(true);
+    attempt = 0;
+    clearRetry();
+    void resync().catch(reportBootFailure);
+  });
+  // Away from the network the queue simply waits: nothing is dropped, nothing is retried
+  // against a wire that cannot answer, and no failure loop starts.
+  window.addEventListener('offline', () => {
+    useApp.getState().setOnline(false);
+    clearRetry();
+    attempt = 0;
+    publishStatus();
+  });
+
+  // Android parks a WebView instead of dropping its network, so coming back to the app is a
+  // transition of its own — and the one where the realtime socket died quietly, with no
+  // 'online' event ever arriving to say so. A short look at another app is not a reason to
+  // re-pull the world; a sleep is. Both halves are idempotent: the diff owes only rows the
+  // database does not have, so returning twice cannot send an edit twice.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      hiddenAt = Date.now();
+      return;
+    }
+    const slept = hiddenAt > 0 && Date.now() - hiddenAt > 60_000;
+    hiddenAt = 0;
+    useApp.getState().setOnline(navigator.onLine);
+    if (!slept || !navigator.onLine) return;
+    attempt = 0;
+    clearRetry();
+    void resync().catch(reportBootFailure);
+  });
 }
+
 
 // ============================== realtime ==============================
 
@@ -272,11 +417,20 @@ async function reconcile(): Promise<void> {
   }
   // server-authoritative (§37): pulled rows replace what they touch; browser-only rows survive.
   // What the pull just handed over is absorbed first, so the next diff owes only the rows
-  // this browser changed — never the ones the database itself just answered with.
+  // this browser changed — never the ones the database itself just answered with. A row this
+  // device has already changed and not yet sent is measured before that memory moves.
+  const owed = engine.owed(pulled, useApp.getState() as unknown as Record<string, any>);
   engine.absorb(pulled);
-  mergeReceived(pulled);
+  mergeReceived(pulled, owed);
+  // A deactivation or a removed membership arrives like any other row change: the pull makes
+  // it local truth, and the context is re-read against it the same second.
+  useApp.getState().revalidateCompanyAccess();
 }
 
+/** A pass that never got to the database at all: still read once into the user's words. */
 function reportBootFailure(e: unknown): void {
-  useApp.getState().pushToast('error', `Supabase: ${(e as Error).message}`);
+  const n = normalizeDatabaseError(e, { origin: 'background' });
+  // A DatabaseError was already logged where the wire refused it; say it once.
+  if (!(e instanceof DatabaseError)) logDatabaseError(n, e);
+  useApp.getState().pushToast('error', n.userMessage, n.actionMessage);
 }

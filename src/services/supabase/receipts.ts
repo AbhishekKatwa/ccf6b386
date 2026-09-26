@@ -12,6 +12,7 @@
  */
 import { supabase } from '@/lib/supabase';
 import { runtime } from '@/lib/runtime';
+import { appNotice, logDatabaseError, normalizeDatabaseError, technicalLineOf } from '@/lib/dbErrors';
 import type { ReceiptScope } from '@/lib/receipts';
 
 export type ReceiptAllocation
@@ -20,10 +21,10 @@ export type ReceiptAllocation
   /** No cloud for this session, or the request never arrived: this device must number itself. */
   | { kind: 'local'; note?: string }
   /** The server reached us and refused. A refused number is never replaced with a made-up one. */
-  | { kind: 'failed'; error: string };
+  | { kind: 'failed'; error: string; detail?: string };
 
-/** A request that died on the way to the server says nothing about what the counter holds. */
-const NEVER_REACHED = /failed to fetch|networkerror|load (?:the )?failed|econn|enotfound|etimedout|socket hang|abort/i;
+/** §20 — a clash with the counter is said in receipt words, not in constraint names. */
+const NO_NUMBER = appNotice('Could not get a receipt number.', 'Nothing was saved. Please try again.');
 
 /**
  * Claim the next reference in a series. `taken` is the highest number this device already sees
@@ -44,17 +45,23 @@ export async function allocateReceiptNo(
     });
     if (!error) {
       const ref = typeof data === 'string' && data ? data : null;
-      return ref ? { kind: 'numbered', ref } : { kind: 'failed', error: 'The server returned no receipt number' };
+      return ref ? { kind: 'numbered', ref }
+        : { kind: 'failed', error: NO_NUMBER.userMessage, detail: NO_NUMBER.actionMessage };
     }
-    if (NEVER_REACHED.test(error.message)) {
+    const n = normalizeDatabaseError(error, { table: 'receipt_counters', origin: 'foreground' });
+    // A wire that never carried the request says nothing about what the counter holds, so this
+    // device numbers itself and says so. A timeout is not that: the claim may have landed
+    // server-side, so the answer stays a refusal rather than a possibly clashing local number.
+    if (n.kind === 'network' || n.kind === 'aborted') {
       return {
         kind: 'local',
         note: 'No connection to the receipt counter — this number is only unique on this device',
       };
     }
-    if (attempt === 1 || !/could not serialize|deadlock|40001|40p01/i.test(error.message)) {
-      return { kind: 'failed', error: error.message };
+    if (attempt === 1 || !/could not serialize|deadlock|40001|40p01/i.test(n.technicalMessage)) {
+      logDatabaseError({ ...n, technicalMessage: technicalLineOf(n) }, error);
+      return { kind: 'failed', error: n.userMessage, detail: n.actionMessage };
     }
   }
-  return { kind: 'failed', error: 'The receipt counter refused to answer' };
+  return { kind: 'failed', error: NO_NUMBER.userMessage, detail: NO_NUMBER.actionMessage };
 }

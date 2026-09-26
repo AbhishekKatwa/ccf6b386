@@ -5,6 +5,9 @@
  * never what the client chose to ask for.
  */
 import { supabase } from '@/lib/supabase';
+import {
+  DatabaseError, logDatabaseError, normalizeDatabaseError, technicalLineOf,
+} from '@/lib/dbErrors';
 import { fromRow } from './rows';
 import { SLICES, type SliceDef } from './registry';
 
@@ -15,7 +18,13 @@ async function selectAll(table: string, orderBy?: string) {
     .from(table)
     .select('*')
     .limit(MAX_ROWS);
-  if (error) throw new Error(`${table}: ${error.message}`);
+  if (error) {
+    // Read once, here, where the table is known: everything downstream carries the sentence
+    // the person can read, and the database's own words go to the log.
+    const n = normalizeDatabaseError(error, { table, origin: 'background' });
+    logDatabaseError({ ...n, technicalMessage: technicalLineOf(n) }, error);
+    throw new DatabaseError(n, error);
+  }
   const rows = data ?? [];
   if (orderBy) {
     // children ride along grouped, but stable order makes the re-state reproducible
@@ -79,18 +88,46 @@ export async function pullCatalog(): Promise<string[]> {
 export type PulledState = Record<string, unknown[]>;
 
 /**
+ * Each table answers on its own account, but they are asked together. Serial was measured at
+ * 3.85s for one company's 27 slices on a warm connection — the price of every round trip added
+ * up, on the one path a phone takes every time it comes back to the app. Run together, the
+ * hydrate costs the slowest table rather than the sum. A ceiling of six keeps a capped mobile
+ * link from queueing thirty requests behind itself, and results still land in slice order, so a
+ * table that refused says so in the same place in `failed` it always did.
+ */
+const WIDTH = 6;
+
+async function pooled(tasks: (() => Promise<unknown[]>)[]): Promise<(unknown[] | { error: unknown })[]> {
+  const out = new Array<unknown[] | { error: unknown }>(tasks.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < tasks.length) {
+      const i = next++;
+      try { out[i] = await tasks[i](); }
+      catch (error) { out[i] = { error }; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(WIDTH, tasks.length) }, worker));
+  return out;
+}
+
+/**
  * Every slice is fetched on its own account: one table refusing must not cost the hydrate
- * the rows of all the others. `failed` carries the database's sentence per table — an
- * empty slice that came back denied says so here, it is never silently primeable as zero.
+ * the rows of all the others. `failed` carries a readable sentence per table — an empty slice
+ * that came back denied says so here, it is never silently primeable as zero.
  */
 export async function pullAll(): Promise<{ rows: PulledState; failed: string[] }> {
+  const asked: [string, () => Promise<unknown[]>][] = [
+    ...SLICES.map((def): [string, () => Promise<unknown[]>] => [def.slice, () => pullSlice(def)]),
+    ['users', pullUsers],
+    ['ingredientCatalog', pullCatalog],
+  ];
+  const settled = await pooled(asked.map(([, go]) => go));
   const rows: PulledState = {};
   const failed: string[] = [];
-  const one = async (label: string, go: () => Promise<unknown[]>): Promise<void> => {
-    try { rows[label] = await go(); } catch (e) { failed.push(`${label}: ${(e as Error).message}`); }
-  };
-  for (const def of SLICES) await one(def.slice, () => pullSlice(def));
-  await one('users', pullUsers);
-  await one('ingredientCatalog', pullCatalog);
+  settled.forEach((result, i) => {
+    if (Array.isArray(result)) rows[asked[i][0]] = result;
+    else failed.push(normalizeDatabaseError(result.error).userMessage);
+  });
   return { rows, failed };
 }

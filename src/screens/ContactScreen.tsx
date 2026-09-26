@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { Phone, Mail, MapPin, MessageCircle, HelpCircle, ChevronDown } from 'lucide-react';
+import { motion } from 'motion/react';
 import { Header, Page } from '@/components/ui/Header';
 import { Card, GroupList, ListRow, IconTile } from '@/components/ui/Card';
 import { Button, Field, TextArea } from '@/components/ui/Form';
+import { EASE, MOTION, PageReveal, Presence, StaggerContainer, StaggerItem, useReducedMotion } from '@/components/motion';
 import { useApp, useCurrentUser } from '@/store/app';
 
 const FAQS = [
@@ -24,6 +26,7 @@ export function ContactScreen() {
   const pushToast = useApp(s => s.pushToast);
   const sendSupportMessage = useApp(s => s.sendSupportMessage);
   const user = useCurrentUser();
+  const reduced = useReducedMotion();
   const [openFaq, setOpenFaq] = useState<number | null>(0);
   const [form, setForm] = useState({ name: user?.name ?? '', mobile: user ? `+91 ${user.mobile}` : '', subject: '', message: '' });
 
@@ -36,61 +39,78 @@ export function ContactScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <Header title="Contact & help" subtitle="Support · FAQ" />
-      <div className="px-4 sm:px-0 mt-3 space-y-4">
-        <div>
-          <p className="font-display font-bold text-ink text-sm uppercase tracking-wider mb-2 px-1">Reach us</p>
-          <GroupList>
-            {CONTACTS.map(c => {
-              const Icon = c.icon;
-              const row = (
-                <ListRow
-                  leading={<IconTile tone="brand"><Icon size={17} /></IconTile>}
-                  title={<span className="text-[10px] uppercase tracking-wider text-muted font-semibold">{c.label}</span>}
-                  subtitle={<span className="text-sm font-semibold text-ink">{c.value}</span>} />
-              );
-              return c.href
-                ? <a key={c.label} href={c.href} className="block">{row}</a>
-                : <div key={c.label}>{row}</div>;
-            })}
-          </GroupList>
-        </div>
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4">
+        <StaggerItem>
+          <div>
+            <p className="font-display font-bold text-ink text-sm uppercase tracking-wider mb-2 px-1">Reach us</p>
+            <GroupList>
+              {CONTACTS.map(c => {
+                const Icon = c.icon;
+                const row = (
+                  <ListRow
+                    leading={<IconTile tone="brand"><Icon size={17} /></IconTile>}
+                    title={<span className="text-[10px] uppercase tracking-wider text-muted font-semibold">{c.label}</span>}
+                    subtitle={<span className="text-sm font-semibold text-ink">{c.value}</span>} />
+                );
+                return c.href
+                  ? <a key={c.label} href={c.href} className="block">{row}</a>
+                  : <div key={c.label}>{row}</div>;
+              })}
+            </GroupList>
+          </div>
+        </StaggerItem>
 
-        <div id="faq">
-          <p className="font-display font-bold text-ink text-sm uppercase tracking-wider mb-2 px-1 flex items-center gap-1.5">
-            <HelpCircle size={14} className="text-brand" /> FAQ
-          </p>
-          <Card padded={false} className="overflow-hidden">
-            <div className="divide-y divide-line-2">
-              {FAQS.map((f, i) => (
-                <div key={i}>
-                  <button onClick={() => setOpenFaq(openFaq === i ? null : i)}
-                    className="press w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-sunk/60 transition-colors">
-                    <span className="flex-1 font-display font-semibold text-sm text-ink">{f.q}</span>
-                    <ChevronDown size={15} className={`text-muted transition-transform flex-shrink-0 ${openFaq === i ? 'rotate-180' : ''}`} />
-                  </button>
-                  {openFaq === i && (
-                    <div className="px-4 pb-3.5 ap-fade-in">
-                      <p className="text-xs text-muted leading-relaxed">{f.a}</p>
-                    </div>
-                  )}
-                </div>
-              ))}
+        <StaggerItem>
+          <div id="faq">
+            <p className="font-display font-bold text-ink text-sm uppercase tracking-wider mb-2 px-1 flex items-center gap-1.5">
+              <HelpCircle size={14} className="text-brand" /> FAQ
+            </p>
+            <Card padded={false} className="overflow-hidden">
+              <div className="divide-y divide-line-2">
+                {FAQS.map((f, i) => (
+                  <div key={i}>
+                    <button onClick={() => setOpenFaq(openFaq === i ? null : i)}
+                      aria-expanded={openFaq === i}
+                      className="press w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-sunk/60 transition-colors">
+                      <span className="flex-1 font-display font-semibold text-sm text-ink">{f.q}</span>
+                      <ChevronDown size={15} className={`text-muted transition-transform duration-200 flex-shrink-0 ${openFaq === i ? 'rotate-180' : ''}`} />
+                    </button>
+                    <Presence>
+                      {openFaq === i && (
+                        <motion.div
+                          initial={reduced ? false : { opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4, transition: { duration: MOTION.micro.duration, ease: EASE } }}
+                          transition={reduced ? { duration: 0.01 } : { duration: MOTION.component.duration, ease: EASE }}
+                          className="px-4 pb-3.5"
+                        >
+                          <p className="text-xs text-muted leading-relaxed">{f.a}</p>
+                        </motion.div>
+                      )}
+                    </Presence>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        </StaggerItem>
+
+        <StaggerItem>
+          <Card>
+            <p className="font-display font-bold text-ink text-sm mb-3">Send a message</p>
+            <div className="space-y-3">
+              <Field label="Your name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              <Field label="Mobile" type="tel" inputMode="numeric" value={form.mobile} onChange={e => setForm(f => ({ ...f, mobile: e.target.value }))} className="font-mono" />
+              <Field label="Subject" value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} placeholder="e.g. Feed formula help" />
+              <TextArea label="Message" rows={4} value={form.message} onChange={e => setForm(f => ({ ...f, message: e.target.value }))} />
+              <Button block onClick={submit}>Send message</Button>
             </div>
           </Card>
-        </div>
-
-        <Card>
-          <p className="font-display font-bold text-ink text-sm mb-3">Send a message</p>
-          <div className="space-y-3">
-            <Field label="Your name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
-            <Field label="Mobile" type="tel" inputMode="numeric" value={form.mobile} onChange={e => setForm(f => ({ ...f, mobile: e.target.value }))} className="font-mono" />
-            <Field label="Subject" value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))} placeholder="e.g. Feed formula help" />
-            <TextArea label="Message" rows={4} value={form.message} onChange={e => setForm(f => ({ ...f, message: e.target.value }))} />
-            <Button block onClick={submit}>Send message</Button>
-          </div>
-        </Card>
-      </div>
+        </StaggerItem>
+      </StaggerContainer>
+      </PageReveal>
     </Page>
   );
 }

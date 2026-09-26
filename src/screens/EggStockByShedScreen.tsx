@@ -187,9 +187,7 @@ export function EggStockByShedScreen() {
               <StaggerContainer className="divide-y divide-line-2">
                 {rows.map(r => (
                   <StaggerItem key={r.shedId}>
-                  <button type="button"
-                    onClick={() => nav(`/batches?q=${encodeURIComponent(r.shedName)}`)}
-                    className="w-full text-left grid grid-cols-2 md:grid-cols-7 gap-x-2 gap-y-1 px-4 py-3 hover:bg-card press transition-colors">
+                  <div className="w-full text-left grid grid-cols-2 md:grid-cols-7 gap-x-2 gap-y-1 px-4 py-3">
                     <div className="font-medium text-sm truncate">{r.shedName}</div>
                     <div className="md:text-right tnum font-semibold">{fmtIN(r.balance)}</div>
                     <div className="md:text-right tnum text-muted-2">{fmtIN(r.collected)}</div>
@@ -204,7 +202,7 @@ export function EggStockByShedScreen() {
                     <div className="col-span-2 md:hidden text-[11px] text-muted leading-relaxed">
                       Good {fmtIN(r.goodBalance)} · Broken {fmtIN(r.brokenBalance)} · Double {fmtIN(r.doubleBalance)} · Small {fmtIN(r.smallBalance)}
                     </div>
-                  </button>
+                  </div>
                   </StaggerItem>
                 ))}
               </StaggerContainer>

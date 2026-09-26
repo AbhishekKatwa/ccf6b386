@@ -11,6 +11,10 @@ import { COLUMNS } from './columns.gen';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NUMERIC = new Set(['numeric', 'integer', 'bigint', 'smallint', 'real', 'double precision']);
 
+/** A key the `profiles`/`auth.users` uuid columns will accept — and the mark of a record that
+ *  can hold a synced reference at all. Legacy cache rows key on `u_*` and stop at the browser. */
+export const isUuid = (v: unknown): boolean => UUID_RE.test(String(v));
+
 export const snake = (k: string): string => k.replace(/[A-Z]/g, m => '_' + m.toLowerCase());
 export const camel = (k: string): string => k.replace(/_(\w)/g, (_, c: string) => c.toUpperCase());
 

@@ -52,6 +52,7 @@ export function validateUserDraft(
   isMobileTaken: (mobile: string) => boolean,
 ): { mobile: string; error: string | null } {
   const mobile = normalizeMobile(draft.mobile);
+  if (!draft.name.trim()) return { mobile, error: 'Enter the full name' };
   if (mobile.length !== 10) return { mobile, error: 'Enter a valid 10-digit mobile number' };
   if (isMobileTaken(mobile)) return { mobile, error: 'A user with this mobile already exists' };
   if (draft.password.length < 4) return { mobile, error: 'Password must be at least 4 characters' };

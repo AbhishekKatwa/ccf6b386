@@ -7,6 +7,8 @@ import { EmptyState, GroupList } from '@/components/ui/Card';
 import { Button, Field, SelectField, TextArea, SegmentedTabs } from '@/components/ui/Form';
 import { Dialog, ConfirmDialog } from '@/components/ui/Dialog';
 import { fmtDate, todayISO } from '@/lib/format';
+import { EASE, MOTION, PageReveal, Presence, useReducedMotion } from '@/components/motion';
+import { motion } from 'motion/react';
 import type { FarmTask, TaskPriority } from '@/types';
 
 const PRIORITIES: TaskPriority[] = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
@@ -22,6 +24,7 @@ export function TasksScreen() {
   const pushToast = useApp(s => s.pushToast);
   const canCreate = useCan('createDailyOps');
   const canDelete = useCan('delete');
+  const reduced = useReducedMotion();
 
   const [filter, setFilter] = useState<'today' | 'open' | 'completed' | 'all'>('today');
   const [open, setOpen] = useState(false);
@@ -74,68 +77,86 @@ export function TasksScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <ScreenTitle eyebrow="Operations" title="Task manager"
         subtitle={`${summary.open} open${summary.overdue ? ` · ${summary.overdue} overdue` : ''} · today ${summary.doneToday}/${summary.totalToday} done`}
         action={canCreate ? <Button size="sm" icon={<Plus size={14} />} onClick={() => setOpen(true)}>New</Button> : undefined} />
 
       <div className="px-4 sm:px-0 mt-2 space-y-4">
         <div aria-hidden className="h-1.5 rounded-full bg-sunk overflow-hidden">
-          <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${pct}%` }} />
+          {/* The bar grows on its own axis rather than re-laying out a width each tick. */}
+          <motion.div
+            className="h-full rounded-full bg-brand origin-left"
+            initial={reduced ? false : { scaleX: 0 }}
+            animate={{ scaleX: pct / 100 }}
+            transition={reduced ? { duration: 0 } : { duration: MOTION.page.duration, ease: EASE }}
+          />
         </div>
 
         <SegmentedTabs value={filter} onChange={v => setFilter(v as typeof filter)} scroll
           options={[{ value: 'today', label: 'Today' }, { value: 'open', label: 'Open' }, { value: 'completed', label: 'Done' }, { value: 'all', label: 'All' }]} />
 
-        {list.length === 0 ? (
-          <EmptyState icon={<ClipboardList size={22} />} title="No tasks here"
-            description={filter === 'today' ? 'Nothing scheduled for today.' : filter === 'open' ? 'Everything tracked is complete.' : 'Add a task to start tracking it to completion.'}
-            action={canCreate ? <Button onClick={() => setOpen(true)} icon={<Plus size={14} />}>New task</Button> : undefined} />
-        ) : (
-          <GroupList>
-            {list.map(t => {
-              const user = users.find(u => u.id === t.assignedUserId);
-              const batch = batches.find(b => b.id === t.batchId);
-              const shed = sheds.find(s => s.id === t.shedId);
-              const farm = farms.find(f => f.id === t.farmId);
-              const done = t.status === 'COMPLETED';
-              const overdue = isOpen(t) && t.date < today;
-              const meta = [
-                user?.name,
-                batch?.code ?? shed?.name ?? farm?.name,
-                filter === 'all' || filter === 'open' ? fmtDate(t.date) : null,
-              ].filter(Boolean).join(' · ');
-              return (
-                <div key={t.id} className="flex items-center gap-3 px-4 py-2.5 group">
-                  <button onClick={() => toggleDone(t)} aria-label={done ? 'Mark open' : 'Mark done'}
-                    className={clsx(
-                      'w-6 h-6 rounded-full border-[1.5px] flex items-center justify-center shrink-0 transition-colors press',
-                      done ? 'bg-success border-success text-white' : 'border-line text-transparent hover:border-brand',
-                    )}>
-                    <Check size={13} strokeWidth={3} />
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <p className={clsx('text-[13.5px] font-medium truncate flex items-center gap-1.5', done ? 'text-muted line-through' : 'text-ink')}>
-                      {t.priority === 'URGENT' && !done && <span className="w-1.5 h-1.5 rounded-full bg-danger shrink-0" aria-label="Urgent" />}
-                      {t.title}
-                    </p>
-                    {(meta || t.time) && (
-                      <p className={clsx('text-[11px] truncate mt-0.5 font-mono tnum', overdue ? 'text-danger' : 'text-muted')}>
-                        {[t.time, meta].filter(Boolean).join(' · ')}{overdue ? ' · overdue' : ''}
-                      </p>
-                    )}
-                  </div>
-                  {canDelete && !done && (
-                    <button onClick={() => setToDelete(t.id)} aria-label="Delete task"
-                      className="press shrink-0 text-muted-2 hover:text-danger p-1 opacity-60 hover:opacity-100">
-                      <Trash2 size={14} />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </GroupList>
-        )}
+        <Presence mode="wait">
+          <motion.div
+            key={filter}
+            initial={reduced ? false : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4, transition: { duration: MOTION.micro.duration, ease: EASE } }}
+            transition={reduced ? { duration: 0.01 } : { duration: MOTION.component.duration, ease: EASE }}
+          >
+            {list.length === 0 ? (
+              <EmptyState icon={<ClipboardList size={22} />} title="No tasks here"
+                description={filter === 'today' ? 'Nothing scheduled for today.' : filter === 'open' ? 'Everything tracked is complete.' : 'Add a task to start tracking it to completion.'}
+                action={canCreate ? <Button onClick={() => setOpen(true)} icon={<Plus size={14} />}>New task</Button> : undefined} />
+            ) : (
+              <GroupList>
+                {list.map(t => {
+                  const user = users.find(u => u.id === t.assignedUserId);
+                  const batch = batches.find(b => b.id === t.batchId);
+                  const shed = sheds.find(s => s.id === t.shedId);
+                  const farm = farms.find(f => f.id === t.farmId);
+                  const done = t.status === 'COMPLETED';
+                  const overdue = isOpen(t) && t.date < today;
+                  const meta = [
+                    user?.name,
+                    batch?.code ?? shed?.name ?? farm?.name,
+                    filter === 'all' || filter === 'open' ? fmtDate(t.date) : null,
+                  ].filter(Boolean).join(' · ');
+                  return (
+                    <div key={t.id} className="flex items-center gap-3 px-4 py-2.5 group">
+                      <button onClick={() => toggleDone(t)} aria-label={done ? 'Mark open' : 'Mark done'}
+                        className={clsx(
+                          'w-6 h-6 rounded-full border-[1.5px] flex items-center justify-center shrink-0 transition-colors press',
+                          done ? 'bg-success border-success text-white' : 'border-line text-transparent hover:border-brand',
+                        )}>
+                        <Check size={13} strokeWidth={3} />
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <p className={clsx('text-[13.5px] font-medium truncate flex items-center gap-1.5', done ? 'text-muted line-through' : 'text-ink')}>
+                          {t.priority === 'URGENT' && !done && <span className="w-1.5 h-1.5 rounded-full bg-danger shrink-0" aria-label="Urgent" />}
+                          {t.title}
+                        </p>
+                        {(meta || t.time) && (
+                          <p className={clsx('text-[11px] truncate mt-0.5 font-mono tnum', overdue ? 'text-danger' : 'text-muted')}>
+                            {[t.time, meta].filter(Boolean).join(' · ')}{overdue ? ' · overdue' : ''}
+                          </p>
+                        )}
+                      </div>
+                      {canDelete && !done && (
+                        <button onClick={() => setToDelete(t.id)} aria-label="Delete task"
+                          className="press shrink-0 text-muted-2 hover:text-danger p-1 opacity-60 hover:opacity-100">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </GroupList>
+            )}
+          </motion.div>
+        </Presence>
       </div>
+      </PageReveal>
 
       <Dialog open={open} onClose={() => setOpen(false)} title="New task" subtitle="Add work to track to completion"
         footer={<div className="flex gap-2"><Button variant="outline" block onClick={() => setOpen(false)}>Cancel</Button><Button block onClick={submit}>Create</Button></div>}>

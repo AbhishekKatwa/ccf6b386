@@ -9,6 +9,7 @@ import { Card, Row, GroupList, ListRow, IconTile, Avatar, Badge } from '@/compon
 import { Button, Field } from '@/components/ui/Form';
 import { ConfirmDialog, Dialog } from '@/components/ui/Dialog';
 import { fmtDateTime } from '@/lib/format';
+import { PageReveal, StaggerContainer, StaggerItem } from '@/components/motion';
 import { ROLE_LABELS } from '@/types';
 
 type Group = { title: string; items: Array<{ icon: typeof User; title: string; sub: string; badge?: string; danger?: boolean; ownerOnly?: boolean; action: () => void }> };
@@ -72,76 +73,88 @@ export function ProfileScreen() {
 
   return (
     <Page withNav>
+      <PageReveal>
       <ScreenTitle eyebrow="Account" title="Profile" />
 
-      <div className="px-4 sm:px-0 mt-3 space-y-4">
-        <div className="rounded-[22px] bg-brand text-white p-5 shadow-card">
-          <div className="flex items-center gap-4">
-            <Avatar name={user.name} initials={user.initials} size={56} tone="accent" />
-            <div className="flex-1 min-w-0">
-              <h2 className="font-display font-bold text-xl truncate">{user.name}</h2>
-              <p className="text-white/60 text-sm mt-0.5 font-mono">+91 {user.mobile}</p>
-              <span className="inline-block mt-2 bg-white/10 text-white/80 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
-                {ROLE_LABELS[user.role]}
-              </span>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-2 mt-5">
-            {[
-              [String(farms.length), 'Farms'],
-              [String(batches.length), 'Batches'],
-              [totalBirds >= 1000 ? `${Math.round(totalBirds / 1000)}K` : String(totalBirds), 'Birds'],
-            ].map(([v, l]) => (
-              <div key={l} className="bg-white/10 rounded-2xl p-3 text-center">
-                <p className="font-display font-bold text-xl tnum">{v}</p>
-                <p className="text-white/60 text-[10px] mt-0.5">{l}</p>
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4">
+        <StaggerItem>
+          <div className="rounded-[22px] bg-brand text-white p-5 shadow-card">
+            <div className="flex items-center gap-4">
+              <Avatar name={user.name} initials={user.initials} size={56} tone="accent" />
+              <div className="flex-1 min-w-0">
+                <h2 className="font-display font-bold text-xl truncate">{user.name}</h2>
+                <p className="text-white/60 text-sm mt-0.5 font-mono">+91 {user.mobile}</p>
+                <span className="inline-block mt-2 bg-white/10 text-white/80 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
+                  {ROLE_LABELS[user.role]}
+                </span>
               </div>
-            ))}
-          </div>
-        </div>
-
-        <Card>
-          <p className="font-display font-bold text-ink text-sm mb-2">Session</p>
-          <Row label="Signed in" value={fmtDateTime(user.createdAt)} />
-          <Row label="Role" value={ROLE_LABELS[user.role]} mono={false} />
-          <Row label="Sync status" value={online ? 'Online' : 'Offline'} mono={false} />
-        </Card>
-
-        <Card>
-          <p className="font-display font-bold text-ink text-sm mb-2">Head office</p>
-          <div className="flex items-start gap-3">
-            <IconTile tone="brand"><MapPin size={17} /></IconTile>
-            <div className="min-w-0 flex-1">
-              <p className="text-[13px] font-semibold text-ink">Guledagudd, Karnataka, India</p>
-              <a href="mailto:amrutpoultryfarms@gmail.com" className="font-mono text-[12px] text-brand break-all">
-                amrutpoultryfarms@gmail.com
-              </a>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mt-5">
+              {[
+                [String(farms.length), 'Farms'],
+                [String(batches.length), 'Batches'],
+                [totalBirds >= 1000 ? `${Math.round(totalBirds / 1000)}K` : String(totalBirds), 'Birds'],
+              ].map(([v, l]) => (
+                <div key={l} className="bg-white/10 rounded-2xl p-3 text-center">
+                  <p className="font-display font-bold text-xl tnum">{v}</p>
+                  <p className="text-white/60 text-[10px] mt-0.5">{l}</p>
+                </div>
+              ))}
             </div>
           </div>
-        </Card>
+        </StaggerItem>
+
+        <StaggerItem>
+          <Card>
+            <p className="font-display font-bold text-ink text-sm mb-2">Session</p>
+            <Row label="Signed in" value={fmtDateTime(user.createdAt)} />
+            <Row label="Role" value={ROLE_LABELS[user.role]} mono={false} />
+            <Row label="Sync status" value={online ? 'Online' : 'Offline'} mono={false} />
+          </Card>
+        </StaggerItem>
+
+        <StaggerItem>
+          <Card>
+            <p className="font-display font-bold text-ink text-sm mb-2">Head office</p>
+            <div className="flex items-start gap-3">
+              <IconTile tone="brand"><MapPin size={17} /></IconTile>
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] font-semibold text-ink">Guledagudd, Karnataka, India</p>
+                <a href="mailto:amrutpoultryfarms@gmail.com" className="font-mono text-[12px] text-brand break-all">
+                  amrutpoultryfarms@gmail.com
+                </a>
+              </div>
+            </div>
+          </Card>
+        </StaggerItem>
 
         {groups.map(g => (
-          <div key={g.title}>
-            <p className="font-display font-bold text-ink text-sm uppercase tracking-wider mb-2 px-1">{g.title}</p>
-            <GroupList>
-              {g.items.map(item => {
-                const Icon = item.icon;
-                return (
-                  <ListRow key={item.title} onClick={item.action}
-                    leading={<IconTile tone={item.danger ? 'danger' : 'brand'}><Icon size={17} /></IconTile>}
-                    title={<span className={item.danger ? 'text-danger' : undefined}>{item.title}</span>}
-                    subtitle={item.sub}
-                    trailing={item.badge ? <Badge tone="accent">{item.badge}</Badge> : undefined} />
-                );
-              })}
-            </GroupList>
-          </div>
+          <StaggerItem key={g.title}>
+            <div>
+              <p className="font-display font-bold text-ink text-sm uppercase tracking-wider mb-2 px-1">{g.title}</p>
+              <GroupList>
+                {g.items.map(item => {
+                  const Icon = item.icon;
+                  return (
+                    <ListRow key={item.title} onClick={item.action}
+                      leading={<IconTile tone={item.danger ? 'danger' : 'brand'}><Icon size={17} /></IconTile>}
+                      title={<span className={item.danger ? 'text-danger' : undefined}>{item.title}</span>}
+                      subtitle={item.sub}
+                      trailing={item.badge ? <Badge tone="accent">{item.badge}</Badge> : undefined} />
+                  );
+                })}
+              </GroupList>
+            </div>
+          </StaggerItem>
         ))}
 
-        <p className="text-center text-faint text-xs mt-6 font-mono">
-          {(companies.find(c => c.id === companyId)?.name ?? 'Poultry Management').toUpperCase()} · v2.0 · Build 2026.09
-        </p>
-      </div>
+        <StaggerItem>
+          <p className="text-center text-faint text-xs mt-6 font-mono">
+            {(companies.find(c => c.id === companyId)?.name ?? 'Poultry Management').toUpperCase()} · v2.0 · Build 2026.09
+          </p>
+        </StaggerItem>
+      </StaggerContainer>
+      </PageReveal>
 
       <ConfirmDialog open={confirmOut} title="Sign out?" danger
         message="You will need to sign in again with your mobile number."

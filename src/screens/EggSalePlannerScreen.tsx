@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion, type TargetAndTransition, type Variants } from 'motion/react';
 import {
   AlertTriangle, CalendarRange, Egg, Handshake, History, Info, Link2, PencilLine, Plus, Ban,
 } from 'lucide-react';
@@ -8,6 +9,10 @@ import { Page, ScreenTitle } from '@/components/ui/Header';
 import { Button, ChipGroup, Field, SelectField, TextArea } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
 import { Badge, EmptyState, GroupList, ListRow } from '@/components/ui/Card';
+import {
+  AnimatedNumber, MOTION, Presence, Pressable, ScrollReveal, StaggerContainer, StaggerItem,
+  staggerContainer, staggerItem, useReducedMotion,
+} from '@/components/motion';
 import { useApp, useCan, useCompanyData } from '@/store/app';
 import { daysBetween, fmtDate, fmtIN, shiftDate, todayISO } from '@/lib/format';
 import { latestFirst } from '@/lib/order';
@@ -58,6 +63,24 @@ const RANGE_OPTIONS: { value: RangeKey; label: string }[] = [
   { value: 'CUSTOM', label: 'Custom range' },
 ];
 
+/** The board and the history list take the stage the same way, so a switch reads as one move. */
+const viewVariants: Variants = {
+  hidden: { opacity: 0, y: 10 },
+  visible: { opacity: 1, y: 0, transition: MOTION.component },
+  exit: { opacity: 0, y: -8, transition: MOTION.micro },
+};
+
+/** A booking leaves the list the way a load leaves the farm: on its own, without a reshuffle. */
+const bookingRow: Variants = {
+  ...staggerItem,
+  exit: { opacity: 0, x: 16, transition: MOTION.micro },
+};
+
+const reveal = (reduced: boolean) => (reduced ? { duration: 0 } : MOTION.component);
+
+/** A range switch is one move: the outgoing board lifts away, the new one staggers in. */
+const boardExit: TargetAndTransition = { opacity: 0, y: -8, transition: MOTION.micro };
+
 function daysShown(key: RangeKey, horizon: string[], from: string, to: string): string[] {
   const last = horizon.length - 1;
   const slice = (start: number, end: number) => horizon.slice(Math.max(0, start), Math.min(last, end) + 1);
@@ -91,6 +114,9 @@ export function EggSalePlannerScreen() {
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(shiftDate(today, PLANNER_DAYS - 1));
   const board = useMemo(() => daysShown(range, horizon, from, to), [range, horizon, from, to]);
+  const reduced = useReducedMotion();
+  /** Any change to the window remounts the board, so the new slice arrives as one move. */
+  const boardKey = `${range}:${board[0] ?? ''}:${board.length}`;
   const [showHistory, setShowHistory] = useState(false);
   /** Which booking the sheet holds: null closed, '' a new one, otherwise that record. */
   const [editing, setEditing] = useState<string | null>(null);
@@ -182,120 +208,141 @@ export function EggSalePlannerScreen() {
 
       <div className="px-4 sm:px-0 mt-1 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
-          <div className="min-w-0 sm:max-w-[520px]">
-            <ChipGroup value={range} onChange={setRange} options={RANGE_OPTIONS} />
+          <div className="min-w-0 sm:max-w-[560px]">
+            <ChipGroup pillId="planner-range" value={range} onChange={setRange} options={RANGE_OPTIONS} />
           </div>
-          <button type="button" onClick={() => setShowHistory(h => !h)}
-            className="inline-flex items-center gap-1.5 self-start sm:self-auto px-3 py-1.5 rounded-[10px] border border-line bg-card text-[12px] font-semibold text-ink press hover:border-brand hover:text-brand shrink-0">
-            <History size={13} />
-            {showHistory ? 'Back to the board' : 'View history'}
-          </button>
+          <Pressable className="self-start sm:self-auto shrink-0" scale={0.96}>
+            <button type="button" onClick={() => setShowHistory(h => !h)}
+              className={clsx('inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] border text-[12px] font-semibold press transition-colors',
+                showHistory ? 'border-brand/40 bg-brand-soft text-brand' : 'border-line bg-card text-ink hover:border-brand hover:text-brand')}>
+              <History size={13} />
+              {showHistory ? 'Back to the board' : 'View history'}
+            </button>
+          </Pressable>
         </div>
 
-        {range === 'CUSTOM' && (
-          <div className="grid grid-cols-2 gap-3 max-w-[360px]">
-            <Field label="From" type="date" value={from} max={to} onChange={e => setFrom(e.target.value)} />
-            <Field label="To" type="date" value={to} min={from} max={horizon[horizon.length - 1]}
-              onChange={e => setTo(e.target.value)} />
-          </div>
-        )}
+        <Presence>
+          {range === 'CUSTOM' && (
+            <motion.div key="custom-range"
+              initial={reduced ? false : { opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={reduced ? undefined : { opacity: 0, height: 0 }}
+              transition={reveal(reduced)}
+              className="overflow-hidden">
+              <div className="grid grid-cols-2 gap-3 max-w-[360px] pt-1">
+                <Field label="From" type="date" value={from} max={to} onChange={e => setFrom(e.target.value)} />
+                <Field label="To" type="date" value={to} min={from} max={horizon[horizon.length - 1]}
+                  onChange={e => setTo(e.target.value)} />
+              </div>
+            </motion.div>
+          )}
+        </Presence>
 
         {sheds.length === 0 && (
           <EmptyState icon={<Egg size={20} />} title="No sheds yet"
             description="A booking promises trays out of a shed, so the sheds come first." />
         )}
 
-        {showHistory && (
-          rows.length === 0
-            ? <EmptyState icon={<CalendarRange size={20} />} title="No bookings yet"
-              description="Every load promised to a trader shows up here — open, sold or dropped — with who planned it and when." />
-            : <GroupList>
-              {rows.map(b => (
-                <ListRow key={b.id} onClick={() => setDetail(b.id)}
-                  leading={<span className="w-9 h-9 rounded-[10px] bg-sunk text-ink-2 flex items-center justify-center shrink-0"><Handshake size={16} /></span>}
-                  title={traderName(b.traderId)}
-                  subtitle={`${fmtDate(b.date)} · ${shedName(b.shedId)} · ${fmtIN(b.plannedTrays)} ${GRADE_WORD[b.grade].toLowerCase()}`}
-                  trailing={<Badge tone={STATUS_WORD[b.status].tone}>{STATUS_WORD[b.status].label}</Badge>}
-                />
-              ))}
-            </GroupList>
-        )}
-
-        {!showHistory && sheds.length > 0 && (
-          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4 items-start">
-            <div className="min-w-0 space-y-4">
-              {board.map(date => {
-                const dayRows = sheds.map(sh => ({ shed: sh, plan: planOf(sh.id, date) }));
-                const known = dayRows.filter(r => r.plan?.available != null);
-                return (
-                  <section key={date} className="rounded-[18px] border border-line bg-card shadow-card overflow-hidden">
-                    <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 bg-sunk/50 border-b border-line">
-                      <div className="min-w-0">
-                        <h2 className="font-display text-[17px] font-semibold text-ink leading-tight">{dayLabel(date, today)}</h2>
-                        <p className="text-[11.5px] text-muted tnum mt-0.5 flex items-center gap-2">
-                          {fmtDate(date)}
-                          <span className="px-2 py-[3px] rounded-full bg-card border border-line text-[10px] text-ink-2">
-                            {weekdayOf(date)}
-                          </span>
-                        </p>
-                      </div>
-                      <div className="grid grid-cols-3 sm:block sm:max-w-[420px]">
-                        <Figure label="Total available" trays={sum(known.map(r => r.plan!.available!))} />
-                        <Figure label="Total booked" trays={sum(dayRows.map(r => r.plan?.booked ?? 0))} />
-                        <Figure label="Left to book" trays={sum(dayRows.filter(r => r.plan?.remaining != null).map(r => r.plan!.remaining!))}
-                          tone={dayRows.some(r => (r.plan?.shortage ?? 0) > 0) ? 'warn' : 'brand'} />
-                      </div>
-                    </header>
-                    <DayTable rows={dayRows} canPlan={canPlan}
-                      onAdd={shedId => openSheet({ date, shedId })} />
-                  </section>
-                );
-              })}
-              {data.traders.length === 0 && (
-                <p className="text-[12px] text-muted bg-sunk rounded-[10px] px-3 py-2">
-                  No traders are registered for this company yet, so there is nobody to promise a load to.
+        <Presence mode="wait">
+          {sheds.length > 0 && (showHistory ? (
+            <motion.div key="history" variants={viewVariants} initial={reduced ? false : 'hidden'} animate="visible" exit={reduced ? undefined : 'exit'}>
+              {rows.length === 0
+                ? <EmptyState icon={<CalendarRange size={20} />} title="No bookings yet"
+                  description="Every load promised to a trader shows up here — open, sold or dropped — with who planned it and when." />
+                : <GroupList>
+                  {/* the stagger wrapper becomes the list's only child, so it carries the row rules */}
+                  <StaggerContainer className="divide-y divide-line-2">
+                    {rows.map(b => (
+                      <StaggerItem key={b.id} as="div">
+                        <ListRow onClick={() => setDetail(b.id)}
+                          leading={<span className="w-9 h-9 rounded-[10px] bg-sunk text-ink-2 flex items-center justify-center shrink-0"><Handshake size={16} /></span>}
+                          title={traderName(b.traderId)}
+                          subtitle={`${fmtDate(b.date)} · ${shedName(b.shedId)} · ${fmtIN(b.plannedTrays)} ${GRADE_WORD[b.grade].toLowerCase()}`}
+                          trailing={<Badge tone={STATUS_WORD[b.status].tone}>{STATUS_WORD[b.status].label}</Badge>}
+                        />
+                      </StaggerItem>
+                    ))}
+                  </StaggerContainer>
+                </GroupList>}
+            </motion.div>
+          ) : (
+            <motion.div key="board" variants={viewVariants} initial={reduced ? false : 'hidden'} animate="visible" exit={reduced ? undefined : 'exit'}
+              className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4 items-start">
+              <div className="min-w-0 space-y-3.5">
+                <p className="hidden sm:flex items-start gap-1.5 max-w-[640px] px-0.5 text-[11px] text-muted-2 leading-snug">
+                  <Info size={12} className="shrink-0 mt-[3px]" />
+                  A day carries each shed&rsquo;s closing stock plus what it lays that day. Collected days read their own records; a
+                  projected day borrows the average of its last seven collections.
                 </p>
-              )}
-            </div>
 
-            <aside className="rounded-[18px] border border-line bg-card shadow-card p-4 xl:sticky xl:top-4">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-[13px] font-semibold text-ink">Upcoming bookings</h3>
-                <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-sunk text-[11px] font-mono tnum text-ink-2 flex items-center justify-center">
-                  {upcoming.length}
-                </span>
+                <Presence mode="wait">
+                  <motion.div key={boardKey} variants={staggerContainer}
+                    initial={reduced ? false : 'hidden'} animate="visible" exit={reduced ? undefined : boardExit}
+                    className="space-y-4">
+                    {board.map(date => (
+                      <DayCard key={date} date={date} today={today} canPlan={canPlan}
+                        rows={sheds.map(sh => ({ shed: sh, plan: planOf(sh.id, date) }))}
+                        onAdd={shedId => openSheet({ date, shedId })} />
+                    ))}
+                  </motion.div>
+                </Presence>
+
+                {data.traders.length === 0 && (
+                  <p className="text-[12px] text-muted bg-sunk rounded-[10px] px-3 py-2">
+                    No traders are registered for this company yet, so there is nobody to promise a load to.
+                  </p>
+                )}
               </div>
-              {upcoming.length === 0 ? (
-                <p className="mt-3 text-[12px] text-muted leading-relaxed">
-                  No upcoming bookings. Add a booking to plan egg sales to traders.
-                </p>
-              ) : (
-                <ul className="mt-3 space-y-1.5">
-                  {upcoming.slice(0, 8).map(b => (
-                    <li key={b.id}>
-                      <button type="button" onClick={() => setDetail(b.id)}
-                        className="w-full min-w-0 flex items-center gap-2.5 rounded-[11px] border border-line bg-sunk/50 px-2.5 py-2 text-left press hover:bg-sunk">
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-[12px] font-semibold text-ink truncate">{traderName(b.traderId)}</span>
-                          <span className="block text-[11px] text-muted tnum">
-                            {dayLabel(b.date, today)} · {shedName(b.shedId)} · {fmtIN(b.plannedTrays)} {GRADE_WORD[b.grade].toLowerCase()}
-                          </span>
-                        </span>
-                        <span className="w-1.5 h-1.5 rounded-full bg-brand shrink-0" aria-hidden />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {upcoming.length > 8 && (
-                <button type="button" onClick={() => setShowHistory(true)}
-                  className="mt-2.5 text-[12px] font-semibold text-brand press hover:underline">
-                  See all {upcoming.length} open bookings
-                </button>
-              )}
-            </aside>
-          </div>
-        )}
+
+              <aside className="xl:sticky xl:top-4">
+                <ScrollReveal className="rounded-[18px] border border-line bg-card shadow-card p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-[13px] font-semibold text-ink">Upcoming bookings</h3>
+                    <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-sunk text-[11px] font-mono tnum text-ink-2 flex items-center justify-center">
+                      <AnimatedNumber value={upcoming.length} locale="en-IN" format={{ maximumFractionDigits: 0 }} />
+                    </span>
+                  </div>
+                  {upcoming.length === 0 ? (
+                    <p className="mt-3 text-[12px] text-muted leading-relaxed">
+                      No upcoming bookings. Add a booking to plan egg sales to traders.
+                    </p>
+                  ) : (
+                    <motion.ul className="mt-3 space-y-1.5" variants={staggerContainer}
+                      initial={reduced ? false : 'hidden'} animate="visible">
+                      <Presence mode="sync">
+                        {upcoming.slice(0, 8).map(b => (
+                          <motion.li key={b.id} variants={bookingRow}>
+                            <button type="button" onClick={() => setDetail(b.id)}
+                              className="w-full min-w-0 flex items-center gap-2.5 rounded-[11px] border border-line bg-sunk/50 px-2.5 py-2 text-left press transition-colors hover:border-brand/25 hover:bg-brand-soft/70">
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-[12px] font-semibold text-ink truncate">{traderName(b.traderId)}</span>
+                                <span className="block text-[11px] text-muted tnum">
+                                  {dayLabel(b.date, today)} · {shedName(b.shedId)}
+                                </span>
+                              </span>
+                              <span className="shrink-0 text-right">
+                                <span className="block font-mono tnum text-[13px] font-semibold text-brand">{fmtIN(b.plannedTrays)}</span>
+                                <span className="block font-mono text-[9px] uppercase tracking-[0.12em] text-muted-2">
+                                  {GRADE_WORD[b.grade]}
+                                </span>
+                              </span>
+                            </button>
+                          </motion.li>
+                        ))}
+                      </Presence>
+                    </motion.ul>
+                  )}
+                  {upcoming.length > 8 && (
+                    <button type="button" onClick={() => setShowHistory(true)}
+                      className="mt-2.5 text-[12px] font-semibold text-brand press hover:underline">
+                      See all {upcoming.length} open bookings
+                    </button>
+                  )}
+                </ScrollReveal>
+              </aside>
+            </motion.div>
+          ))}
+        </Presence>
       </div>
 
       {/* New / edit booking */}
@@ -400,15 +447,100 @@ export function EggSalePlannerScreen() {
 
 const sum = (values: number[]) => (values.length ? values.reduce((s, v) => s + v, 0) : null);
 
-function Figure({ label, trays, tone = 'brand' }: { label: string; trays: number | null; tone?: 'brand' | 'warn' }) {
+/** A quiet label beside the day's name — the date, the weekday, and whether the day is fact or forecast. */
+function Pill({ children, tone = 'plain' }: { children: ReactNode; tone?: 'plain' | 'gold' }) {
   return (
-    <div className="min-w-0 sm:inline-block sm:px-4 sm:first:pl-0 sm:last:pr-0 sm:border-l sm:border-line-2 sm:first:border-l-0">
-      <p className="text-[10.5px] text-muted truncate">{label}</p>
-      <p className={clsx('font-mono tnum text-[16px] font-semibold leading-tight mt-0.5',
-        trays === null ? 'text-faint' : tone === 'warn' ? 'text-warn' : 'text-brand')}>
-        {trays === null ? DASH : fmtIN(trays)}
-        {trays !== null && <span className="ml-1 text-[10.5px] font-sans font-normal text-muted">trays</span>}
+    <span className={clsx('px-2 py-[3px] rounded-full text-[10px] font-semibold border whitespace-nowrap',
+      tone === 'gold' ? 'bg-accent-soft text-accent-ink border-accent/25' : 'bg-card border-line text-ink-2')}>
+      {children}
+    </span>
+  );
+}
+
+/** One day of the board: the headline reads the whole farm's remainder, the lines below show its sheds. */
+function DayCard({ date, today, rows, canPlan, onAdd }: {
+  date: string; today: string;
+  rows: { shed: { id: string; name: string }; plan: ShedDayPlan | null }[];
+  canPlan: boolean; onAdd: (shedId: string) => void;
+}) {
+  const known = rows.filter(r => r.plan?.available != null);
+  const available = sum(known.map(r => r.plan!.available!));
+  const left = sum(rows.filter(r => r.plan?.remaining != null).map(r => r.plan!.remaining!));
+  const booked = rows.reduce((s, r) => s + (r.plan?.booked ?? 0), 0);
+  const shortage = rows.reduce((s, r) => s + (r.plan?.shortage ?? 0), 0);
+  const isToday = date === today;
+  const projected = rows.some(r => r.plan && !r.plan.recorded);
+  /** The name already reads "Monday" for a day that far off; the pill only adds the weekday when it doesn't. */
+  const named = ['Today', 'Tomorrow'].includes(dayLabel(date, today));
+  return (
+    <StaggerItem as="div" className="min-w-0">
+      <section className={clsx('rounded-[18px] border bg-card shadow-card overflow-hidden transition-colors duration-200',
+        isToday ? 'border-brand/40' : 'border-line hover:border-brand/25')}>
+        <header className={clsx('flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 px-4 py-3.5 border-b border-line',
+          isToday ? 'bg-brand-soft/50' : 'bg-sunk/50')}>
+          <div className="min-w-0">
+            <h2 className={clsx('font-display text-[19px] font-semibold leading-tight', isToday ? 'text-brand' : 'text-ink')}>
+              {dayLabel(date, today)}
+            </h2>
+            <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+              <Pill>{fmtDate(date)}</Pill>
+              {named && <Pill>{weekdayOf(date)}</Pill>}
+              {projected && <Pill tone="gold">Projected</Pill>}
+            </div>
+          </div>
+          <DayHero left={left} booked={booked} available={available} shortage={shortage} />
+        </header>
+        {shortage > 0 && (
+          <p className="flex items-center gap-1.5 px-4 py-2 bg-warn-soft border-b border-line text-[11.5px] font-semibold text-warn">
+            <AlertTriangle size={13} className="shrink-0" />
+            <span className="tnum">{fmtIN(shortage)} trays</span> are promised past what this day can hold
+          </p>
+        )}
+        <DayTable rows={rows} canPlan={canPlan} onAdd={onAdd} />
+      </section>
+    </StaggerItem>
+  );
+}
+
+/** The one number a planner acts on, with the two that explain it underneath. */
+function DayHero({ left, booked, available, shortage }: {
+  left: number | null; booked: number; available: number | null; shortage: number;
+}) {
+  return (
+    <div className="min-w-0 shrink-0 sm:w-[248px]">
+      <p className="font-mono text-[9.5px] font-semibold uppercase tracking-[0.14em] text-muted">Left to book</p>
+      <p className={clsx('font-display text-[26px] leading-none font-semibold tracking-tight tnum mt-1.5',
+        left === null ? 'text-faint' : shortage > 0 ? 'text-warn' : 'text-brand')}>
+        {left === null ? DASH
+          : <AnimatedNumber value={left} locale="en-IN" format={{ maximumFractionDigits: 0 }} />}
+        {left !== null && <span className="ml-1.5 font-sans text-[11px] font-normal text-muted">trays</span>}
       </p>
+      <BookMeter booked={booked} available={available} shortage={shortage} />
+      <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted tnum">
+        <span className="font-semibold text-ink-2">{available === null ? DASH : fmtIN(available)}</span> available
+        <span className="text-faint">·</span>
+        <span className="font-semibold text-ink-2">{fmtIN(booked)}</span> booked
+      </p>
+    </div>
+  );
+}
+
+/** How full the day already is: the promised share of the trays the farm can send. */
+function BookMeter({ booked, available, shortage }: {
+  booked: number; available: number | null; shortage: number;
+}) {
+  const reduced = useReducedMotion();
+  const share = available === null
+    ? 0
+    : available <= 0 ? (booked > 0 ? 1 : 0) : Math.min(1, booked / available);
+  return (
+    <div className="mt-2.5 h-1.5 w-full rounded-full bg-line-2 overflow-hidden"
+      role="progressbar" aria-valuemin={0} aria-valuemax={100}
+      aria-valuenow={available === null ? undefined : Math.round(share * 100)}>
+      <motion.div className={clsx('h-full w-full rounded-full origin-left', shortage > 0 ? 'bg-warn' : 'bg-brand')}
+        initial={reduced ? false : { scaleX: 0 }}
+        animate={{ scaleX: share }}
+        transition={reduced ? { duration: 0 } : { ...MOTION.page, delay: 0.12 }} />
     </div>
   );
 }
@@ -430,19 +562,23 @@ function DayTable({ rows, canPlan, onAdd }: {
       <div className="divide-y divide-line-2">
         {rows.map(({ shed, plan: p }) => (
           <div key={shed.id}
-            className="grid grid-cols-3 gap-x-3 gap-y-1.5 px-4 py-3 sm:py-2.5 sm:grid-cols-[minmax(0,1fr)_6rem_5rem_6rem_6.5rem] sm:gap-3 sm:items-center">
+            className="grid grid-cols-3 gap-x-3 gap-y-1.5 px-4 py-3 sm:py-2.5 sm:grid-cols-[minmax(0,1fr)_6rem_5rem_6rem_6.5rem] sm:gap-3 sm:items-center transition-colors hover:bg-sunk/40">
             <div className="col-span-3 sm:col-span-1 flex items-center justify-between gap-3 min-w-0">
               <span className="text-[13px] font-semibold text-ink truncate">{shed.name}</span>
-              {canPlan && <BookButton shed={shed.name} onClick={() => onAdd(shed.id)} className="sm:hidden" />}
+              {canPlan && (
+                <Pressable className="sm:hidden shrink-0" scale={0.94}>
+                  <BookButton shed={shed.name} onClick={() => onAdd(shed.id)} />
+                </Pressable>
+              )}
             </div>
             <Cell label="Available" value={p?.available == null ? null : fmtIN(p.available)} />
-            <Cell label="Booked" value={p ? fmtIN(p.booked) : null} />
+            <Cell label="Booked" value={p ? fmtIN(p.booked) : null} muted />
             <Cell label="Left" value={p?.remaining == null ? null : fmtIN(p.remaining)}
-              danger={(p?.shortage ?? 0) > 0} />
+              strong danger={(p?.shortage ?? 0) > 0} />
             {canPlan && (
-              <div className="hidden sm:flex justify-end">
+              <Pressable className="hidden sm:flex justify-end">
                 <BookButton shed={shed.name} onClick={() => onAdd(shed.id)} />
-              </div>
+              </Pressable>
             )}
           </div>
         ))}
@@ -455,18 +591,23 @@ function BookButton({ shed, onClick, className }: { shed: string; onClick: () =>
   return (
     <button type="button" onClick={onClick} aria-label={`Book trays from ${shed}`}
       className={clsx('inline-flex items-center gap-1 px-2.5 py-1.5 rounded-[9px] border border-line bg-card',
-        'text-[12px] font-semibold text-brand press hover:bg-brand-soft shrink-0', className)}>
+        'text-[12px] font-semibold text-brand press transition-colors hover:bg-brand-soft shrink-0', className)}>
       <Plus size={13} /> Book
     </button>
   );
 }
 
-function Cell({ label, value, danger }: { label: string; value: string | null; danger?: boolean }) {
+function Cell({ label, value, danger, strong, muted }: {
+  label: string; value: string | null; danger?: boolean; strong?: boolean; muted?: boolean;
+}) {
   return (
     <div className="min-w-0">
       <span className="block sm:hidden font-mono text-[9px] uppercase tracking-[0.12em] text-muted-2">{label}</span>
-      <span className={clsx('block sm:text-right font-mono tnum text-[13px] font-semibold',
-        value === null ? 'text-faint' : danger ? 'text-warn' : 'text-ink')}>
+      <span className={clsx('block sm:text-right font-mono tnum text-[13px]',
+        value === null ? 'text-faint'
+        : danger ? 'text-warn font-semibold'
+        : strong ? 'text-ink font-semibold'
+        : muted ? 'text-muted' : 'text-ink font-medium')}>
         {value ?? DASH}
       </span>
     </div>

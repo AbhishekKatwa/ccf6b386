@@ -6,6 +6,7 @@ import { Header, Page } from '@/components/ui/Header';
 import { Card, EmptyState, SectionTitle } from '@/components/ui/Card';
 import { Button, Field, IconButton, SearchField, SelectField } from '@/components/ui/Form';
 import { Dialog } from '@/components/ui/Dialog';
+import { PageReveal } from '@/components/motion';
 import { formulaCostPerTonne, formulaPct, formulaTotalKg, formulaUsage } from '@/lib/calc';
 import { fmtDate, fmtIN, fmtMoney, todayISO } from '@/lib/format';
 import { useGodownPrices } from '@/hooks/useGodownPrices';
@@ -134,7 +135,8 @@ export function FormulaEditorScreen() {
   })();
 
   return (
-    <Page>
+    <Page withNav>
+      <PageReveal>
       <Header
         title={editing ? `Edit ${editing.name}` : 'New formula'}
         subtitle={shed ? `${shed.name}${live ? ` · ${live.code}` : ''}` : undefined}
@@ -305,6 +307,7 @@ export function FormulaEditorScreen() {
           )}
         </div>
       </Dialog>
+      </PageReveal>
     </Page>
   );
 }

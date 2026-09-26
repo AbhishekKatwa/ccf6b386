@@ -23,6 +23,8 @@ import { useGodownPrices } from '@/hooks/useGodownPrices';
 import { useShortageAllocator } from '@/hooks/useShortageAllocator';
 import { useFeedCoverage } from '@/hooks/useFeedCoverage';
 import { fmtDate, fmtDateShort, fmtIN, fmtMoney, todayISO } from '@/lib/format';
+import { EASE, MOTION, PageReveal, Presence, StaggerContainer, StaggerItem, useReducedMotion } from '@/components/motion';
+import { motion } from 'motion/react';
 
 /**
  * One ingredient's whole story: how the current KG on the shelf came about. Every figure
@@ -50,6 +52,7 @@ export function IngredientStockScreen() {
   const [tab, setTab] = useState<IngredientTab>('overview');
   const [open, setOpen] = useState<Movement | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const reduced = useReducedMotion();
 
   const movements = useMemo(
     () => godownMovements(data.feedStock, valuation, { sheds: data.sheds, batches: data.batches, feed: data.feed, users: data.users }),
@@ -101,7 +104,7 @@ export function IngredientStockScreen() {
     return (
       <Page withNav>
         <Header title={ingredient || 'Ingredient'} subtitle="Stock history" backTo="/feed" action={addStockButton} />
-        <div className="px-4 sm:px-0 mt-3 space-y-4">
+        <PageReveal className="px-4 sm:px-0 mt-3 space-y-4">
           {cover.dailyKg > 0 && <ForecastCard cover={cover} />}
           <EmptyState icon={<Package size={22} />} title="No movements for this ingredient"
             description="The godown ledger holds nothing under this name yet, so there is no history to trace."
@@ -110,7 +113,7 @@ export function IngredientStockScreen() {
                 Book the first {ingredient} entry
               </Button>
             )} />
-        </div>
+        </PageReveal>
         {addStockDialog}
       </Page>
     );
@@ -130,8 +133,9 @@ export function IngredientStockScreen() {
         subtitle={canFinance ? 'Stock history and valuation · central godown' : 'Stock history · central godown'}
         backTo="/feed" action={addStockButton} />
 
-      <div className="px-4 sm:px-0 mt-3 space-y-4">
+      <StaggerContainer className="px-4 sm:px-0 mt-3 space-y-4">
         {/* §4 · where this ingredient stands, all of it read off the ledger */}
+        <StaggerItem>
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
           <KPI label="Current stock" value={ledgerKg(pos.kg)} tone="brand"
             sub={low === 'NORMAL' ? `Above the ${fmtIN(GODOWN_LOW_KG)} kg rule` : `Below the ${fmtIN(GODOWN_LOW_KG)} kg rule`} />
@@ -156,14 +160,30 @@ export function IngredientStockScreen() {
               ? `${flow.CONSUMPTION.count} shed feeding${flow.CONSUMPTION.count === 1 ? '' : 's'}${canFinance ? ` · ${fmtMoney(flow.CONSUMPTION.value)}` : ''}`
               : 'Never drawn by a shed'} />
         </div>
+        </StaggerItem>
 
+        <StaggerItem>
         <ForecastCard cover={cover} />
+        </StaggerItem>
 
+        <StaggerItem>
         <SegmentedTabs<IngredientTab> value={tab} onChange={setTab} options={[
           { value: 'overview', label: 'Overview', icon: <Package size={13} /> },
           { value: 'history', label: 'Stock History', icon: <Receipt size={13} /> },
         ]} />
+        </StaggerItem>
 
+        {/* one panel at a time — the panel body itself never animates row by row */}
+        <StaggerItem>
+        <Presence mode="wait">
+          <motion.div
+            key={tab}
+            className="space-y-4"
+            initial={reduced ? false : { opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, transition: { duration: MOTION.micro.duration } }}
+            transition={reduced ? { duration: 0 } : { duration: MOTION.component.duration, ease: EASE }}
+          >
         {tab === 'overview' && (<>
           {/* §5 · the ledger stated as one flow: opening + in − out = current */}
           <Card>
@@ -361,7 +381,10 @@ export function IngredientStockScreen() {
             ))}
           </div>
         </>)}
-      </div>
+          </motion.div>
+        </Presence>
+        </StaggerItem>
+      </StaggerContainer>
 
       {addStockDialog}
 
